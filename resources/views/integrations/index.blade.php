@@ -1,7 +1,7 @@
-@extends('ai-core::layouts.app')
-@section('title', __('ai-core::messages.integrations'))
+@extends('super-ai-core::layouts.app')
+@section('title', __('super-ai-core::messages.integrations'))
 @section('content')
-<h4><i class="bi bi-plug me-1"></i>{{ __('ai-core::messages.integrations') }}</h4>
+<h4><i class="bi bi-plug me-1"></i>{{ __('super-ai-core::messages.integrations') }}</h4>
 
 @php
     $grouped = collect($registry)->groupBy('category');
@@ -64,16 +64,16 @@ const csrf = document.querySelector('meta[name="csrf-token"]').content;
 function hdr() { return {'X-CSRF-TOKEN': csrf, 'Accept': 'application/json', 'Content-Type': 'application/json'}; }
 
 function installMcp(key) {
-    fetch('{{ url("ai-core/integrations") }}/' + key + '/install', {method: 'POST', headers: hdr(), body: '{}'})
+    fetch('{{ url("super-ai-core/integrations") }}/' + key + '/install', {method: 'POST', headers: hdr(), body: '{}'})
         .then(r => r.json()).then(d => { alert(JSON.stringify(d)); location.reload(); });
 }
 function uninstallMcp(key) {
     if (!confirm('Uninstall ' + key + '?')) return;
-    fetch('{{ url("ai-core/integrations") }}/' + key + '/uninstall', {method: 'POST', headers: hdr(), body: '{}'})
+    fetch('{{ url("super-ai-core/integrations") }}/' + key + '/uninstall', {method: 'POST', headers: hdr(), body: '{}'})
         .then(r => r.json()).then(d => { alert(JSON.stringify(d)); location.reload(); });
 }
 function testMcp(key) {
-    fetch('{{ url("ai-core/integrations") }}/' + key + '/test', {headers: {Accept: 'application/json'}})
+    fetch('{{ url("super-ai-core/integrations") }}/' + key + '/test', {headers: {Accept: 'application/json'}})
         .then(r => r.json()).then(d => alert(JSON.stringify(d)));
 }
 </script>

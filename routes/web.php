@@ -3,17 +3,17 @@
 /**
  * AI Core package routes.
  *
- * Auto-registered under prefix config('ai-core.route.prefix') and
- * wrapped in middleware config('ai-core.route.middleware').
- * All route names are prefixed with 'ai-core.' via the ServiceProvider group.
+ * Auto-registered under prefix config('super-super-ai-core.route.prefix') and
+ * wrapped in middleware config('super-super-ai-core.route.middleware').
+ * All route names are prefixed with 'super-super-ai-core.' via the ServiceProvider group.
  */
 
-use ForgeOmni\AiCore\Http\Controllers\AiServiceController;
-use ForgeOmni\AiCore\Http\Controllers\CostDashboardController;
-use ForgeOmni\AiCore\Http\Controllers\IntegrationController;
-use ForgeOmni\AiCore\Http\Controllers\ProcessController;
-use ForgeOmni\AiCore\Http\Controllers\ProviderController;
-use ForgeOmni\AiCore\Http\Controllers\UsageController;
+use SuperAICore\Http\Controllers\AiServiceController;
+use SuperAICore\Http\Controllers\CostDashboardController;
+use SuperAICore\Http\Controllers\IntegrationController;
+use SuperAICore\Http\Controllers\ProcessController;
+use SuperAICore\Http\Controllers\ProviderController;
+use SuperAICore\Http\Controllers\UsageController;
 use Illuminate\Support\Facades\Route;
 
 // ─── Providers (Execution Engine) ───

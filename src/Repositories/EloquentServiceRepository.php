@@ -1,10 +1,10 @@
 <?php
 
-namespace ForgeOmni\AiCore\Repositories;
+namespace SuperAICore\Repositories;
 
-use ForgeOmni\AiCore\Contracts\ServiceRepository;
-use ForgeOmni\AiCore\Models\AiCapability;
-use ForgeOmni\AiCore\Models\AiService;
+use SuperAICore\Contracts\ServiceRepository;
+use SuperAICore\Models\AiCapability;
+use SuperAICore\Models\AiService;
 
 class EloquentServiceRepository implements ServiceRepository
 {

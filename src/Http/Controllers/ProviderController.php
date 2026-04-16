@@ -1,8 +1,8 @@
 <?php
 
-namespace ForgeOmni\AiCore\Http\Controllers;
+namespace SuperAICore\Http\Controllers;
 
-use ForgeOmni\AiCore\Models\AiProvider;
+use SuperAICore\Models\AiProvider;
 use GuzzleHttp\Client;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -10,7 +10,7 @@ use Illuminate\Routing\Controller;
 /**
  * AI Provider CRUD — the "Execution Engine" management page.
  *
- * Host app wires authorization middleware via config('ai-core.route.middleware').
+ * Host app wires authorization middleware via config('super-ai-core.route.middleware').
  */
 class ProviderController extends Controller
 {
@@ -21,7 +21,7 @@ class ProviderController extends Controller
             ->orderBy('id')
             ->get();
 
-        return view('ai-core::providers.index', compact('providers'));
+        return view('super-ai-core::providers.index', compact('providers'));
     }
 
     public function store(Request $request)
@@ -31,7 +31,7 @@ class ProviderController extends Controller
             'scope' => 'global',
             'scope_id' => null,
         ]));
-        return back()->with('success', __('ai-core::messages.provider_created'));
+        return back()->with('success', __('super-ai-core::messages.provider_created'));
     }
 
     public function update(Request $request, AiProvider $provider)
@@ -44,25 +44,25 @@ class ProviderController extends Controller
         }
 
         $provider->update($data);
-        return back()->with('success', __('ai-core::messages.provider_saved'));
+        return back()->with('success', __('super-ai-core::messages.provider_saved'));
     }
 
     public function destroy(AiProvider $provider)
     {
         $provider->delete();
-        return back()->with('success', __('ai-core::messages.provider_deleted'));
+        return back()->with('success', __('super-ai-core::messages.provider_deleted'));
     }
 
     public function activate(AiProvider $provider)
     {
         $provider->activate();
-        return back()->with('success', __('ai-core::messages.provider_activated'));
+        return back()->with('success', __('super-ai-core::messages.provider_activated'));
     }
 
     public function deactivate(AiProvider $provider)
     {
         $provider->deactivate();
-        return back()->with('success', __('ai-core::messages.provider_deactivated'));
+        return back()->with('success', __('super-ai-core::messages.provider_deactivated'));
     }
 
     /**
@@ -94,7 +94,7 @@ class ProviderController extends Controller
     /**
      * Test provider connection with a tiny prompt via Dispatcher.
      */
-    public function test(AiProvider $provider, \ForgeOmni\AiCore\Services\Dispatcher $dispatcher)
+    public function test(AiProvider $provider, \SuperAICore\Services\Dispatcher $dispatcher)
     {
         try {
             $result = $dispatcher->dispatch([

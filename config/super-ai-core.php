@@ -2,7 +2,7 @@
 
 /**
  * AI Core package config.
- * Publish to host app with: php artisan vendor:publish --tag=ai-core-config
+ * Publish to host app with: php artisan vendor:publish --tag=super-ai-core-config
  */
 return [
 
@@ -11,7 +11,7 @@ return [
         // Whether to register package routes at all. Disable if host wants
         // to own all routing and use services directly.
         'enabled' => env('AI_CORE_ROUTES_ENABLED', true),
-        'prefix' => env('AI_CORE_ROUTE_PREFIX', 'ai-core'),
+        'prefix' => env('AI_CORE_ROUTE_PREFIX', 'super-ai-core'),
         'middleware' => ['web', 'auth'],
     ],
 

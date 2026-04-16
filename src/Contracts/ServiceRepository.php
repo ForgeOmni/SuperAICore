@@ -1,6 +1,6 @@
 <?php
 
-namespace ForgeOmni\AiCore\Contracts;
+namespace SuperAICore\Contracts;
 
 /**
  * AI Services = capability-specific endpoints (e.g., vision via moonshot).

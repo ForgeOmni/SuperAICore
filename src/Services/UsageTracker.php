@@ -1,8 +1,8 @@
 <?php
 
-namespace ForgeOmni\AiCore\Services;
+namespace SuperAICore\Services;
 
-use ForgeOmni\AiCore\Contracts\UsageRepository;
+use SuperAICore\Contracts\UsageRepository;
 
 class UsageTracker
 {
@@ -34,6 +34,6 @@ class UsageTracker
     protected function isEnabled(): bool
     {
         if (!function_exists('config')) return true;
-        return (bool) config('ai-core.usage_tracking.enabled', true);
+        return (bool) config('super-ai-core.usage_tracking.enabled', true);
     }
 }

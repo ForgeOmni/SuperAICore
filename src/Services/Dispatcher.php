@@ -1,10 +1,10 @@
 <?php
 
-namespace ForgeOmni\AiCore\Services;
+namespace SuperAICore\Services;
 
-use ForgeOmni\AiCore\Contracts\Backend;
-use ForgeOmni\AiCore\Contracts\ProviderRepository;
-use ForgeOmni\AiCore\Contracts\RoutingRepository;
+use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\ProviderRepository;
+use SuperAICore\Contracts\RoutingRepository;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -15,7 +15,7 @@ use Psr\Log\LoggerInterface;
  *   2. explicit ['provider' => 'anthropic-my-key'] override → use provider's backend
  *   3. task_type + capability → RoutingRepository → ServiceConfig → Backend
  *   4. Active ProviderRepository for scope → Backend from provider's `backend` column
- *   5. Fall back to config('ai-core.default_backend')
+ *   5. Fall back to config('super-ai-core.default_backend')
  */
 class Dispatcher
 {
@@ -154,7 +154,7 @@ class Dispatcher
 
         // 5. Default backend from config + env credentials
         $defaultBackend = function_exists('config')
-            ? config('ai-core.default_backend', 'anthropic_api')
+            ? config('super-ai-core.default_backend', 'anthropic_api')
             : 'anthropic_api';
         return [$this->backends->get($defaultBackend), [], null, null];
     }

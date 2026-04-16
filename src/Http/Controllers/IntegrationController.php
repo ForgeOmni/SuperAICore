@@ -1,8 +1,8 @@
 <?php
 
-namespace ForgeOmni\AiCore\Http\Controllers;
+namespace SuperAICore\Http\Controllers;
 
-use ForgeOmni\AiCore\Services\McpManager;
+use SuperAICore\Services\McpManager;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 
@@ -17,7 +17,7 @@ class IntegrationController extends Controller
         $registry = McpManager::getRegistry();
         $statuses = McpManager::getAllStatuses();
         $categories = McpManager::getCategories();
-        return view('ai-core::integrations.index', compact('registry', 'statuses', 'categories'));
+        return view('super-ai-core::integrations.index', compact('registry', 'statuses', 'categories'));
     }
 
     public function install(Request $request, string $key)

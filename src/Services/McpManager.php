@@ -1,6 +1,6 @@
 <?php
 
-namespace ForgeOmni\AiCore\Services;
+namespace SuperAICore\Services;
 
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Process\Process;
@@ -1840,7 +1840,7 @@ class McpManager
      */
     protected static function getApiServiceStatus(string $key, array $info): array
     {
-        $configured = \ForgeOmni\AiCore\Models\IntegrationConfig::isConfigured($key);
+        $configured = \SuperAICore\Models\IntegrationConfig::isConfigured($key);
         return [
             'key' => $key,
             'name' => $info['name'],
@@ -1864,7 +1864,7 @@ class McpManager
 
         // For api-service type: "installed" means config exists in database
         if (($info['type'] ?? '') === 'api-service') {
-            $installed = \ForgeOmni\AiCore\Models\IntegrationConfig::isConfigured($key);
+            $installed = \SuperAICore\Models\IntegrationConfig::isConfigured($key);
         }
 
         $status = [
@@ -2319,13 +2319,13 @@ class McpManager
                         $envKey = $fieldDef['env_key'] ?? strtoupper($fieldKey);
                         $env[$envKey] = $configValues[$fieldKey];
                         // Also persist to database
-                        \ForgeOmni\AiCore\Models\IntegrationConfig::setValue($key, $fieldKey, $configValues[$fieldKey], $fieldDef['is_secret'] ?? false);
+                        \SuperAICore\Models\IntegrationConfig::setValue($key, $fieldKey, $configValues[$fieldKey], $fieldDef['is_secret'] ?? false);
                     }
                 }
                 if (!empty($env)) $mcpConfig['env'] = $env;
             } else {
                 // Read from database if no new values provided (re-install scenario)
-                $dbValues = \ForgeOmni\AiCore\Models\IntegrationConfig::getAll($key);
+                $dbValues = \SuperAICore\Models\IntegrationConfig::getAll($key);
                 if (!empty($dbValues) && !empty($configFields)) {
                     $env = [];
                     foreach ($configFields as $fieldKey => $fieldDef) {
@@ -2577,7 +2577,7 @@ class McpManager
             if (empty($value)) continue;
 
             // Save to database
-            \ForgeOmni\AiCore\Models\IntegrationConfig::setValue($key, $fieldKey, $value, $fieldDef['is_secret'] ?? false);
+            \SuperAICore\Models\IntegrationConfig::setValue($key, $fieldKey, $value, $fieldDef['is_secret'] ?? false);
 
             // Update MCP JSON config env
             if ($mcpConfig) {
@@ -2611,7 +2611,7 @@ class McpManager
             $value = $configValues[$fieldKey] ?? '';
             if (empty($value)) continue;
 
-            \ForgeOmni\AiCore\Models\IntegrationConfig::setValue(
+            \SuperAICore\Models\IntegrationConfig::setValue(
                 $key,
                 $fieldKey,
                 $value,
@@ -2865,7 +2865,7 @@ class McpManager
         // API services don't have MCP connections to test
         $info = self::getServerInfo($key);
         if ($info && ($info['type'] ?? '') === 'api-service') {
-            $configured = \ForgeOmni\AiCore\Models\IntegrationConfig::isConfigured($key);
+            $configured = \SuperAICore\Models\IntegrationConfig::isConfigured($key);
             return ['success' => $configured, 'message' => $configured ? 'configured' : 'not_configured'];
         }
 

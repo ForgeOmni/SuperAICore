@@ -1,6 +1,6 @@
 <?php
 
-namespace ForgeOmni\AiCore\Services;
+namespace SuperAICore\Services;
 
 class CostCalculator
 {
@@ -8,7 +8,7 @@ class CostCalculator
 
     public function __construct(array $pricing = [])
     {
-        $this->pricing = $pricing ?: (function_exists('config') ? (config('ai-core.model_pricing') ?? []) : []);
+        $this->pricing = $pricing ?: (function_exists('config') ? (config('super-ai-core.model_pricing') ?? []) : []);
     }
 
     /**

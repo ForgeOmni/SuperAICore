@@ -1,7 +1,7 @@
-@extends('ai-core::layouts.app')
-@section('title', __('ai-core::messages.processes'))
+@extends('super-ai-core::layouts.app')
+@section('title', __('super-ai-core::messages.processes'))
 @section('content')
-<h4><i class="bi bi-cpu me-1"></i>{{ __('ai-core::messages.processes') }}</h4>
+<h4><i class="bi bi-cpu me-1"></i>{{ __('super-ai-core::messages.processes') }}</h4>
 <div class="card border-0 shadow-sm">
     <div class="card-body p-0">
         <table class="table mb-0">
@@ -19,7 +19,7 @@
                         <td><span class="badge bg-secondary">{{ $p['binary'] }}</span></td>
                         <td class="small font-monospace text-truncate" style="max-width: 400px;">{{ $p['command'] }}</td>
                         <td>
-                            <form method="POST" action="{{ route('ai-core.processes.kill') }}" class="d-inline" onsubmit="return confirm('Kill PID {{ $p['pid'] }}?')">
+                            <form method="POST" action="{{ route('super-super-ai-core.processes.kill') }}" class="d-inline" onsubmit="return confirm('Kill PID {{ $p['pid'] }}?')">
                                 @csrf
                                 <input type="hidden" name="pid" value="{{ $p['pid'] }}">
                                 <button class="btn btn-outline-danger btn-sm"><i class="bi bi-x-circle"></i></button>

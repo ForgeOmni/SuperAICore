@@ -1,9 +1,9 @@
 <?php
 
-namespace ForgeOmni\AiCore\Http\Controllers;
+namespace SuperAICore\Http\Controllers;
 
 use Carbon\Carbon;
-use ForgeOmni\AiCore\Models\AiUsageLog;
+use SuperAICore\Models\AiUsageLog;
 use Illuminate\Routing\Controller;
 
 /**
@@ -42,7 +42,7 @@ class CostDashboardController extends Controller
         $byProvider = $logs->groupBy(fn ($l) => $l->provider_id ? "provider_{$l->provider_id}" : 'builtin')
             ->map(fn ($g) => $this->aggregate($g))->sortByDesc('cost');
 
-        return view('ai-core::costs.index', compact(
+        return view('super-ai-core::costs.index', compact(
             'summary', 'byDay', 'byModel', 'byTaskType', 'byBackend', 'byProvider'
         ));
     }

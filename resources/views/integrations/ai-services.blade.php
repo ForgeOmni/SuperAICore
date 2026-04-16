@@ -1,7 +1,7 @@
-@extends('ai-core::layouts.app')
-@section('title', __('ai-core::messages.services'))
+@extends('super-ai-core::layouts.app')
+@section('title', __('super-ai-core::messages.services'))
 @section('content')
-<h4><i class="bi bi-diagram-3 me-1"></i>{{ __('ai-core::messages.services') }}</h4>
+<h4><i class="bi bi-diagram-3 me-1"></i>{{ __('super-ai-core::messages.services') }}</h4>
 <div class="card border-0 shadow-sm">
     <div class="card-body p-0">
         <table class="table mb-0">

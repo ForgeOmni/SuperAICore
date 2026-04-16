@@ -1,7 +1,7 @@
-@extends('ai-core::layouts.app')
-@section('title', __('ai-core::messages.costs'))
+@extends('super-ai-core::layouts.app')
+@section('title', __('super-ai-core::messages.costs'))
 @section('content')
-<h4><i class="bi bi-cash-stack me-1"></i>{{ __('ai-core::messages.costs') }}</h4>
+<h4><i class="bi bi-cash-stack me-1"></i>{{ __('super-ai-core::messages.costs') }}</h4>
 
 <div class="row g-3 mb-3">
     <div class="col-md-3"><div class="card border-0 shadow-sm"><div class="card-body text-center"><div class="h3 mb-0">${{ number_format($summary['total_cost'], 4) }}</div><div class="small text-muted">Total cost</div></div></div></div>

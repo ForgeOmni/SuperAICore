@@ -1,6 +1,6 @@
 <?php
 
-namespace ForgeOmni\AiCore\Http\Controllers;
+namespace SuperAICore\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -23,7 +23,7 @@ class ProcessController extends Controller
     public function index()
     {
         $processes = $this->listProcesses();
-        return view('ai-core::processes.index', compact('processes'));
+        return view('super-ai-core::processes.index', compact('processes'));
     }
 
     public function kill(Request $request)

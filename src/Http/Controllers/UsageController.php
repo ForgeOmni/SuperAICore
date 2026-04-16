@@ -1,9 +1,9 @@
 <?php
 
-namespace ForgeOmni\AiCore\Http\Controllers;
+namespace SuperAICore\Http\Controllers;
 
 use Carbon\Carbon;
-use ForgeOmni\AiCore\Models\AiUsageLog;
+use SuperAICore\Models\AiUsageLog;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 
@@ -48,7 +48,7 @@ class UsageController extends Controller
         $allTaskTypes = AiUsageLog::distinct()->pluck('task_type');
         $allBackends = AiUsageLog::distinct()->pluck('backend');
 
-        return view('ai-core::usage.index', compact(
+        return view('super-ai-core::usage.index', compact(
             'logs', 'summary', 'byModel', 'byBackend',
             'filters', 'days', 'allModels', 'allTaskTypes', 'allBackends'
         ));

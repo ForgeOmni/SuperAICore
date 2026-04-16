@@ -1,7 +1,7 @@
-@extends('ai-core::layouts.app')
-@section('title', __('ai-core::messages.usage'))
+@extends('super-ai-core::layouts.app')
+@section('title', __('super-ai-core::messages.usage'))
 @section('content')
-<h4><i class="bi bi-bar-chart me-1"></i>{{ __('ai-core::messages.usage') }} <small class="text-muted">(last {{ $days }} days)</small></h4>
+<h4><i class="bi bi-bar-chart me-1"></i>{{ __('super-ai-core::messages.usage') }} <small class="text-muted">(last {{ $days }} days)</small></h4>
 
 <div class="row g-3 mb-3">
     <div class="col-md-3">

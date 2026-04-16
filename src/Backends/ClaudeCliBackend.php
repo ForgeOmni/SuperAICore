@@ -1,8 +1,8 @@
 <?php
 
-namespace ForgeOmni\AiCore\Backends;
+namespace SuperAICore\Backends;
 
-use ForgeOmni\AiCore\Contracts\Backend;
+use SuperAICore\Contracts\Backend;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 

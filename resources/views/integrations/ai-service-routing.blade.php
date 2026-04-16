@@ -1,7 +1,7 @@
-@extends('ai-core::layouts.app')
-@section('title', __('ai-core::messages.routing'))
+@extends('super-ai-core::layouts.app')
+@section('title', __('super-ai-core::messages.routing'))
 @section('content')
-<h4><i class="bi bi-signpost me-1"></i>{{ __('ai-core::messages.routing') }}</h4>
+<h4><i class="bi bi-signpost me-1"></i>{{ __('super-ai-core::messages.routing') }}</h4>
 <div class="card border-0 shadow-sm">
     <div class="card-body p-0">
         <table class="table mb-0">

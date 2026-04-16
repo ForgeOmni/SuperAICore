@@ -1,9 +1,9 @@
 <?php
 
-namespace ForgeOmni\AiCore\Repositories;
+namespace SuperAICore\Repositories;
 
-use ForgeOmni\AiCore\Contracts\RoutingRepository;
-use ForgeOmni\AiCore\Models\AiServiceRouting;
+use SuperAICore\Contracts\RoutingRepository;
+use SuperAICore\Models\AiServiceRouting;
 
 class EloquentRoutingRepository implements RoutingRepository
 {

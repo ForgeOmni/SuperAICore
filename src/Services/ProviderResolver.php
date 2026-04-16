@@ -1,8 +1,8 @@
 <?php
 
-namespace ForgeOmni\AiCore\Services;
+namespace SuperAICore\Services;
 
-use ForgeOmni\AiCore\Contracts\ProviderRepository;
+use SuperAICore\Contracts\ProviderRepository;
 
 /**
  * Thin wrapper around ProviderRepository with scope resolution logic.

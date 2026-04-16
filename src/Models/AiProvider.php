@@ -1,6 +1,6 @@
 <?php
 
-namespace ForgeOmni\AiCore\Models;
+namespace SuperAICore\Models;
 
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;

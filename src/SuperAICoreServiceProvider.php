@@ -1,28 +1,28 @@
 <?php
 
-namespace ForgeOmni\AiCore;
+namespace SuperAICore;
 
-use ForgeOmni\AiCore\Contracts\ProviderRepository;
-use ForgeOmni\AiCore\Contracts\RoutingRepository;
-use ForgeOmni\AiCore\Contracts\ServiceRepository;
-use ForgeOmni\AiCore\Contracts\UsageRepository;
-use ForgeOmni\AiCore\Repositories\EloquentProviderRepository;
-use ForgeOmni\AiCore\Repositories\EloquentRoutingRepository;
-use ForgeOmni\AiCore\Repositories\EloquentServiceRepository;
-use ForgeOmni\AiCore\Repositories\EloquentUsageRepository;
-use ForgeOmni\AiCore\Services\BackendRegistry;
-use ForgeOmni\AiCore\Services\CostCalculator;
-use ForgeOmni\AiCore\Services\Dispatcher;
-use ForgeOmni\AiCore\Services\ProviderResolver;
-use ForgeOmni\AiCore\Services\UsageTracker;
+use SuperAICore\Contracts\ProviderRepository;
+use SuperAICore\Contracts\RoutingRepository;
+use SuperAICore\Contracts\ServiceRepository;
+use SuperAICore\Contracts\UsageRepository;
+use SuperAICore\Repositories\EloquentProviderRepository;
+use SuperAICore\Repositories\EloquentRoutingRepository;
+use SuperAICore\Repositories\EloquentServiceRepository;
+use SuperAICore\Repositories\EloquentUsageRepository;
+use SuperAICore\Services\BackendRegistry;
+use SuperAICore\Services\CostCalculator;
+use SuperAICore\Services\Dispatcher;
+use SuperAICore\Services\ProviderResolver;
+use SuperAICore\Services\UsageTracker;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
-class AiCoreServiceProvider extends ServiceProvider
+class SuperAICoreServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__ . '/../config/ai-core.php', 'ai-core');
+        $this->mergeConfigFrom(__DIR__ . '/../config/super-ai-core.php', 'super-ai-core');
 
         // Repository bindings — host apps can override these to use different storage
         $this->app->bind(ProviderRepository::class, EloquentProviderRepository::class);
@@ -57,17 +57,17 @@ class AiCoreServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
-        $this->loadTranslationsFrom(__DIR__ . '/../resources/lang', 'ai-core');
+        $this->loadTranslationsFrom(__DIR__ . '/../resources/lang', 'super-ai-core');
 
-        if (config('ai-core.views_enabled', true)) {
-            $this->loadViewsFrom(__DIR__ . '/../resources/views', 'ai-core');
+        if (config('super-ai-core.views_enabled', true)) {
+            $this->loadViewsFrom(__DIR__ . '/../resources/views', 'super-ai-core');
         }
 
-        if (config('ai-core.route.enabled', true)) {
+        if (config('super-ai-core.route.enabled', true)) {
             Route::group([
-                'prefix' => config('ai-core.route.prefix', 'ai-core'),
-                'middleware' => config('ai-core.route.middleware', ['web', 'auth']),
-                'as' => 'ai-core.',
+                'prefix' => config('super-ai-core.route.prefix', 'super-ai-core'),
+                'middleware' => config('super-ai-core.route.middleware', ['web', 'auth']),
+                'as' => 'super-ai-core.',
             ], function () {
                 $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
             });
@@ -75,19 +75,19 @@ class AiCoreServiceProvider extends ServiceProvider
 
         // Publishing hooks
         $this->publishes([
-            __DIR__ . '/../config/ai-core.php' => config_path('ai-core.php'),
-        ], 'ai-core-config');
+            __DIR__ . '/../config/super-ai-core.php' => config_path('super-ai-core.php'),
+        ], 'super-ai-core-config');
 
         $this->publishes([
-            __DIR__ . '/../resources/views' => resource_path('views/vendor/ai-core'),
-        ], 'ai-core-views');
+            __DIR__ . '/../resources/views' => resource_path('views/vendor/super-ai-core'),
+        ], 'super-ai-core-views');
 
         $this->publishes([
-            __DIR__ . '/../resources/lang' => lang_path('vendor/ai-core'),
-        ], 'ai-core-lang');
+            __DIR__ . '/../resources/lang' => lang_path('vendor/super-ai-core'),
+        ], 'super-ai-core-lang');
 
         $this->publishes([
             __DIR__ . '/../database/migrations' => database_path('migrations'),
-        ], 'ai-core-migrations');
+        ], 'super-ai-core-migrations');
     }
 }

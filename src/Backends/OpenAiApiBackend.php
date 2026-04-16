@@ -1,8 +1,8 @@
 <?php
 
-namespace ForgeOmni\AiCore\Backends;
+namespace SuperAICore\Backends;
 
-use ForgeOmni\AiCore\Contracts\Backend;
+use SuperAICore\Contracts\Backend;
 use GuzzleHttp\Client;
 use Psr\Log\LoggerInterface;
 

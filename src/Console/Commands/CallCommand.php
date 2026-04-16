@@ -1,10 +1,10 @@
 <?php
 
-namespace ForgeOmni\AiCore\Console\Commands;
+namespace SuperAICore\Console\Commands;
 
-use ForgeOmni\AiCore\Services\BackendRegistry;
-use ForgeOmni\AiCore\Services\CostCalculator;
-use ForgeOmni\AiCore\Services\Dispatcher;
+use SuperAICore\Services\BackendRegistry;
+use SuperAICore\Services\CostCalculator;
+use SuperAICore\Services\Dispatcher;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;

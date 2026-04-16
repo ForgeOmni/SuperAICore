@@ -1,6 +1,6 @@
 <?php
 
-namespace ForgeOmni\AiCore\Contracts;
+namespace SuperAICore\Contracts;
 
 /**
  * Abstract storage for AI providers (credentials + backend config).

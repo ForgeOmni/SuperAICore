@@ -1,9 +1,9 @@
 <?php
 
-namespace ForgeOmni\AiCore\Repositories;
+namespace SuperAICore\Repositories;
 
-use ForgeOmni\AiCore\Contracts\UsageRepository;
-use ForgeOmni\AiCore\Models\AiUsageLog;
+use SuperAICore\Contracts\UsageRepository;
+use SuperAICore\Models\AiUsageLog;
 
 class EloquentUsageRepository implements UsageRepository
 {

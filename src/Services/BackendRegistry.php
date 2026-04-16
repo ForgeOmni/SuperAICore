@@ -1,13 +1,13 @@
 <?php
 
-namespace ForgeOmni\AiCore\Services;
+namespace SuperAICore\Services;
 
-use ForgeOmni\AiCore\Backends\AnthropicApiBackend;
-use ForgeOmni\AiCore\Backends\ClaudeCliBackend;
-use ForgeOmni\AiCore\Backends\CodexCliBackend;
-use ForgeOmni\AiCore\Backends\OpenAiApiBackend;
-use ForgeOmni\AiCore\Backends\SuperAgentBackend;
-use ForgeOmni\AiCore\Contracts\Backend;
+use SuperAICore\Backends\AnthropicApiBackend;
+use SuperAICore\Backends\ClaudeCliBackend;
+use SuperAICore\Backends\CodexCliBackend;
+use SuperAICore\Backends\OpenAiApiBackend;
+use SuperAICore\Backends\SuperAgentBackend;
+use SuperAICore\Contracts\Backend;
 use Psr\Log\LoggerInterface;
 
 class BackendRegistry
@@ -17,7 +17,7 @@ class BackendRegistry
 
     public function __construct(?LoggerInterface $logger = null, array $config = [])
     {
-        $config = $config ?: (function_exists('config') ? (config('ai-core.backends') ?? []) : []);
+        $config = $config ?: (function_exists('config') ? (config('super-ai-core.backends') ?? []) : []);
 
         if ($config['anthropic_api']['enabled'] ?? true) {
             $this->register(new AnthropicApiBackend($logger));

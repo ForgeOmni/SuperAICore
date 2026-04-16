@@ -1,9 +1,9 @@
 <?php
 
-namespace ForgeOmni\AiCore\Repositories;
+namespace SuperAICore\Repositories;
 
-use ForgeOmni\AiCore\Contracts\ProviderRepository;
-use ForgeOmni\AiCore\Models\AiProvider;
+use SuperAICore\Contracts\ProviderRepository;
+use SuperAICore\Models\AiProvider;
 
 class EloquentProviderRepository implements ProviderRepository
 {

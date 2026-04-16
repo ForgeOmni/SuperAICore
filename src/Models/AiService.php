@@ -1,6 +1,6 @@
 <?php
 
-namespace ForgeOmni\AiCore\Models;
+namespace SuperAICore\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Crypt;
