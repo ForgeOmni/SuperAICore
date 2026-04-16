@@ -4,7 +4,7 @@
 <h4><i class="bi bi-plug me-1"></i>{{ __('super-ai-core::messages.integrations') }}</h4>
 
 @php
-    $grouped = collect($registry)->groupBy('category');
+    $grouped = collect($registry)->groupBy('category', true);
 @endphp
 
 @foreach($categories as $catKey => $catMeta)
