@@ -51,6 +51,8 @@ Route::get('integrations', [IntegrationController::class, 'index'])->name('integ
 Route::post('integrations/{key}/install', [IntegrationController::class, 'install'])->name('integrations.install');
 Route::post('integrations/{key}/uninstall', [IntegrationController::class, 'uninstall'])->name('integrations.uninstall');
 Route::get('integrations/{key}/test', [IntegrationController::class, 'test'])->name('integrations.test');
+Route::post('integrations/{key}/auth/start', [IntegrationController::class, 'startAuth'])->name('integrations.auth.start');
+Route::post('integrations/{key}/auth/clear', [IntegrationController::class, 'clearAuth'])->name('integrations.auth.clear');
 Route::get('integrations/status', [IntegrationController::class, 'status'])->name('integrations.status');
 
 // ─── Usage ───

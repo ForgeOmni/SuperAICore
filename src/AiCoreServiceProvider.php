@@ -13,7 +13,6 @@ use ForgeOmni\AiCore\Repositories\EloquentUsageRepository;
 use ForgeOmni\AiCore\Services\BackendRegistry;
 use ForgeOmni\AiCore\Services\CostCalculator;
 use ForgeOmni\AiCore\Services\Dispatcher;
-use ForgeOmni\AiCore\Services\McpManager;
 use ForgeOmni\AiCore\Services\ProviderResolver;
 use ForgeOmni\AiCore\Services\UsageTracker;
 use Illuminate\Support\Facades\Route;
@@ -31,10 +30,9 @@ class AiCoreServiceProvider extends ServiceProvider
         $this->app->bind(RoutingRepository::class, EloquentRoutingRepository::class);
         $this->app->bind(UsageRepository::class, EloquentUsageRepository::class);
 
-        // Core singleton services
+        // Core singleton services (McpManager is all-static, no binding)
         $this->app->singleton(BackendRegistry::class);
         $this->app->singleton(CostCalculator::class);
-        $this->app->singleton(McpManager::class);
 
         $this->app->singleton(UsageTracker::class, function ($app) {
             return new UsageTracker($app->make(UsageRepository::class));
