@@ -6,6 +6,26 @@
  */
 return [
 
+    // ─── Host integration ───
+    // Where the "back to host app" link in the package nav points to.
+    // Null hides the link entirely.
+    'host_back_url' => env('SUPER_AI_CORE_HOST_BACK_URL', null),
+    // Display name for the host app (e.g. "SuperTeam", "Shopify Autopilot").
+    'host_name' => env('SUPER_AI_CORE_HOST_NAME', null),
+    // Icon shown next to the back link (Bootstrap Icons class).
+    'host_icon' => env('SUPER_AI_CORE_HOST_ICON', 'bi-arrow-left'),
+
+    // ─── Locale switcher ───
+    // Locales offered by the nav dropdown. Empty array hides the switcher.
+    'locales' => [
+        'en'    => 'English',
+        'zh-CN' => '简体中文',
+        'fr'    => 'Français',
+    ],
+    // Cookie name used to persist the switched locale.
+    // Host app's middleware (e.g. SuperTeam's SetLocale) should read this cookie.
+    'locale_cookie' => env('SUPER_AI_CORE_LOCALE_COOKIE', 'locale'),
+
     // ─── Route registration ───
     'route' => [
         // Whether to register package routes at all. Disable if host wants

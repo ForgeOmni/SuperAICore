@@ -11,10 +11,14 @@
 use SuperAICore\Http\Controllers\AiServiceController;
 use SuperAICore\Http\Controllers\CostDashboardController;
 use SuperAICore\Http\Controllers\IntegrationController;
+use SuperAICore\Http\Controllers\LocaleController;
 use SuperAICore\Http\Controllers\ProcessController;
 use SuperAICore\Http\Controllers\ProviderController;
 use SuperAICore\Http\Controllers\UsageController;
 use Illuminate\Support\Facades\Route;
+
+// ─── Locale switcher ───
+Route::get('locale/{code}', [LocaleController::class, 'switch'])->name('locale.switch');
 
 // ─── Providers (Execution Engine) ───
 Route::get('providers', [ProviderController::class, 'index'])->name('providers.index');

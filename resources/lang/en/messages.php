@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'app_title' => 'AI Core',
+    'back_to_host' => 'Back to :name',
+    'language' => 'Language',
     'saved' => 'Saved.',
     'deleted' => 'Deleted.',
     'provider_created' => 'Provider created.',

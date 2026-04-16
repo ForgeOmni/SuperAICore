@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'app_title' => 'AI 核心',
+    'back_to_host' => '返回 :name',
+    'language' => '语言',
     'saved' => '已保存。',
     'deleted' => '已删除。',
     'provider_created' => '已创建。',
