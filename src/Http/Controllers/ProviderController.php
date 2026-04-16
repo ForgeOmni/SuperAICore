@@ -3,6 +3,8 @@
 namespace SuperAICore\Http\Controllers;
 
 use SuperAICore\Models\AiProvider;
+use SuperAICore\Models\IntegrationConfig;
+use SuperAICore\Services\CliStatusDetector;
 use GuzzleHttp\Client;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -21,7 +23,22 @@ class ProviderController extends Controller
             ->orderBy('id')
             ->get();
 
-        return view('super-ai-core::providers.index', compact('providers'));
+        $cliStatuses = CliStatusDetector::all();
+        $defaultBackend = IntegrationConfig::getValue('ai_execution', 'default_backend') ?: 'claude';
+
+        return view('super-ai-core::providers.index', compact('providers', 'cliStatuses', 'defaultBackend'));
+    }
+
+    public function saveDefaultBackend(Request $request)
+    {
+        $request->validate(['backend' => 'required|in:claude,codex,superagent']);
+        IntegrationConfig::setValue('ai_execution', 'default_backend', $request->input('backend'));
+        return back()->with('success', __('super-ai-core::messages.default_backend_saved'));
+    }
+
+    public function cliStatus()
+    {
+        return response()->json(CliStatusDetector::all());
     }
 
     public function store(Request $request)

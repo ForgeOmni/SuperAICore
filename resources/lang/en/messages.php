@@ -33,6 +33,16 @@ return [
     'delete' => 'Delete',
     'create_provider' => 'Add Provider',
 
+    // CLI backend detection
+    'cli_installed' => 'Installed',
+    'cli_not_installed' => 'Not installed',
+    'cli_version' => 'Version',
+    'cli_auth_ok' => 'Authenticated',
+    'cli_auth_missing' => 'Not signed in',
+    'default_backend' => 'Default',
+    'set_default' => 'Set as default',
+    'default_backend_saved' => 'Default backend saved.',
+
     // Common
     'cancel' => 'Cancel',
     'submit' => 'Submit',

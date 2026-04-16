@@ -31,6 +31,15 @@ return [
     'delete' => 'Supprimer',
     'create_provider' => 'Ajouter un provider',
 
+    'cli_installed' => 'Installé',
+    'cli_not_installed' => 'Non installé',
+    'cli_version' => 'Version',
+    'cli_auth_ok' => 'Connecté',
+    'cli_auth_missing' => 'Non connecté',
+    'default_backend' => 'Défaut',
+    'set_default' => 'Définir par défaut',
+    'default_backend_saved' => 'Backend par défaut enregistré.',
+
     'cancel' => 'Annuler',
     'submit' => 'Soumettre',
 ];

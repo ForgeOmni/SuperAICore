@@ -31,6 +31,15 @@ return [
     'delete' => '删除',
     'create_provider' => '添加 Provider',
 
+    'cli_installed' => '已安装',
+    'cli_not_installed' => '未安装',
+    'cli_version' => '版本',
+    'cli_auth_ok' => '已登录',
+    'cli_auth_missing' => '未登录',
+    'default_backend' => '默认',
+    'set_default' => '设为默认',
+    'default_backend_saved' => '默认后端已保存。',
+
     'cancel' => '取消',
     'submit' => '提交',
 ];

@@ -10,6 +10,69 @@
     </button>
 </div>
 
+{{-- CLI Status + Default Backend --}}
+<div class="row g-3 mb-3">
+    @foreach(['claude' => 'Claude Code CLI', 'codex' => 'Codex CLI', 'superagent' => 'SuperAgent SDK'] as $be => $label)
+        @php $st = $cliStatuses[$be] ?? []; @endphp
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100 {{ ($defaultBackend === $be) ? 'border-primary border-2' : '' }}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="mb-0">{{ $label }}</h6>
+                            <code class="small text-muted">{{ $be }}</code>
+                        </div>
+                        @if(!empty($st['installed']))
+                            <span class="badge bg-success">{{ __('super-ai-core::messages.cli_installed') }}</span>
+                        @else
+                            <span class="badge bg-secondary">{{ __('super-ai-core::messages.cli_not_installed') }}</span>
+                        @endif
+                    </div>
+                    @if(!empty($st['installed']))
+                        <div class="small text-muted">
+                            @if(!empty($st['version']))
+                                <div><i class="bi bi-tag me-1"></i>{{ __('super-ai-core::messages.cli_version') }}: <code>{{ $st['version'] }}</code></div>
+                            @endif
+                            @if(!empty($st['path']))
+                                <div class="text-truncate" title="{{ $st['path'] }}"><i class="bi bi-folder me-1"></i>{{ $st['path'] }}</div>
+                            @endif
+                            @if(!empty($st['auth']))
+                                @php $loggedIn = $st['auth']['loggedIn'] ?? !empty($st['auth']); @endphp
+                                <div>
+                                    <i class="bi bi-{{ $loggedIn ? 'check-circle text-success' : 'exclamation-circle text-warning' }} me-1"></i>
+                                    {{ $loggedIn ? __('super-ai-core::messages.cli_auth_ok') : __('super-ai-core::messages.cli_auth_missing') }}
+                                </div>
+                            @endif
+                        </div>
+                    @else
+                        <div class="small text-muted">
+                            @if($be === 'claude')
+                                <code>npm i -g @anthropic-ai/claude-code</code>
+                            @elseif($be === 'codex')
+                                <code>brew install codex</code>
+                            @endif
+                        </div>
+                    @endif
+
+                    <form method="POST" action="{{ route('super-ai-core.providers.default-backend') }}" class="mt-3">
+                        @csrf
+                        <input type="hidden" name="backend" value="{{ $be }}">
+                        @if($defaultBackend === $be)
+                            <button type="button" class="btn btn-primary btn-sm w-100" disabled>
+                                <i class="bi bi-check2"></i> {{ __('super-ai-core::messages.default_backend') }}
+                            </button>
+                        @else
+                            <button type="submit" class="btn btn-outline-primary btn-sm w-100">
+                                {{ __('super-ai-core::messages.set_default') }}
+                            </button>
+                        @endif
+                    </form>
+                </div>
+            </div>
+        </div>
+    @endforeach
+</div>
+
 <div class="card border-0 shadow-sm">
     <div class="card-body p-0">
         <table class="table table-hover mb-0">
