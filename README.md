@@ -1,4 +1,4 @@
-# forgeomni/ai-core
+# forgeomni/super-ai-core
 
 Laravel package for unified AI execution across multiple backends: Claude CLI, Codex CLI, SuperAgent SDK, Anthropic API, OpenAI API. Includes a framework-agnostic CLI, a capability dispatcher, MCP server management, usage tracking, and cost analytics.
 
@@ -9,27 +9,27 @@ Phase 1 skeleton. Backends + Dispatcher + CLI work. Eloquent models, controllers
 ## Install
 
 ```bash
-composer require forgeomni/ai-core
+composer require forgeomni/super-ai-core
 ```
 
 ## Quick CLI usage
 
 ```bash
 # List backends and their availability
-./vendor/bin/ai-core list-backends
+./vendor/bin/super-ai-core list-backends
 
 # Call any backend
-./vendor/bin/ai-core call "Hello" --backend=anthropic_api --api-key=sk-ant-...
-./vendor/bin/ai-core call "Hello" --backend=claude_cli
-./vendor/bin/ai-core call "Hello" --backend=superagent
+./vendor/bin/super-ai-core call "Hello" --backend=anthropic_api --api-key=sk-ant-...
+./vendor/bin/super-ai-core call "Hello" --backend=claude_cli
+./vendor/bin/super-ai-core call "Hello" --backend=superagent
 ```
 
 ## Usage in PHP
 
 ```php
-use ForgeOmni\AiCore\Services\BackendRegistry;
-use ForgeOmni\AiCore\Services\CostCalculator;
-use ForgeOmni\AiCore\Services\Dispatcher;
+use SuperAICore\Services\BackendRegistry;
+use SuperAICore\Services\CostCalculator;
+use SuperAICore\Services\Dispatcher;
 
 $dispatcher = new Dispatcher(new BackendRegistry(), new CostCalculator());
 
