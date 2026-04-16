@@ -14,7 +14,6 @@ use SuperAICore\Http\Controllers\IntegrationController;
 use SuperAICore\Http\Controllers\LocaleController;
 use SuperAICore\Http\Controllers\ProcessController;
 use SuperAICore\Http\Controllers\ProviderController;
-use SuperAICore\Http\Controllers\TaskModelController;
 use SuperAICore\Http\Controllers\UsageController;
 use Illuminate\Support\Facades\Route;
 
@@ -71,8 +70,6 @@ Route::get('usage', [UsageController::class, 'index'])->name('usage.index');
 Route::get('costs', [CostDashboardController::class, 'index'])->name('costs.index');
 
 // ─── Task Model Settings ───
-Route::get('task-models', [TaskModelController::class, 'index'])->name('task-models.index');
-Route::post('task-models', [TaskModelController::class, 'save'])->name('task-models.save');
 
 // ─── Process Monitor ───
 Route::get('processes', [ProcessController::class, 'index'])->name('processes.index');
