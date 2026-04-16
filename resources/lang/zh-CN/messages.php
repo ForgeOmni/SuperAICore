@@ -46,6 +46,21 @@ return [
     'use_builtin' => '使用内置',
     'superagent_requires_provider' => 'SuperAgent 需要配置外部 Provider。',
 
+    'task_models' => '任务模型配置',
+    'task_models_saved' => '配置已保存。',
+    'default_task_model' => '默认',
+    'model' => '模型',
+    'effort' => '推理深度',
+    'inherit_default' => '(继承默认)',
+    'save_settings' => '保存',
+
+    'install_all' => '一键安装全部',
+
+    'no_processes' => '暂无 SuperAICore 注册的进程。',
+    'select_process' => '在左侧选择一个进程查看日志。',
+    'kill' => '终止',
+    'auto_refresh' => '自动刷新',
+
     'cancel' => '取消',
     'submit' => '提交',
 ];

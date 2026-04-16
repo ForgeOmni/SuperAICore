@@ -46,6 +46,21 @@ return [
     'use_builtin' => 'Utiliser l\'intégré',
     'superagent_requires_provider' => 'SuperAgent nécessite un provider externe.',
 
+    'task_models' => 'Tâche → Modèle',
+    'task_models_saved' => 'Paramètres enregistrés.',
+    'default_task_model' => 'Défaut',
+    'model' => 'Modèle',
+    'effort' => 'Effort',
+    'inherit_default' => '(hériter)',
+    'save_settings' => 'Enregistrer',
+
+    'install_all' => 'Tout installer',
+
+    'no_processes' => 'Aucun processus enregistré.',
+    'select_process' => 'Sélectionnez un processus à gauche.',
+    'kill' => 'Tuer',
+    'auto_refresh' => 'Auto-actualiser',
+
     'cancel' => 'Annuler',
     'submit' => 'Soumettre',
 ];

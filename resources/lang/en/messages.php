@@ -55,6 +55,18 @@ return [
     'kill' => 'Kill',
     'auto_refresh' => 'Auto-refresh',
 
+    // Task models
+    'task_models' => 'Task → Model',
+    'task_models_saved' => 'Settings saved.',
+    'default_task_model' => 'Default',
+    'model' => 'Model',
+    'effort' => 'Effort',
+    'inherit_default' => '(inherit default)',
+    'save_settings' => 'Save Settings',
+
+    // Integrations index
+    'install_all' => 'Install All',
+
     // Common
     'cancel' => 'Cancel',
     'submit' => 'Submit',
