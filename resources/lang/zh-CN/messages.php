@@ -42,6 +42,9 @@ return [
     'default_backend' => '默认',
     'set_default' => '设为默认',
     'default_backend_saved' => '默认后端已保存。',
+    'builtin' => '内置',
+    'use_builtin' => '使用内置',
+    'superagent_requires_provider' => 'SuperAgent 需要配置外部 Provider。',
 
     'cancel' => '取消',
     'submit' => '提交',

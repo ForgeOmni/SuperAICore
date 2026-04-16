@@ -61,4 +61,12 @@ class EloquentUsageRepository implements UsageRepository
     {
         return AiUsageLog::where('created_at', '<', $cutoff)->delete();
     }
+
+    public function all(?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null): array
+    {
+        $q = AiUsageLog::query();
+        if ($from) $q->where('created_at', '>=', $from);
+        if ($to) $q->where('created_at', '<=', $to);
+        return $q->get()->map(fn ($r) => $r->toArray())->all();
+    }
 }

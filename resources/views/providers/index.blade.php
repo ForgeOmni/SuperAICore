@@ -54,76 +54,104 @@
                         </div>
                     @endif
 
-                    <form method="POST" action="{{ route('super-ai-core.providers.default-backend') }}" class="mt-3">
-                        @csrf
-                        <input type="hidden" name="backend" value="{{ $be }}">
-                        @if($defaultBackend === $be)
-                            <button type="button" class="btn btn-primary btn-sm w-100" disabled>
-                                <i class="bi bi-check2"></i> {{ __('super-ai-core::messages.default_backend') }}
-                            </button>
-                        @else
-                            <button type="submit" class="btn btn-outline-primary btn-sm w-100">
-                                {{ __('super-ai-core::messages.set_default') }}
-                            </button>
-                        @endif
-                    </form>
                 </div>
             </div>
         </div>
     @endforeach
 </div>
 
-<div class="card border-0 shadow-sm">
-    <div class="card-body p-0">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>{{ __('super-ai-core::messages.name') }}</th>
-                    <th>{{ __('super-ai-core::messages.backend') }}</th>
-                    <th>{{ __('super-ai-core::messages.type') }}</th>
-                    <th>{{ __('super-ai-core::messages.is_active') }}</th>
-                    <th>{{ __('super-ai-core::messages.api_key') }}</th>
-                    <th>{{ __('super-ai-core::messages.actions') }}</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($providers as $p)
+{{-- Provider list grouped by backend, with built-in rows --}}
+@foreach($providersByBackend as $be => $beProviders)
+    @php $beLabel = ['claude' => 'Claude Code', 'codex' => 'Codex', 'superagent' => 'SuperAgent SDK'][$be] ?? $be; @endphp
+    @php $anyActive = $beProviders->contains(fn ($p) => $p->is_active); @endphp
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white">
+            <strong><i class="bi bi-{{ ['claude'=>'robot','codex'=>'code-slash','superagent'=>'cpu'][$be] ?? 'plug' }} me-1"></i>{{ $beLabel }}</strong>
+            <code class="small text-muted ms-2">{{ $be }}</code>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
                     <tr>
-                        <td class="fw-semibold">{{ $p->name }}</td>
-                        <td><span class="badge bg-secondary">{{ $p->backend }}</span></td>
-                        <td class="small text-muted">{{ $p->type }}</td>
-                        <td>
-                            <span class="badge bg-{{ $p->is_active ? 'success' : 'secondary' }}">
-                                {{ $p->is_active ? __('super-ai-core::messages.activate') : '—' }}
-                            </span>
-                        </td>
-                        <td class="small font-monospace">{{ $p->masked_api_key ?? '—' }}</td>
-                        <td>
-                            @if($p->is_active)
-                                <form method="POST" action="{{ route('super-ai-core.providers.deactivate', $p) }}" class="d-inline">
-                                    @csrf
-                                    <button class="btn btn-outline-secondary btn-sm">{{ __('super-ai-core::messages.deactivate') }}</button>
-                                </form>
-                            @else
-                                <form method="POST" action="{{ route('super-ai-core.providers.activate', $p) }}" class="d-inline">
-                                    @csrf
-                                    <button class="btn btn-outline-success btn-sm">{{ __('super-ai-core::messages.activate') }}</button>
-                                </form>
-                            @endif
-                            <button class="btn btn-outline-primary btn-sm" onclick="testProvider({{ $p->id }})">{{ __('super-ai-core::messages.test_connection') }}</button>
-                            <form method="POST" action="{{ route('super-ai-core.providers.destroy', $p) }}" class="d-inline" onsubmit="return confirm('{{ __('super-ai-core::messages.delete') }}?')">
-                                @csrf @method('DELETE')
-                                <button class="btn btn-outline-danger btn-sm">{{ __('super-ai-core::messages.delete') }}</button>
-                            </form>
-                        </td>
+                        <th>{{ __('super-ai-core::messages.name') }}</th>
+                        <th>{{ __('super-ai-core::messages.type') }}</th>
+                        <th>{{ __('super-ai-core::messages.is_active') }}</th>
+                        <th>{{ __('super-ai-core::messages.api_key') }}</th>
+                        <th>{{ __('super-ai-core::messages.actions') }}</th>
                     </tr>
-                @empty
-                    <tr><td colspan="6" class="text-center text-muted py-4">No providers configured.</td></tr>
-                @endforelse
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    {{-- Built-in synthetic row (only for CLI backends that have a local login) --}}
+                    @if($be !== 'superagent')
+                        <tr class="table-light">
+                            <td class="fw-semibold">
+                                <i class="bi bi-box-seam me-1"></i>
+                                {{ __('super-ai-core::messages.builtin') }}
+                                <span class="badge bg-light text-dark border ms-1">{{ $beLabel }} local</span>
+                            </td>
+                            <td class="small text-muted">builtin</td>
+                            <td>
+                                @if(!$anyActive)
+                                    <span class="badge bg-success">{{ __('super-ai-core::messages.default_backend') }}</span>
+                                @else
+                                    <span class="text-muted">—</span>
+                                @endif
+                            </td>
+                            <td class="small text-muted">—</td>
+                            <td>
+                                @if(!$anyActive)
+                                    <button type="button" class="btn btn-primary btn-sm" disabled>
+                                        <i class="bi bi-check2"></i> {{ __('super-ai-core::messages.default_backend') }}
+                                    </button>
+                                @else
+                                    <form method="POST" action="{{ route('super-ai-core.providers.activate-builtin') }}" class="d-inline">
+                                        @csrf
+                                        <input type="hidden" name="backend" value="{{ $be }}">
+                                        <button class="btn btn-outline-success btn-sm">{{ __('super-ai-core::messages.use_builtin') }}</button>
+                                    </form>
+                                @endif
+                                <button type="button" class="btn btn-outline-primary btn-sm" onclick="testBuiltin('{{ $be }}')">{{ __('super-ai-core::messages.test_connection') }}</button>
+                            </td>
+                        </tr>
+                    @endif
+
+                    {{-- External providers --}}
+                    @forelse($beProviders as $p)
+                        <tr>
+                            <td class="fw-semibold">{{ $p->name }}</td>
+                            <td class="small text-muted">{{ $p->type }}</td>
+                            <td>
+                                @if($p->is_active)
+                                    <span class="badge bg-success">{{ __('super-ai-core::messages.default_backend') }}</span>
+                                @else
+                                    <span class="text-muted">—</span>
+                                @endif
+                            </td>
+                            <td class="small font-monospace">{{ $p->masked_api_key ?? '—' }}</td>
+                            <td>
+                                @if(!$p->is_active)
+                                    <form method="POST" action="{{ route('super-ai-core.providers.activate', $p) }}" class="d-inline">
+                                        @csrf
+                                        <button class="btn btn-outline-success btn-sm">{{ __('super-ai-core::messages.set_default') }}</button>
+                                    </form>
+                                @endif
+                                <button class="btn btn-outline-primary btn-sm" onclick="testProvider({{ $p->id }})">{{ __('super-ai-core::messages.test_connection') }}</button>
+                                <form method="POST" action="{{ route('super-ai-core.providers.destroy', $p) }}" class="d-inline" onsubmit="return confirm('{{ __('super-ai-core::messages.delete') }}?')">
+                                    @csrf @method('DELETE')
+                                    <button class="btn btn-outline-danger btn-sm">{{ __('super-ai-core::messages.delete') }}</button>
+                                </form>
+                            </td>
+                        </tr>
+                    @empty
+                        @if($be === 'superagent')
+                            <tr><td colspan="5" class="text-center text-muted py-3">{{ __('super-ai-core::messages.superagent_requires_provider') }}</td></tr>
+                        @endif
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
     </div>
-</div>
+@endforeach
 
 {{-- Create modal --}}
 <div class="modal fade" id="new-provider-modal" tabindex="-1">
@@ -182,6 +210,16 @@ function testProvider(id) {
     fetch('{{ url("super-ai-core/providers") }}/' + id + '/test', {
         method: 'POST',
         headers: {'X-CSRF-TOKEN': token, 'Accept': 'application/json'}
+    }).then(r => r.json()).then(d => {
+        alert((d.success ? '✓ ' : '✗ ') + (d.message ?? 'Unknown'));
+    });
+}
+function testBuiltin(backend) {
+    const token = document.querySelector('meta[name="csrf-token"]').content;
+    fetch('{{ route("super-ai-core.providers.test-builtin") }}', {
+        method: 'POST',
+        headers: {'X-CSRF-TOKEN': token, 'Accept': 'application/json', 'Content-Type': 'application/json'},
+        body: JSON.stringify({backend: backend})
     }).then(r => r.json()).then(d => {
         alert((d.success ? '✓ ' : '✗ ') + (d.message ?? 'Unknown'));
     });

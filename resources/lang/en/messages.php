@@ -45,6 +45,15 @@ return [
     'default_backend' => 'Default',
     'set_default' => 'Set as default',
     'default_backend_saved' => 'Default backend saved.',
+    'builtin' => 'Built-in',
+    'use_builtin' => 'Use built-in',
+    'superagent_requires_provider' => 'SuperAgent requires an external provider.',
+
+    // Process monitor
+    'no_processes' => 'No SuperAICore processes registered yet.',
+    'select_process' => 'Select a process on the left to view its log.',
+    'kill' => 'Kill',
+    'auto_refresh' => 'Auto-refresh',
 
     // Common
     'cancel' => 'Cancel',

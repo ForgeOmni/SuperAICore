@@ -24,6 +24,8 @@ Route::get('locale/{code}', [LocaleController::class, 'switch'])->name('locale.s
 Route::get('providers', [ProviderController::class, 'index'])->name('providers.index');
 Route::get('providers/cli-status', [ProviderController::class, 'cliStatus'])->name('providers.cli-status');
 Route::post('providers/default-backend', [ProviderController::class, 'saveDefaultBackend'])->name('providers.default-backend');
+Route::post('providers/activate-builtin', [ProviderController::class, 'activateBuiltin'])->name('providers.activate-builtin');
+Route::post('providers/test-builtin', [ProviderController::class, 'testBuiltin'])->name('providers.test-builtin');
 Route::post('providers', [ProviderController::class, 'store'])->name('providers.store');
 Route::put('providers/{provider}', [ProviderController::class, 'update'])->name('providers.update');
 Route::delete('providers/{provider}', [ProviderController::class, 'destroy'])->name('providers.destroy');
@@ -69,4 +71,6 @@ Route::get('costs', [CostDashboardController::class, 'index'])->name('costs.inde
 
 // ─── Process Monitor ───
 Route::get('processes', [ProcessController::class, 'index'])->name('processes.index');
+Route::post('processes/register', [ProcessController::class, 'register'])->name('processes.register');
 Route::post('processes/kill', [ProcessController::class, 'kill'])->name('processes.kill');
+Route::get('processes/{process}/log', [ProcessController::class, 'log'])->name('processes.log');

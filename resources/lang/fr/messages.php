@@ -42,6 +42,9 @@ return [
     'default_backend' => 'Défaut',
     'set_default' => 'Définir par défaut',
     'default_backend_saved' => 'Backend par défaut enregistré.',
+    'builtin' => 'Intégré',
+    'use_builtin' => 'Utiliser l\'intégré',
+    'superagent_requires_provider' => 'SuperAgent nécessite un provider externe.',
 
     'cancel' => 'Annuler',
     'submit' => 'Soumettre',

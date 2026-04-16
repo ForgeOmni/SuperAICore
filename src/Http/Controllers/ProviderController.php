@@ -26,7 +26,60 @@ class ProviderController extends Controller
         $cliStatuses = CliStatusDetector::all();
         $defaultBackend = IntegrationConfig::getValue('ai_execution', 'default_backend') ?: 'claude';
 
-        return view('super-ai-core::providers.index', compact('providers', 'cliStatuses', 'defaultBackend'));
+        // Group providers by backend; UI prepends a synthetic "Built-in" per backend.
+        $providersByBackend = [];
+        foreach (['claude', 'codex', 'superagent'] as $be) {
+            $providersByBackend[$be] = $providers->where('backend', $be)->values();
+        }
+
+        return view('super-ai-core::providers.index', compact(
+            'providers', 'providersByBackend', 'cliStatuses', 'defaultBackend'
+        ));
+    }
+
+    /**
+     * Activate the built-in (local CLI login) for a backend — deactivates
+     * all external providers in that backend scope.
+     */
+    public function activateBuiltin(Request $request)
+    {
+        $request->validate(['backend' => 'required|in:claude,codex,superagent']);
+        $backend = $request->input('backend');
+
+        AiProvider::where('scope', 'global')
+            ->where('backend', $backend)
+            ->where('is_active', true)
+            ->update(['is_active' => false]);
+
+        return back()->with('success', __('super-ai-core::messages.provider_activated'));
+    }
+
+    /**
+     * Test a built-in backend (local claude/codex CLI login) with a tiny prompt.
+     */
+    public function testBuiltin(Request $request, \SuperAICore\Services\Dispatcher $dispatcher)
+    {
+        $request->validate(['backend' => 'required|in:claude,codex']);
+        $backendName = $request->input('backend') === 'claude' ? 'claude_cli' : 'codex_cli';
+
+        try {
+            $result = $dispatcher->dispatch([
+                'prompt' => 'Reply with exactly: OK',
+                'max_tokens' => 10,
+                'backend' => $backendName,
+                'provider_config' => ['type' => 'builtin'],
+            ]);
+
+            if ($result && !empty($result['text'])) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Connected. ' . mb_substr(trim($result['text']), 0, 100),
+                ]);
+            }
+            return response()->json(['success' => false, 'message' => 'No response — CLI may not be installed or signed in.']);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()]);
+        }
     }
 
     public function saveDefaultBackend(Request $request)

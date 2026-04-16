@@ -34,4 +34,15 @@ interface UsageRepository
     public function recent(int $limit = 50, array $filters = []): array;
 
     public function purgeOlderThan(\DateTimeInterface $cutoff): int;
+
+    /**
+     * Raw row-set for custom aggregations. Each row is an associative
+     * array with keys: backend, model, task_type, input_tokens,
+     * output_tokens, cost_usd, created_at (Carbon|string).
+     *
+     * Used by CostDashboardController / UsageController for group-by.
+     *
+     * @return array[]
+     */
+    public function all(?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null): array;
 }
