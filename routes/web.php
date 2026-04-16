@@ -3,9 +3,9 @@
 /**
  * AI Core package routes.
  *
- * Auto-registered under prefix config('super-super-ai-core.route.prefix') and
- * wrapped in middleware config('super-super-ai-core.route.middleware').
- * All route names are prefixed with 'super-super-ai-core.' via the ServiceProvider group.
+ * Auto-registered under prefix config('super-ai-core.route.prefix') and
+ * wrapped in middleware config('super-ai-core.route.middleware').
+ * All route names are prefixed with 'super-ai-core.' via the ServiceProvider group.
  */
 
 use SuperAICore\Http\Controllers\AiServiceController;

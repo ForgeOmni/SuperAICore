@@ -37,18 +37,18 @@
                         <td class="small font-monospace">{{ $p->masked_api_key ?? '—' }}</td>
                         <td>
                             @if($p->is_active)
-                                <form method="POST" action="{{ route('super-super-ai-core.providers.deactivate', $p) }}" class="d-inline">
+                                <form method="POST" action="{{ route('super-ai-core.providers.deactivate', $p) }}" class="d-inline">
                                     @csrf
                                     <button class="btn btn-outline-secondary btn-sm">{{ __('super-ai-core::messages.deactivate') }}</button>
                                 </form>
                             @else
-                                <form method="POST" action="{{ route('super-super-ai-core.providers.activate', $p) }}" class="d-inline">
+                                <form method="POST" action="{{ route('super-ai-core.providers.activate', $p) }}" class="d-inline">
                                     @csrf
                                     <button class="btn btn-outline-success btn-sm">{{ __('super-ai-core::messages.activate') }}</button>
                                 </form>
                             @endif
                             <button class="btn btn-outline-primary btn-sm" onclick="testProvider({{ $p->id }})">{{ __('super-ai-core::messages.test_connection') }}</button>
-                            <form method="POST" action="{{ route('super-super-ai-core.providers.destroy', $p) }}" class="d-inline" onsubmit="return confirm('{{ __('super-ai-core::messages.delete') }}?')">
+                            <form method="POST" action="{{ route('super-ai-core.providers.destroy', $p) }}" class="d-inline" onsubmit="return confirm('{{ __('super-ai-core::messages.delete') }}?')">
                                 @csrf @method('DELETE')
                                 <button class="btn btn-outline-danger btn-sm">{{ __('super-ai-core::messages.delete') }}</button>
                             </form>
@@ -65,7 +65,7 @@
 {{-- Create modal --}}
 <div class="modal fade" id="new-provider-modal" tabindex="-1">
     <div class="modal-dialog">
-        <form class="modal-content" method="POST" action="{{ route('super-super-ai-core.providers.store') }}">
+        <form class="modal-content" method="POST" action="{{ route('super-ai-core.providers.store') }}">
             @csrf
             <div class="modal-header">
                 <h5 class="modal-title">{{ __('super-ai-core::messages.create_provider') }}</h5>

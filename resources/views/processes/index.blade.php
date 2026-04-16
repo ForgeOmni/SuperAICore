@@ -19,7 +19,7 @@
                         <td><span class="badge bg-secondary">{{ $p['binary'] }}</span></td>
                         <td class="small font-monospace text-truncate" style="max-width: 400px;">{{ $p['command'] }}</td>
                         <td>
-                            <form method="POST" action="{{ route('super-super-ai-core.processes.kill') }}" class="d-inline" onsubmit="return confirm('Kill PID {{ $p['pid'] }}?')">
+                            <form method="POST" action="{{ route('super-ai-core.processes.kill') }}" class="d-inline" onsubmit="return confirm('Kill PID {{ $p['pid'] }}?')">
                                 @csrf
                                 <input type="hidden" name="pid" value="{{ $p['pid'] }}">
                                 <button class="btn btn-outline-danger btn-sm"><i class="bi bi-x-circle"></i></button>

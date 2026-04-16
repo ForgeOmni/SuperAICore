@@ -12,13 +12,13 @@
         <div class="container-fluid">
             <span class="navbar-brand"><i class="bi bi-cpu me-1"></i>AI Core</span>
             <ul class="navbar-nav">
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-super-ai-core.providers.index') }}">{{ __('super-ai-core::messages.providers') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-super-ai-core.services.index') }}">{{ __('super-ai-core::messages.services') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-super-ai-core.services.routing') }}">{{ __('super-ai-core::messages.routing') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-super-ai-core.integrations.index') }}">{{ __('super-ai-core::messages.integrations') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-super-ai-core.usage.index') }}">{{ __('super-ai-core::messages.usage') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-super-ai-core.costs.index') }}">{{ __('super-ai-core::messages.costs') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-super-ai-core.processes.index') }}">{{ __('super-ai-core::messages.processes') }}</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.providers.index') }}">{{ __('super-ai-core::messages.providers') }}</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.services.index') }}">{{ __('super-ai-core::messages.services') }}</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.services.routing') }}">{{ __('super-ai-core::messages.routing') }}</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.integrations.index') }}">{{ __('super-ai-core::messages.integrations') }}</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.usage.index') }}">{{ __('super-ai-core::messages.usage') }}</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.costs.index') }}">{{ __('super-ai-core::messages.costs') }}</a></li>
+                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.processes.index') }}">{{ __('super-ai-core::messages.processes') }}</a></li>
             </ul>
         </div>
     </nav>
