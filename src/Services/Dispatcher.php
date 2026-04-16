@@ -1,0 +1,192 @@
+<?php
+
+namespace ForgeOmni\AiCore\Services;
+
+use ForgeOmni\AiCore\Contracts\Backend;
+use ForgeOmni\AiCore\Contracts\ProviderRepository;
+use ForgeOmni\AiCore\Contracts\RoutingRepository;
+use Psr\Log\LoggerInterface;
+
+/**
+ * Central entry for all LLM calls.
+ *
+ * Resolution order (for a given prompt + options):
+ *   1. explicit ['backend' => 'claude_cli'] override → use named backend + env creds
+ *   2. explicit ['provider' => 'anthropic-my-key'] override → use provider's backend
+ *   3. task_type + capability → RoutingRepository → ServiceConfig → Backend
+ *   4. Active ProviderRepository for scope → Backend from provider's `backend` column
+ *   5. Fall back to config('ai-core.default_backend')
+ */
+class Dispatcher
+{
+    public function __construct(
+        protected BackendRegistry $backends,
+        protected CostCalculator $costs,
+        protected ?UsageTracker $usage = null,
+        protected ?ProviderResolver $providers = null,
+        protected ?RoutingRepository $routing = null,
+        protected ?LoggerInterface $logger = null,
+    ) {}
+
+    /**
+     * Dispatch a prompt to the appropriate backend.
+     *
+     * @param  array $options  {
+     *   prompt: string, messages?: array, system?: string, max_tokens?: int, model?: string,
+     *   backend?: string,        forced backend name
+     *   provider_id?: int,       forced provider (overrides routing)
+     *   task_type?: string,      for routing lookup
+     *   capability?: string,     for routing lookup
+     *   scope?: string,          global|user (default global)
+     *   scope_id?: int,          user_id when scope=user
+     *   user_id?: int,           for usage attribution
+     * }
+     * @return array|null  {text, model, usage, cost_usd, backend, duration_ms}
+     */
+    public function dispatch(array $options): ?array
+    {
+        $start = microtime(true);
+
+        // Resolve backend + provider_config
+        [$backend, $providerConfig, $providerId, $serviceId] = $this->resolve($options);
+
+        if (!$backend) {
+            if ($this->logger) $this->logger->warning('Dispatcher: no backend resolved');
+            return null;
+        }
+
+        $callOptions = $options;
+        $callOptions['provider_config'] = array_merge(
+            $providerConfig ?? [],
+            $options['provider_config'] ?? [],
+        );
+
+        $result = $backend->generate($callOptions);
+        $durationMs = (int) round((microtime(true) - $start) * 1000);
+
+        if (!$result) return null;
+
+        // Compute cost
+        $cost = $this->costs->calculate(
+            $result['model'] ?? 'unknown',
+            $result['usage']['input_tokens'] ?? 0,
+            $result['usage']['output_tokens'] ?? 0,
+        );
+
+        $result['cost_usd'] = $cost;
+        $result['backend'] = $backend->name();
+        $result['duration_ms'] = $durationMs;
+
+        // Record usage
+        if ($this->usage) {
+            $this->usage->record([
+                'backend' => $backend->name(),
+                'provider_id' => $providerId,
+                'service_id' => $serviceId,
+                'model' => $result['model'] ?? 'unknown',
+                'task_type' => $options['task_type'] ?? null,
+                'capability' => $options['capability'] ?? null,
+                'input_tokens' => $result['usage']['input_tokens'] ?? 0,
+                'output_tokens' => $result['usage']['output_tokens'] ?? 0,
+                'cost_usd' => $cost,
+                'duration_ms' => $durationMs,
+                'user_id' => $options['user_id'] ?? null,
+            ]);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Resolve [Backend, providerConfig, providerId, serviceId] for the given options.
+     *
+     * @return array{0: ?Backend, 1: array, 2: ?int, 3: ?int}
+     */
+    protected function resolve(array $options): array
+    {
+        // 1. Explicit backend override
+        if (!empty($options['backend'])) {
+            $backend = $this->backends->get($options['backend']);
+            return [$backend, [], null, null];
+        }
+
+        // 2. Explicit provider_id override
+        if (!empty($options['provider_id']) && $this->providers) {
+            $provider = $this->providers->findById($options['provider_id']);
+            if ($provider) {
+                return [
+                    $this->backends->get($this->backendForProvider($provider)),
+                    $provider,
+                    $provider['id'],
+                    null,
+                ];
+            }
+        }
+
+        // 3. Routing lookup by task_type + capability
+        if (!empty($options['task_type']) && !empty($options['capability']) && $this->routing) {
+            $service = $this->routing->resolve($options['task_type'], $options['capability']);
+            if ($service) {
+                $providerConfig = [
+                    'api_key' => $service['api_key'] ?? null,
+                    'base_url' => $service['base_url'] ?? null,
+                    'model' => $service['model'] ?? null,
+                ];
+                $backendName = $service['backend'] ?? $this->inferBackendFromProtocol($service['protocol'] ?? '');
+                return [$this->backends->get($backendName), $providerConfig, null, $service['id'] ?? null];
+            }
+        }
+
+        // 4. Active provider for scope
+        if ($this->providers) {
+            $scope = $options['scope'] ?? 'global';
+            $scopeId = $options['scope_id'] ?? null;
+            $provider = $this->providers->findActive($scope, $scopeId);
+            if ($provider) {
+                return [
+                    $this->backends->get($this->backendForProvider($provider)),
+                    $provider,
+                    $provider['id'],
+                    null,
+                ];
+            }
+        }
+
+        // 5. Default backend from config + env credentials
+        $defaultBackend = function_exists('config')
+            ? config('ai-core.default_backend', 'anthropic_api')
+            : 'anthropic_api';
+        return [$this->backends->get($defaultBackend), [], null, null];
+    }
+
+    protected function backendForProvider(array $provider): string
+    {
+        // If provider has an explicit backend column, use it.
+        if (!empty($provider['backend'])) {
+            return match ($provider['backend']) {
+                'claude' => 'claude_cli',
+                'codex' => 'codex_cli',
+                'superagent' => 'superagent',
+                default => $provider['backend'],
+            };
+        }
+
+        // Otherwise infer from type
+        return match ($provider['type'] ?? '') {
+            'anthropic', 'anthropic-proxy', 'bedrock', 'vertex' => 'anthropic_api',
+            'openai', 'openai-compatible' => 'openai_api',
+            'builtin' => 'claude_cli',
+            default => 'anthropic_api',
+        };
+    }
+
+    protected function inferBackendFromProtocol(string $protocol): string
+    {
+        return match ($protocol) {
+            'anthropic' => 'anthropic_api',
+            'openai' => 'openai_api',
+            'superagent' => 'superagent',
+            default => 'anthropic_api',
+        };
+    }
+}
