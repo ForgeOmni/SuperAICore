@@ -100,7 +100,9 @@ If the skill tells you to spawn / assemble / dispatch N agents, your job here is
 
 **Step 1.** Decide which agents to spawn (2–5 unless the skill says otherwise). For each one, read its role definition from `.claude/agents/<agent-name>.md` via `read_file`.
 
-**Step 2.** Write `_spawn_plan.json` in the output directory. Exact shape:
+**Step 2.** Write `_spawn_plan.json` in the output directory using the **absolute path** from the skill's output-directory rule (the one in the SECURITY SANDBOX block later in this prompt). Never use a bare relative path like `_spawn_plan.json` — gemini-cli's cwd is the project root, not the sandbox dir, so the plan would land in the wrong place.
+
+Exact shape:
 
 ```json
 {

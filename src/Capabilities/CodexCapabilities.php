@@ -84,7 +84,7 @@ You are running under OpenAI codex-rs. Tool names follow the standard Read/Write
 **Agent spawning — Spawn Plan protocol**: codex has no native sub-agent tool. Do NOT play all roles yourself sequentially. Instead, when a skill tells you to spawn / assemble / dispatch N agents:
 
 1. Read each agent's role definition from `.claude/agents/<agent-name>.md`.
-2. Write `_spawn_plan.json` in the output directory:
+2. Write `_spawn_plan.json` in the output directory using the **absolute path** from the skill's output-directory rule. Never use a bare relative path — codex's cwd is the project root, so the plan would land in the wrong place.
    ```json
    {
      "version": 1, "concurrency": 4,
