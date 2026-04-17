@@ -2950,4 +2950,77 @@ class McpManager
 
         rmdir($dir);
     }
+
+    /**
+     * Write the current MCP server set into every supported backend's
+     * native config file via its BackendCapabilities adapter.
+     *
+     * @param  array|null  $backends   subset of ['claude','codex','gemini']; null = all that support MCP
+     * @param  CapabilityRegistry|null $registry  defaults to app-bound singleton
+     * @return array<int,array{backend:string,path:string,bytes:int,error:?string}>
+     */
+    public static function syncAllBackends(?array $backends = null, ?CapabilityRegistry $registry = null): array
+    {
+        $servers = self::toCanonicalServerSpec(self::codexMcpServers());
+
+        if ($registry === null && function_exists('app')) {
+            try {
+                $registry = app(CapabilityRegistry::class);
+            } catch (\Throwable $e) {
+                $registry = new CapabilityRegistry();
+            }
+        }
+        $registry ??= new CapabilityRegistry();
+
+        $backends ??= ['claude', 'codex', 'gemini'];
+        $home = getenv('HOME') ?: (PHP_OS_FAMILY === 'Windows' ? (getenv('USERPROFILE') ?: '') : '');
+        $report = [];
+
+        foreach ($backends as $backend) {
+            $cap = $registry->for($backend);
+            $relPath = $cap->mcpConfigPath();
+            if (!$cap->supportsMcp() || !$relPath || !$home) {
+                $report[] = ['backend' => $backend, 'path' => '', 'bytes' => 0, 'error' => 'backend does not support MCP or home unknown'];
+                continue;
+            }
+
+            $full = $home . DIRECTORY_SEPARATOR . $relPath;
+            $dir = dirname($full);
+            if (!is_dir($dir)) @mkdir($dir, 0755, true);
+
+            try {
+                $content = $cap->renderMcpConfig($servers);
+                $written = @file_put_contents($full, $content);
+                $report[] = [
+                    'backend' => $backend,
+                    'path' => $full,
+                    'bytes' => $written === false ? 0 : $written,
+                    'error' => $written === false ? 'file_put_contents failed' : null,
+                ];
+            } catch (\Throwable $e) {
+                $report[] = ['backend' => $backend, 'path' => $full, 'bytes' => 0, 'error' => $e->getMessage()];
+            }
+        }
+
+        return $report;
+    }
+
+    /**
+     * Normalize `[name => [command, args, env]]` into the canonical spec
+     * BackendCapabilities::renderMcpConfig() expects.
+     */
+    protected static function toCanonicalServerSpec(array $named): array
+    {
+        $out = [];
+        foreach ($named as $key => $server) {
+            if (!is_array($server)) continue;
+            $out[] = [
+                'key' => (string) $key,
+                'command' => $server['command'] ?? null,
+                'args' => $server['args'] ?? [],
+                'env' => $server['env'] ?? [],
+            ];
+        }
+        return $out;
+    }
 }

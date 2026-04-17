@@ -70,10 +70,20 @@ class CodexCapabilities implements BackendCapabilities
 
 You are running under OpenAI codex-rs. Tool names follow the standard Read/Write/Edit/Bash set — no translation needed.
 
-**Agent spawning**: codex has no native sub-agent tool. When a skill asks you to "spawn N agents in parallel with subagent_type = X", you do NOT have that tool. Instead:
-1. Read each agent's role definition from `.claude/agents/<name>.md` yourself.
-2. Play each role sequentially — produce every output file the skill asks for.
-3. Do not skip output files even if a role feels redundant.
+**Agent spawning — Spawn Plan protocol**: codex has no native sub-agent tool. Do NOT play all roles yourself sequentially. Instead, when a skill tells you to spawn / assemble / dispatch N agents:
+
+1. Read each agent's role definition from `.claude/agents/<agent-name>.md`.
+2. Write `_spawn_plan.json` in the output directory:
+   ```json
+   {
+     "version": 1, "concurrency": 4,
+     "agents": [
+       { "name": "ceo-bezos", "system_prompt": "...role.md contents...", "task_prompt": "task-specific instructions...", "output_subdir": "ceo-bezos" },
+       ...
+     ]
+   }
+   ```
+3. Stop. The host will fan out real child processes in parallel and then call you back with every agent's output files ready to consolidate.
 
 **External research**: If the task requires web search / URL fetch, these are available only through MCP servers (Exa, Tavily, Brave, Firecrawl, etc.). Check `~/.codex/config.toml` `[mcp_servers.*]` for what's installed. If none are configured for research and the task needs external information, note this limitation in your final report rather than making up data.
 

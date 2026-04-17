@@ -76,7 +76,35 @@ You are running under the Gemini CLI runtime. The task instructions below refere
 - `Glob`      → **`glob`**
 - `Grep`      → **`grep_search`**
 - `Bash`      → **`run_shell_command`**
-- `Agent` with `subagent_type` → **You have no native sub-agent tool.** When the skill asks you to "spawn N agents in parallel", do NOT fake it with `codebase_investigator`. Instead, play all roles yourself sequentially and still produce the per-role output files the skill requires.
+- `Agent` with `subagent_type` → **You have no native sub-agent tool.** Do NOT fake it with `codebase_investigator` or try to play all roles yourself. Instead, use the **Spawn Plan protocol** described below.
+
+## Spawn Plan Protocol (when a skill asks to "spawn N agents in parallel")
+
+If the skill tells you to spawn / assemble / dispatch N agents, your job here is to **write a plan file and stop** — the host will fan out the real child processes in parallel and then call you back to consolidate.
+
+**Step 1.** Decide which agents to spawn (2–5 unless the skill says otherwise). For each one, read its role definition from `.claude/agents/<agent-name>.md` via `read_file`.
+
+**Step 2.** Write `_spawn_plan.json` in the output directory. Exact shape:
+
+```json
+{
+  "version": 1,
+  "concurrency": 4,
+  "agents": [
+    {
+      "name": "ceo-bezos",
+      "system_prompt": "...full contents of .claude/agents/ceo-bezos.md...",
+      "task_prompt": "Specific instructions for THIS agent on THIS task — include the output dir, language requirement, and any methodology the skill requires (research keywords, CSV format, etc.).",
+      "output_subdir": "ceo-bezos"
+    },
+    { "name": "legal-lessig", "system_prompt": "...", "task_prompt": "...", "output_subdir": "legal-lessig" }
+  ]
+}
+```
+
+**Step 3.** After writing the plan, stop. Do NOT play the roles yourself. Reply with a one-line confirmation like `Plan emitted: N agents.` and end.
+
+When the host re-invokes you for **consolidation**, you will see each agent's output files already present in their `output_subdir`. Read them via `read_file`, then write the final summary / 思维导图 / 流程图 files as the skill requires.
 
 ## Mandatory Behavior for External-Research Tasks
 
