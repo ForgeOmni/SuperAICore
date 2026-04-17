@@ -18,7 +18,19 @@ class BackendStateTest extends TestCase
     {
         $this->assertFalse(BackendState::isEngineDisabled('claude'));
         $this->assertFalse(BackendState::isEngineDisabled('codex'));
+        $this->assertFalse(BackendState::isEngineDisabled('gemini'));
         $this->assertFalse(BackendState::isEngineDisabled('superagent'));
+    }
+
+    public function test_disabling_gemini_blocks_gemini_cli_and_gemini_api(): void
+    {
+        IntegrationConfig::setValue('ai_execution', 'backend_disabled.gemini', '1');
+
+        $this->assertFalse(BackendState::isDispatcherBackendAllowed('gemini_cli'));
+        $this->assertFalse(BackendState::isDispatcherBackendAllowed('gemini_api'));
+        // ... but leaves the other engines alone
+        $this->assertTrue(BackendState::isDispatcherBackendAllowed('claude_cli'));
+        $this->assertTrue(BackendState::isDispatcherBackendAllowed('codex_cli'));
     }
 
     public function test_disabling_an_engine_blocks_all_its_dispatcher_backends(): void

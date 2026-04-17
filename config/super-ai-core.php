@@ -66,6 +66,15 @@ return [
             'binary' => env('CODEX_CLI_BIN', 'codex'),
             'timeout' => 300,
         ],
+        'gemini_cli' => [
+            'enabled' => env('AI_CORE_GEMINI_CLI_ENABLED', true),
+            'binary' => env('GEMINI_CLI_BIN', 'gemini'),
+            'timeout' => 300,
+        ],
+        'gemini_api' => [
+            'enabled' => env('AI_CORE_GEMINI_API_ENABLED', true),
+            'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com'),
+        ],
         'superagent' => [
             'enabled' => env('AI_CORE_SUPERAGENT_ENABLED', true),
         ],
@@ -113,5 +122,8 @@ return [
         'claude-haiku-4-5-20251001'   => ['input' => 1.00,  'output' => 5.00],
         'gpt-4o'                      => ['input' => 2.50,  'output' => 10.00],
         'gpt-4o-mini'                 => ['input' => 0.15,  'output' => 0.60],
+        'gemini-2.5-pro'              => ['input' => 1.25,  'output' => 10.00],
+        'gemini-2.5-flash'            => ['input' => 0.30,  'output' => 2.50],
+        'gemini-2.5-flash-lite'       => ['input' => 0.10,  'output' => 0.40],
     ],
 ];

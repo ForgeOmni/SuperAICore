@@ -15,8 +15,8 @@ use SuperAICore\Models\IntegrationConfig;
  * The toggle state is persisted in IntegrationConfig so it survives deploys
  * and is shared across workers without touching .env.
  *
- * The three UI engines (claude, codex, superagent) fan out to five Dispatcher
- * backends; the map below keeps that translation in one place.
+ * The four UI engines (claude, codex, gemini, superagent) fan out to seven
+ * Dispatcher backends; the map below keeps that translation in one place.
  */
 class BackendState
 {
@@ -28,6 +28,8 @@ class BackendState
         'anthropic_api' => 'claude',
         'codex_cli'     => 'codex',
         'openai_api'    => 'codex',
+        'gemini_cli'    => 'gemini',
+        'gemini_api'    => 'gemini',
         'superagent'    => 'superagent',
     ];
 

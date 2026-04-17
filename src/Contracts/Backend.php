@@ -12,7 +12,7 @@ namespace SuperAICore\Contracts;
 interface Backend
 {
     /**
-     * @return string machine identifier (claude_cli | codex_cli | superagent | anthropic_api | openai_api)
+     * @return string machine identifier (claude_cli | codex_cli | gemini_cli | superagent | anthropic_api | openai_api | gemini_api)
      */
     public function name(): string;
 

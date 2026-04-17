@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-Package Laravel pour l'exécution unifiée d'IA sur trois moteurs d'exécution : **Claude Code CLI**, **Codex CLI** et **SuperAgent SDK**. Livré avec une CLI indépendante du framework, un dispatcher par capacité, la gestion des serveurs MCP, le suivi d'usage, l'analyse des coûts et une interface d'administration complète.
+Package Laravel pour l'exécution unifiée d'IA sur quatre moteurs d'exécution : **Claude Code CLI**, **Codex CLI**, **Gemini CLI** et **SuperAgent SDK**. Livré avec une CLI indépendante du framework, un dispatcher par capacité, la gestion des serveurs MCP, le suivi d'usage, l'analyse des coûts et une interface d'administration complète.
 
 Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est optionnelle et entièrement remplaçable : elle peut être intégrée dans une application hôte (par ex. SuperTeam) ou désactivée si seuls les services sont nécessaires.
 
@@ -24,11 +24,12 @@ L'entrée `forgeomni/superagent` dans `composer.json` est présente pour que le 
 
 ## Fonctionnalités
 
-- **Trois moteurs d'exécution** — Claude Code CLI, Codex CLI et SuperAgent SDK — unifiés derrière un même contrat `Dispatcher`. Chaque moteur accepte un jeu fixe de types de provider (hérité de SuperTeam) :
+- **Quatre moteurs d'exécution** — Claude Code CLI, Codex CLI, Gemini CLI et SuperAgent SDK — unifiés derrière un même contrat `Dispatcher`. Chaque moteur accepte un jeu fixe de types de provider :
   - **Claude Code CLI** : `builtin` (connexion locale), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`
   - **Codex CLI** : `builtin` (connexion ChatGPT), `openai`, `openai-compatible`
+  - **Gemini CLI** : `builtin` (connexion Google OAuth), `google-ai`, `vertex`
   - **SuperAgent SDK** : `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`
-- Les moteurs se déploient en interne sur cinq adaptateurs Dispatcher (`claude_cli`, `codex_cli`, `superagent`, `anthropic_api`, `openai_api`) — adaptateur CLI quand le provider est `builtin`, adaptateur HTTP quand il utilise une clé API. Détail d'implémentation ; les cinq noms restent adressables depuis la CLI si besoin.
+- Les moteurs se déploient en interne sur sept adaptateurs Dispatcher (`claude_cli`, `codex_cli`, `gemini_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`) — adaptateur CLI quand le provider est `builtin`, adaptateur HTTP quand il utilise une clé API. Détail d'implémentation ; tous les noms restent adressables depuis la CLI si besoin.
 - **Modèle Provider / Service / Routing** — associer des capacités abstraites (`summarize`, `translate`, `code_review`…) à des services concrets, puis les services à des identifiants provider.
 - **Gestionnaire de serveurs MCP** — installer, activer et configurer les serveurs MCP depuis l'UI d'administration.
 - **Suivi d'usage** — chaque appel persiste les tokens prompt/réponse, la durée et le coût dans `ai_usage_logs`.
@@ -45,9 +46,10 @@ L'entrée `forgeomni/superagent` dans `composer.json` est présente pour que le 
 
 Optionnel, uniquement quand le backend correspondant est activé :
 
-- `claude` CLI dans `$PATH` pour le backend Claude CLI
-- `codex` CLI dans `$PATH` pour le backend Codex CLI
-- Clé API Anthropic ou OpenAI pour les backends HTTP
+- `claude` CLI dans `$PATH` — `npm i -g @anthropic-ai/claude-code`
+- `codex` CLI dans `$PATH` — `brew install codex`
+- `gemini` CLI dans `$PATH` — `npm i -g @google/gemini-cli`
+- Clé API Anthropic / OpenAI / Google AI Studio pour les backends HTTP
 
 ## Installation
 
@@ -66,14 +68,16 @@ Guide complet étape par étape : [INSTALL.fr.md](INSTALL.fr.md).
 # Lister les adaptateurs Dispatcher et leur disponibilité
 ./vendor/bin/super-ai-core list-backends
 
-# Piloter les trois moteurs depuis la CLI
+# Piloter les quatre moteurs depuis la CLI
 ./vendor/bin/super-ai-core call "Bonjour" --backend=claude_cli                              # Claude Code CLI (connexion locale)
 ./vendor/bin/super-ai-core call "Bonjour" --backend=codex_cli                               # Codex CLI (connexion ChatGPT)
+./vendor/bin/super-ai-core call "Bonjour" --backend=gemini_cli                              # Gemini CLI (OAuth Google)
 ./vendor/bin/super-ai-core call "Bonjour" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # Court-circuiter la CLI et appeler directement les API HTTP
 ./vendor/bin/super-ai-core call "Bonjour" --backend=anthropic_api --api-key=sk-ant-...      # Moteur Claude en mode HTTP
 ./vendor/bin/super-ai-core call "Bonjour" --backend=openai_api --api-key=sk-...             # Moteur Codex en mode HTTP
+./vendor/bin/super-ai-core call "Bonjour" --backend=gemini_api --api-key=AIza...            # Moteur Gemini en mode HTTP
 ```
 
 ## Démarrage rapide — PHP
@@ -106,10 +110,12 @@ echo $result['text'];
                               vertex / anthropic-proxy
   Codex CLI       ──────────▶ builtin                  ────▶ codex_cli
                               openai / openai-compat   ────▶ openai_api
+  Gemini CLI      ──────────▶ builtin / vertex         ────▶ gemini_cli
+                              google-ai                ────▶ gemini_api
   SuperAgent SDK  ──────────▶ anthropic(-proxy) /      ────▶ superagent
                               openai(-compatible)
 
-  Dispatcher ← BackendRegistry   (contient les 5 adaptateurs ci-dessus)
+  Dispatcher ← BackendRegistry   (contient les 7 adaptateurs ci-dessus)
              ← ProviderResolver  (provider actif depuis ProviderRepository)
              ← RoutingRepository (task_type + capability → service)
              ← UsageTracker      (écrit dans UsageRepository)

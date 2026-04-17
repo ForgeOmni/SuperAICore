@@ -29,7 +29,7 @@ class ProviderController extends Controller
         $defaultBackend = IntegrationConfig::getValue('ai_execution', 'default_backend') ?: 'claude';
 
         // Hide SuperAgent entirely when the SDK is not installed.
-        $backends = ['claude', 'codex'];
+        $backends = ['claude', 'codex', 'gemini'];
         if (SuperAgentDetector::isAvailable()) {
             $backends[] = 'superagent';
         }
@@ -100,12 +100,16 @@ class ProviderController extends Controller
     }
 
     /**
-     * Test a built-in backend (local claude/codex CLI login) with a tiny prompt.
+     * Test a built-in backend (local claude/codex/gemini CLI login) with a tiny prompt.
      */
     public function testBuiltin(Request $request, \SuperAICore\Services\Dispatcher $dispatcher)
     {
-        $request->validate(['backend' => 'required|in:claude,codex']);
-        $backendName = $request->input('backend') === 'claude' ? 'claude_cli' : 'codex_cli';
+        $request->validate(['backend' => 'required|in:claude,codex,gemini']);
+        $backendName = match ($request->input('backend')) {
+            'claude' => 'claude_cli',
+            'codex'  => 'codex_cli',
+            'gemini' => 'gemini_cli',
+        };
 
         try {
             $result = $dispatcher->dispatch([
@@ -203,7 +207,7 @@ class ProviderController extends Controller
             }
         }
 
-        return response()->json(['models' => $this->fallbackModels($provider->type)]);
+        return response()->json(['models' => $this->fallbackModels($provider->type, $provider->backend)]);
     }
 
     /**
@@ -234,7 +238,11 @@ class ProviderController extends Controller
 
     protected function availableBackends(): array
     {
-        $backends = [AiProvider::BACKEND_CLAUDE, AiProvider::BACKEND_CODEX];
+        $backends = [
+            AiProvider::BACKEND_CLAUDE,
+            AiProvider::BACKEND_CODEX,
+            AiProvider::BACKEND_GEMINI,
+        ];
         if (SuperAgentDetector::isAvailable()) {
             $backends[] = AiProvider::BACKEND_SUPERAGENT;
         }
@@ -311,11 +319,17 @@ class ProviderController extends Controller
         return $models;
     }
 
-    protected function fallbackModels(string $type): array
+    protected function fallbackModels(string $type, ?string $backend = null): array
     {
+        // Vertex is ambiguous across engines — Claude + Gemini both use it.
+        // Disambiguate on backend before falling back to type-based matching.
+        if ($backend === AiProvider::BACKEND_GEMINI || $type === AiProvider::TYPE_GOOGLE_AI) {
+            return array_map(
+                fn ($m) => ['id' => $m['slug'], 'display_name' => $m['display_name']],
+                \SuperAICore\Services\GeminiModelResolver::catalog(),
+            );
+        }
         if (str_starts_with($type, 'anthropic') || $type === AiProvider::TYPE_BEDROCK || $type === AiProvider::TYPE_VERTEX) {
-            // Derived from ClaudeModelResolver so new Claude generations
-            // only need to be added in one place.
             return array_map(
                 fn ($m) => ['id' => $m['slug'], 'display_name' => $m['display_name']],
                 ClaudeModelResolver::catalog(),

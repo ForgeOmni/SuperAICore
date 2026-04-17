@@ -40,6 +40,24 @@ class AiProviderMatrixTest extends TestCase
         $this->assertNotContains(AiProvider::TYPE_BEDROCK, $types);
     }
 
+    public function test_gemini_backend_allows_builtin_google_ai_and_vertex(): void
+    {
+        $types = AiProvider::typesForBackend(AiProvider::BACKEND_GEMINI);
+        $this->assertContains(AiProvider::TYPE_BUILTIN, $types);
+        $this->assertContains(AiProvider::TYPE_GOOGLE_AI, $types);
+        $this->assertContains(AiProvider::TYPE_VERTEX, $types);
+        $this->assertNotContains(AiProvider::TYPE_ANTHROPIC, $types);
+        $this->assertNotContains(AiProvider::TYPE_OPENAI, $types);
+        $this->assertNotContains(AiProvider::TYPE_BEDROCK, $types);
+    }
+
+    public function test_google_ai_type_is_only_valid_under_gemini_backend(): void
+    {
+        $this->assertNotContains(AiProvider::TYPE_GOOGLE_AI, AiProvider::typesForBackend(AiProvider::BACKEND_CLAUDE));
+        $this->assertNotContains(AiProvider::TYPE_GOOGLE_AI, AiProvider::typesForBackend(AiProvider::BACKEND_CODEX));
+        $this->assertNotContains(AiProvider::TYPE_GOOGLE_AI, AiProvider::typesForBackend(AiProvider::BACKEND_SUPERAGENT));
+    }
+
     public function test_unknown_backend_returns_empty_array(): void
     {
         $this->assertSame([], AiProvider::typesForBackend('nope'));

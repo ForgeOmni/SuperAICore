@@ -14,7 +14,7 @@ class ProcessMonitor
      * Default keywords host apps care about. Pass a custom list to narrow or
      * extend.
      */
-    const DEFAULT_KEYWORDS = ['claude', 'codex', 'superagent', 'task:execute', 'run:translate'];
+    const DEFAULT_KEYWORDS = ['claude', 'codex', 'gemini', 'superagent', 'task:execute', 'run:translate'];
 
     /**
      * Scan `ps aux` and return rows matching any of $keywords.

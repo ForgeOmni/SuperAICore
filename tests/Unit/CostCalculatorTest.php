@@ -41,4 +41,18 @@ class CostCalculatorTest extends TestCase
         // 1M input + 1M output = 10 + 20 = 30
         $this->assertEqualsWithDelta(30.0, $calc->calculate('fake-model', 1_000_000, 1_000_000), 0.0001);
     }
+
+    public function test_gemini_2_5_pro_pricing(): void
+    {
+        // Config: gemini-2.5-pro → input 1.25, output 10.00 per 1M
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(11.25, $calc->calculate('gemini-2.5-pro', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_gemini_flash_lite_is_cheapest_tier(): void
+    {
+        $calc = new CostCalculator();
+        // gemini-2.5-flash-lite → input 0.10, output 0.40
+        $this->assertEqualsWithDelta(0.50, $calc->calculate('gemini-2.5-flash-lite', 1_000_000, 1_000_000), 0.0001);
+    }
 }

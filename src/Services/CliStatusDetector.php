@@ -9,17 +9,19 @@ use Symfony\Component\Process\Process;
  * Detects installation status + version + auth of CLI backends:
  * - claude (Claude Code CLI)
  * - codex (OpenAI Codex CLI)
+ * - gemini (Google Gemini CLI)
  * - superagent (SDK, no CLI — reports composer version)
  */
 class CliStatusDetector
 {
-    const BACKENDS = ['claude', 'codex', 'superagent'];
+    const BACKENDS = ['claude', 'codex', 'gemini', 'superagent'];
 
     public static function all(): array
     {
         return [
             'claude' => self::detectBinary('claude'),
             'codex' => self::detectBinary('codex'),
+            'gemini' => self::detectBinary('gemini'),
             'superagent' => self::superagentStatus(),
         ];
     }
@@ -28,7 +30,7 @@ class CliStatusDetector
     {
         return match ($backend) {
             'superagent' => self::superagentStatus(),
-            'claude', 'codex' => self::detectBinary($backend),
+            'claude', 'codex', 'gemini' => self::detectBinary($backend),
             default => ['installed' => false, 'backend' => $backend],
         };
     }

@@ -31,7 +31,8 @@ class AiProvider extends Model
     const BACKEND_CLAUDE     = 'claude';
     const BACKEND_CODEX      = 'codex';
     const BACKEND_SUPERAGENT = 'superagent';
-    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT];
+    const BACKEND_GEMINI     = 'gemini';
+    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI];
 
     const TYPE_BUILTIN           = 'builtin';
     const TYPE_ANTHROPIC         = 'anthropic';
@@ -40,6 +41,7 @@ class AiProvider extends Model
     const TYPE_VERTEX            = 'vertex';
     const TYPE_OPENAI            = 'openai';
     const TYPE_OPENAI_COMPATIBLE = 'openai-compatible';
+    const TYPE_GOOGLE_AI         = 'google-ai';
 
     const TYPES = [
         self::TYPE_BUILTIN           => 'builtin',
@@ -49,16 +51,18 @@ class AiProvider extends Model
         self::TYPE_VERTEX            => 'vertex',
         self::TYPE_OPENAI            => 'openai',
         self::TYPE_OPENAI_COMPATIBLE => 'openai-compatible',
+        self::TYPE_GOOGLE_AI         => 'google-ai',
     ];
 
     /**
-     * Valid backend → type matrix (inherited from SuperTeam).
+     * Valid backend → type matrix (inherited from SuperTeam, extended for Gemini).
      * Arbitrary backend/type combinations are rejected at the validation layer
      * and the "New provider" modal narrows the type dropdown based on backend.
      *
      *  claude     → Anthropic family (+ Bedrock / Vertex passthrough, builtin login)
      *  codex      → OpenAI family (+ builtin ChatGPT login)
      *  superagent → SDK can drive either provider family; no builtin
+     *  gemini     → Google AI Studio (google-ai) or Vertex AI (vertex) + builtin OAuth login
      */
     const BACKEND_TYPES = [
         self::BACKEND_CLAUDE => [
@@ -78,6 +82,11 @@ class AiProvider extends Model
             self::TYPE_ANTHROPIC_PROXY,
             self::TYPE_OPENAI,
             self::TYPE_OPENAI_COMPATIBLE,
+        ],
+        self::BACKEND_GEMINI => [
+            self::TYPE_BUILTIN,
+            self::TYPE_GOOGLE_AI,
+            self::TYPE_VERTEX,
         ],
     ];
 

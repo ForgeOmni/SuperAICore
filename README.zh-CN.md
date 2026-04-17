@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-用于统一调度三种 AI 执行引擎的 Laravel 包：**Claude Code CLI**、**Codex CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析，以及一套完整的后台管理 UI。
+用于统一调度四种 AI 执行引擎的 Laravel 包：**Claude Code CLI**、**Codex CLI**、**Gemini CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析，以及一套完整的后台管理 UI。
 
 在干净的 Laravel 项目中可独立运行。UI 可选、可完全替换，既能嵌入宿主应用（例如 SuperTeam），也可以在仅使用服务层时关掉。
 
@@ -24,11 +24,12 @@
 
 ## 特性
 
-- **三个执行引擎** —— Claude Code CLI、Codex CLI、SuperAgent SDK，统一实现同一套 `Dispatcher` 契约。每个引擎只接受固定几类 provider（沿用 SuperTeam 的组合）：
+- **四个执行引擎** —— Claude Code CLI、Codex CLI、Gemini CLI、SuperAgent SDK，统一实现同一套 `Dispatcher` 契约。每个引擎只接受固定几类 provider：
   - **Claude Code CLI**：`builtin`（本地登录）、`anthropic`、`anthropic-proxy`、`bedrock`、`vertex`
   - **Codex CLI**：`builtin`（ChatGPT 登录）、`openai`、`openai-compatible`
+  - **Gemini CLI**：`builtin`（Google OAuth 登录）、`google-ai`、`vertex`
   - **SuperAgent SDK**：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`
-- 三个引擎在 Dispatcher 内部扇出成五个适配器（`claude_cli`、`codex_cli`、`superagent`、`anthropic_api`、`openai_api`）—— provider 为 `builtin` 时走 CLI 适配器，持有 API Key 时走 HTTP 适配器。这是实现细节，一般无需关心；如需低层直调，CLI 也能直接指定这五个适配器名。
+- 四个引擎在 Dispatcher 内部扇出成七个适配器（`claude_cli`、`codex_cli`、`gemini_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— provider 为 `builtin` 时走 CLI 适配器，持有 API Key 时走 HTTP 适配器。这是实现细节，一般无需关心；如需低层直调，CLI 也能直接指定这些适配器名。
 - **Provider / Service / Routing 模型** —— 将抽象能力（`summarize`、`translate`、`code_review` 等）映射到具体服务，再将服务绑定到 provider 凭证。
 - **MCP 服务器管理器** —— 在后台 UI 中安装、启用、配置 MCP 服务器。
 - **使用量追踪** —— 每次调用将 prompt / response tokens、耗时、成本写入 `ai_usage_logs` 表。
@@ -45,9 +46,10 @@
 
 下列为可选，仅当启用对应后端时需要：
 
-- `claude` CLI 在 `$PATH` 中（Claude CLI 后端）
-- `codex` CLI 在 `$PATH` 中（Codex CLI 后端）
-- Anthropic 或 OpenAI API Key（HTTP 后端）
+- `claude` CLI 在 `$PATH` 中 —— `npm i -g @anthropic-ai/claude-code`
+- `codex` CLI 在 `$PATH` 中 —— `brew install codex`
+- `gemini` CLI 在 `$PATH` 中 —— `npm i -g @google/gemini-cli`
+- Anthropic / OpenAI / Google AI Studio API Key（HTTP 后端）
 
 ## 安装
 
@@ -66,14 +68,16 @@ php artisan migrate
 # 查看 Dispatcher 适配器及其可用状态
 ./vendor/bin/super-ai-core list-backends
 
-# 从 CLI 驱动三个引擎
+# 从 CLI 驱动四个引擎
 ./vendor/bin/super-ai-core call "你好" --backend=claude_cli                              # Claude Code CLI（本地登录）
 ./vendor/bin/super-ai-core call "你好" --backend=codex_cli                               # Codex CLI（ChatGPT 登录）
+./vendor/bin/super-ai-core call "你好" --backend=gemini_cli                              # Gemini CLI（Google OAuth）
 ./vendor/bin/super-ai-core call "你好" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # 跳过 CLI 包装，直接打 HTTP API
 ./vendor/bin/super-ai-core call "你好" --backend=anthropic_api --api-key=sk-ant-...      # Claude 引擎的 HTTP 模式
 ./vendor/bin/super-ai-core call "你好" --backend=openai_api --api-key=sk-...             # Codex 引擎的 HTTP 模式
+./vendor/bin/super-ai-core call "你好" --backend=gemini_api --api-key=AIza...            # Gemini 引擎的 HTTP 模式
 ```
 
 ## PHP 调用示例
@@ -106,10 +110,12 @@ echo $result['text'];
                             vertex / anthropic-proxy
   Codex CLI       ────────▶ builtin                    ────▶ codex_cli
                             openai / openai-compat     ────▶ openai_api
+  Gemini CLI      ────────▶ builtin / vertex           ────▶ gemini_cli
+                            google-ai                  ────▶ gemini_api
   SuperAgent SDK  ────────▶ anthropic(-proxy) /        ────▶ superagent
                             openai(-compatible)
 
-  Dispatcher ← BackendRegistry   （管理上述 5 个适配器）
+  Dispatcher ← BackendRegistry   （管理上述 7 个适配器）
              ← ProviderResolver  （从 ProviderRepository 读取当前 provider）
              ← RoutingRepository （task_type + capability → service）
              ← UsageTracker      （写入 UsageRepository）

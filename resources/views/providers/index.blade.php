@@ -13,7 +13,12 @@
 {{-- CLI Status + Default Backend --}}
 @php
     $backendLabels = array_intersect_key(
-        ['claude' => 'Claude Code CLI', 'codex' => 'Codex CLI', 'superagent' => 'SuperAgent SDK'],
+        [
+            'claude'     => 'Claude Code CLI',
+            'codex'      => 'Codex CLI',
+            'gemini'     => 'Gemini CLI',
+            'superagent' => 'SuperAgent SDK',
+        ],
         array_flip($backends)
     );
 @endphp
@@ -68,6 +73,8 @@
                                 <code>npm i -g @anthropic-ai/claude-code</code>
                             @elseif($be === 'codex')
                                 <code>brew install codex</code>
+                            @elseif($be === 'gemini')
+                                <code>npm i -g @google/gemini-cli</code>
                             @endif
                         </div>
                     @endif
@@ -81,14 +88,19 @@
 {{-- Provider list grouped by backend, with built-in rows --}}
 @foreach($providersByBackend as $be => $beProviders)
     @php
-        $beLabel = ['claude' => 'Claude Code', 'codex' => 'Codex', 'superagent' => 'SuperAgent SDK'][$be] ?? $be;
+        $beLabel = [
+            'claude'     => 'Claude Code',
+            'codex'      => 'Codex',
+            'gemini'     => 'Gemini',
+            'superagent' => 'SuperAgent SDK',
+        ][$be] ?? $be;
         $anyActive = $beProviders->contains(fn ($p) => $p->is_active);
         $beDisabled = !empty($backendDisabled[$be]);
     @endphp
     <div class="card border-0 shadow-sm mb-3 {{ $beDisabled ? 'opacity-50' : '' }}">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <div>
-                <strong><i class="bi bi-{{ ['claude'=>'robot','codex'=>'code-slash','superagent'=>'cpu'][$be] ?? 'plug' }} me-1"></i>{{ $beLabel }}</strong>
+                <strong><i class="bi bi-{{ ['claude'=>'robot','codex'=>'code-slash','gemini'=>'stars','superagent'=>'cpu'][$be] ?? 'plug' }} me-1"></i>{{ $beLabel }}</strong>
                 <code class="small text-muted ms-2">{{ $be }}</code>
             </div>
             @if($beDisabled)

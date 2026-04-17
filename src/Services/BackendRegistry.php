@@ -5,6 +5,8 @@ namespace SuperAICore\Services;
 use SuperAICore\Backends\AnthropicApiBackend;
 use SuperAICore\Backends\ClaudeCliBackend;
 use SuperAICore\Backends\CodexCliBackend;
+use SuperAICore\Backends\GeminiApiBackend;
+use SuperAICore\Backends\GeminiCliBackend;
 use SuperAICore\Backends\OpenAiApiBackend;
 use SuperAICore\Backends\SuperAgentBackend;
 use SuperAICore\Contracts\Backend;
@@ -44,6 +46,16 @@ class BackendRegistry
                 $config['codex_cli']['timeout'] ?? 300,
                 $logger,
             ));
+        }
+        if ($config['gemini_cli']['enabled'] ?? true) {
+            $this->register(new GeminiCliBackend(
+                $config['gemini_cli']['binary'] ?? 'gemini',
+                $config['gemini_cli']['timeout'] ?? 300,
+                $logger,
+            ));
+        }
+        if ($config['gemini_api']['enabled'] ?? true) {
+            $this->register(new GeminiApiBackend($logger));
         }
     }
 

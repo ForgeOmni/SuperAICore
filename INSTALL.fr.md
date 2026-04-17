@@ -87,13 +87,17 @@ SUPER_AI_CORE_LOCALE_COOKIE=locale
 # backends
 AI_CORE_CLAUDE_CLI_ENABLED=true
 AI_CORE_CODEX_CLI_ENABLED=true
+AI_CORE_GEMINI_CLI_ENABLED=true
 AI_CORE_SUPERAGENT_ENABLED=true
 AI_CORE_ANTHROPIC_API_ENABLED=true
 AI_CORE_OPENAI_API_ENABLED=true
+AI_CORE_GEMINI_API_ENABLED=true
 CLAUDE_CLI_BIN=claude
 CODEX_CLI_BIN=codex
+GEMINI_CLI_BIN=gemini
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com
 
 # préfixe de table (défaut sac_ — vider pour garder les noms ai_* bruts)
 AI_CORE_TABLE_PREFIX=sac_

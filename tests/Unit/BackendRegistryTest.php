@@ -8,11 +8,13 @@ use SuperAICore\Tests\TestCase;
 
 class BackendRegistryTest extends TestCase
 {
-    public function test_registers_all_five_backends_by_default(): void
+    public function test_registers_all_backends_by_default(): void
     {
         $registry = new BackendRegistry(null, [
             'claude_cli' => ['enabled' => true, 'binary' => 'claude', 'timeout' => 300],
             'codex_cli' => ['enabled' => true, 'binary' => 'codex', 'timeout' => 300],
+            'gemini_cli' => ['enabled' => true, 'binary' => 'gemini', 'timeout' => 300],
+            'gemini_api' => ['enabled' => true],
             'superagent' => ['enabled' => true],
             'anthropic_api' => ['enabled' => true],
             'openai_api' => ['enabled' => true],
@@ -23,6 +25,8 @@ class BackendRegistryTest extends TestCase
         $this->assertContains('openai_api', $names);
         $this->assertContains('claude_cli', $names);
         $this->assertContains('codex_cli', $names);
+        $this->assertContains('gemini_cli', $names);
+        $this->assertContains('gemini_api', $names);
 
         // SuperAgent registration depends on the SDK actually being present
         if (SuperAgentDetector::isAvailable()) {
@@ -37,6 +41,8 @@ class BackendRegistryTest extends TestCase
         $registry = new BackendRegistry(null, [
             'claude_cli' => ['enabled' => false],
             'codex_cli' => ['enabled' => false],
+            'gemini_cli' => ['enabled' => false],
+            'gemini_api' => ['enabled' => false],
             'superagent' => ['enabled' => false],
             'anthropic_api' => ['enabled' => true],
             'openai_api' => ['enabled' => false],

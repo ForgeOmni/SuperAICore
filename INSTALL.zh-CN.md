@@ -87,13 +87,17 @@ SUPER_AI_CORE_LOCALE_COOKIE=locale
 # 后端
 AI_CORE_CLAUDE_CLI_ENABLED=true
 AI_CORE_CODEX_CLI_ENABLED=true
+AI_CORE_GEMINI_CLI_ENABLED=true
 AI_CORE_SUPERAGENT_ENABLED=true
 AI_CORE_ANTHROPIC_API_ENABLED=true
 AI_CORE_OPENAI_API_ENABLED=true
+AI_CORE_GEMINI_API_ENABLED=true
 CLAUDE_CLI_BIN=claude
 CODEX_CLI_BIN=codex
+GEMINI_CLI_BIN=gemini
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com
 
 # 表名前缀（默认 sac_，置空则保留原始 ai_* 名称）
 AI_CORE_TABLE_PREFIX=sac_

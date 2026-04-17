@@ -169,22 +169,34 @@ class Dispatcher
 
     protected function backendForProvider(array $provider): string
     {
-        // If provider has an explicit backend column, use it.
-        if (!empty($provider['backend'])) {
-            return match ($provider['backend']) {
+        $engine = $provider['backend'] ?? null;
+        $type = $provider['type'] ?? '';
+
+        // builtin → always the engine's CLI adapter
+        if ($type === 'builtin') {
+            return match ($engine) {
                 'claude' => 'claude_cli',
                 'codex' => 'codex_cli',
-                'superagent' => 'superagent',
-                default => $provider['backend'],
+                'gemini' => 'gemini_cli',
+                default => 'claude_cli',
             };
         }
 
-        // Otherwise infer from type
-        return match ($provider['type'] ?? '') {
+        // External credentials → HTTP adapter for that engine
+        if ($engine === 'gemini' || in_array($type, ['google-ai'], true)) {
+            // Vertex AI on the Gemini engine currently routes through the CLI,
+            // which handles ADC token exchange; google-ai goes direct HTTP.
+            return $type === 'vertex' ? 'gemini_cli' : 'gemini_api';
+        }
+        if ($engine === 'superagent') {
+            return 'superagent';
+        }
+
+        // Claude / Codex engines: pick API or CLI based on type
+        return match ($type) {
             'anthropic', 'anthropic-proxy', 'bedrock', 'vertex' => 'anthropic_api',
             'openai', 'openai-compatible' => 'openai_api',
-            'builtin' => 'claude_cli',
-            default => 'anthropic_api',
+            default => $engine === 'codex' ? 'openai_api' : 'anthropic_api',
         };
     }
 
@@ -193,6 +205,7 @@ class Dispatcher
         return match ($protocol) {
             'anthropic' => 'anthropic_api',
             'openai' => 'openai_api',
+            'gemini', 'google-ai' => 'gemini_api',
             'superagent' => 'superagent',
             default => 'anthropic_api',
         };
