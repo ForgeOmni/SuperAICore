@@ -4,7 +4,7 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.1] — 2026-04-17
 
 ### Added
 - Configurable table prefix (`config/super-ai-core.php:table_prefix`, env `AI_CORE_TABLE_PREFIX`). Default is `sac_`, so the eight package tables become `sac_ai_providers`, `sac_ai_services`, etc. Set to the empty string to keep the raw names.
@@ -77,4 +77,5 @@ Initial public release. The package consolidates the AI execution stack that use
 - Process monitor is disabled by default and requires admin-only middleware wiring in the host app.
 - Model pricing table covers Claude 4.x and GPT-4o only; other models fall back to zero cost and must be added to `config.model_pricing`.
 
+[0.5.1]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.5.1
 [0.5.0]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.5.0
