@@ -1,0 +1,31 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * superaicore — unified CLI for calling any configured backend.
+ *
+ * Examples:
+ *   superaicore call "Hello" --backend=anthropic_api --model=claude-sonnet-4-5-20241022
+ *   superaicore call "Hello" --backend=claude_cli
+ *   superaicore call "Hello" --backend=codex_cli
+ *   superaicore call "Hello" --backend=superagent
+ *   superaicore list-backends
+ */
+
+$autoloadCandidates = [
+    __DIR__ . '/../vendor/autoload.php',        // when developing superaicore
+    __DIR__ . '/../../../autoload.php',         // when installed as dependency
+    __DIR__ . '/../../../../vendor/autoload.php',
+];
+
+foreach ($autoloadCandidates as $candidate) {
+    if (file_exists($candidate)) {
+        require $candidate;
+        break;
+    }
+}
+
+use SuperAICore\Console\Application;
+
+$app = new Application();
+$app->run();

@@ -24,6 +24,7 @@ The `forgeomni/superagent` entry in `composer.json` is there so the SuperAgent b
 
 ## Features
 
+- **Skill & sub-agent runner** — discovers Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/agents/<name>.md`) and exposes them as CLI subcommands (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Runs on Claude out of the box; optionally on Codex/Gemini with compatibility probe, tool-name translation, backend preamble injection, and a side-effect-locking fallback chain. `gemini:sync` mirrors every skill/agent into Gemini custom commands (`/skill:*`, `/agent:*`).
 - **Four execution engines** — Claude Code CLI, Codex CLI, Gemini CLI, and SuperAgent SDK — unified behind a single `Dispatcher` contract. Each engine accepts a fixed set of provider types:
   - **Claude Code CLI**: `builtin` (local login), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`
   - **Codex CLI**: `builtin` (ChatGPT login), `openai`, `openai-compatible`
@@ -66,19 +67,55 @@ Full step-by-step guide: [INSTALL.md](INSTALL.md).
 
 ```bash
 # List Dispatcher adapters and their availability
-./vendor/bin/super-ai-core list-backends
+./vendor/bin/superaicore list-backends
 
 # Drive the four engines from the CLI
-./vendor/bin/super-ai-core call "Hello" --backend=claude_cli                              # Claude Code CLI (local login)
-./vendor/bin/super-ai-core call "Hello" --backend=codex_cli                               # Codex CLI (ChatGPT login)
-./vendor/bin/super-ai-core call "Hello" --backend=gemini_cli                              # Gemini CLI (Google OAuth)
-./vendor/bin/super-ai-core call "Hello" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
+./vendor/bin/superaicore call "Hello" --backend=claude_cli                              # Claude Code CLI (local login)
+./vendor/bin/superaicore call "Hello" --backend=codex_cli                               # Codex CLI (ChatGPT login)
+./vendor/bin/superaicore call "Hello" --backend=gemini_cli                              # Gemini CLI (Google OAuth)
+./vendor/bin/superaicore call "Hello" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # Skip the CLI wrapper and hit the HTTP APIs directly
-./vendor/bin/super-ai-core call "Hello" --backend=anthropic_api --api-key=sk-ant-...      # Claude engine, HTTP mode
-./vendor/bin/super-ai-core call "Hello" --backend=openai_api --api-key=sk-...             # Codex engine, HTTP mode
-./vendor/bin/super-ai-core call "Hello" --backend=gemini_api --api-key=AIza...            # Gemini engine, HTTP mode
+./vendor/bin/superaicore call "Hello" --backend=anthropic_api --api-key=sk-ant-...      # Claude engine, HTTP mode
+./vendor/bin/superaicore call "Hello" --backend=openai_api --api-key=sk-...             # Codex engine, HTTP mode
+./vendor/bin/superaicore call "Hello" --backend=gemini_api --api-key=AIza...            # Gemini engine, HTTP mode
 ```
+
+## Skill & sub-agent CLI
+
+Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/agents/<name>.md`) are auto-discovered from three sources for skills (project > plugin > user) and two for agents (project > user). Each becomes a first-class CLI subcommand:
+
+```bash
+# Discover what's installed
+./vendor/bin/superaicore skill:list
+./vendor/bin/superaicore agent:list
+
+# Run a skill on Claude (default)
+./vendor/bin/superaicore skill:run init
+
+# Run a skill natively on Gemini — probe + translate + preamble
+./vendor/bin/superaicore skill:run simplify --backend=gemini --exec=native
+
+# Try Gemini first, fall back to Claude on incompatibility; hard-lock
+# on whichever backend first writes to cwd
+./vendor/bin/superaicore skill:run simplify --exec=fallback --fallback-chain=gemini,claude
+
+# Run a sub-agent; backend inferred from its `model:` frontmatter
+./vendor/bin/superaicore agent:run security-reviewer "audit this diff"
+
+# Expose every skill/agent as a Gemini custom command
+# (/skill:init, /agent:security-reviewer, …)
+./vendor/bin/superaicore gemini:sync
+```
+
+Key behaviours:
+
+- `--exec=claude` (default) — run on Claude regardless of `--backend`.
+- `--exec=native` — run on `--backend`'s CLI. `CompatibilityProbe` flags `Agent`-tool skills on backends without sub-agent support; `SkillBodyTranslator` rewrites canonical tool names (`` `Read` `` → `read_file`, …) in explicit shapes and injects the backend preamble (Gemini / Codex). Bare prose like "Read the config" is left untouched.
+- `--exec=fallback` — walk a chain; skip incompatible hops; **hard-lock** on the first hop that touches the cwd (mtime diff + stream-json `tool_use` events). Default chain is `<backend>,claude`.
+- `arguments:` frontmatter is parsed (free-form / positional / named), validated, and rendered as structured `<arg name="...">` XML appended to the prompt.
+- `allowed-tools:` frontmatter is passed through to `claude --allowedTools`; codex/gemini print a `[note]` since neither CLI has an enforcement flag.
+- `gemini:sync` refuses to overwrite TOMLs you manually edited and recreates ones you deleted (tracked via `~/.gemini/commands/.superaicore-manifest.json`).
 
 ## PHP quick start
 

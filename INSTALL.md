@@ -114,13 +114,37 @@ AI_CORE_PROCESS_MONITOR=false
 
 ```bash
 # See which backends the current environment can reach
-./vendor/bin/super-ai-core list-backends
+./vendor/bin/superaicore list-backends
 
 # Round-trip a prompt through the Anthropic API
-./vendor/bin/super-ai-core call "ping" --backend=anthropic_api --api-key="$ANTHROPIC_API_KEY"
+./vendor/bin/superaicore call "ping" --backend=anthropic_api --api-key="$ANTHROPIC_API_KEY"
 ```
 
 Expected: a short text reply and a usage block.
+
+### Skill & sub-agent CLI smoke test
+
+If you have any Claude Code skills or sub-agents installed (under `./.claude/skills/` in the project, `~/.claude/plugins/*/skills/`, or `~/.claude/skills/` / `~/.claude/agents/`), they are picked up automatically:
+
+```bash
+./vendor/bin/superaicore skill:list
+./vendor/bin/superaicore agent:list
+
+# Dry-run prints the resolved command without actually calling the CLI
+./vendor/bin/superaicore skill:run <name> --dry-run
+
+# Generate Gemini custom commands for every discovered skill/agent
+# (writes to ~/.gemini/commands/skill/*.toml and agent/*.toml)
+./vendor/bin/superaicore gemini:sync --dry-run
+```
+
+No config needed. Running without `--dry-run` shells out to the backend CLIs (`claude`, `codex`, `gemini`) — install whichever ones you intend to target:
+
+```bash
+npm i -g @anthropic-ai/claude-code
+brew install codex        # or: cargo install codex
+npm i -g @google/gemini-cli
+```
 
 ## 6. Open the admin UI
 

@@ -114,13 +114,37 @@ AI_CORE_PROCESS_MONITOR=false
 
 ```bash
 # 查看当前环境下可用的后端
-./vendor/bin/super-ai-core list-backends
+./vendor/bin/superaicore list-backends
 
 # 通过 Anthropic API 来回测一次
-./vendor/bin/super-ai-core call "ping" --backend=anthropic_api --api-key="$ANTHROPIC_API_KEY"
+./vendor/bin/superaicore call "ping" --backend=anthropic_api --api-key="$ANTHROPIC_API_KEY"
 ```
 
 预期：返回一段短文本以及用量信息。
+
+### Skill 与 sub-agent CLI 冒烟
+
+如果本机已经装过 Claude Code 的 skill 或 sub-agent（项目 `./.claude/skills/`、`~/.claude/plugins/*/skills/`、用户 `~/.claude/skills/` 或 `~/.claude/agents/`），它们会被自动拾取：
+
+```bash
+./vendor/bin/superaicore skill:list
+./vendor/bin/superaicore agent:list
+
+# --dry-run 只打印解析出来的命令，不真的调后端 CLI
+./vendor/bin/superaicore skill:run <name> --dry-run
+
+# 为每个 skill/agent 生成 Gemini 自定义命令
+# （写入 ~/.gemini/commands/skill/*.toml 与 agent/*.toml）
+./vendor/bin/superaicore gemini:sync --dry-run
+```
+
+不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`）—— 按需装：
+
+```bash
+npm i -g @anthropic-ai/claude-code
+brew install codex        # 或 cargo install codex
+npm i -g @google/gemini-cli
+```
 
 ## 6. 打开后台 UI
 

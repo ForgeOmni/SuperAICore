@@ -24,6 +24,7 @@
 
 ## 特性
 
+- **Skill 与 sub-agent 运行器** —— 自动发现 Claude Code skill（`.claude/skills/<name>/SKILL.md`）和 sub-agent（`.claude/agents/<name>.md`），并将其暴露为 CLI 子命令（`skill:list`、`skill:run`、`agent:list`、`agent:run`）。默认跑在 Claude 上，可选在 Codex / Gemini 上原生执行（带兼容性探测、工具名翻译、后端 preamble 注入），并支持"有副作用即硬锁定"的多后端回退链。`gemini:sync` 把每个 skill / agent 镜像成 Gemini 自定义命令（`/skill:*`、`/agent:*`）。
 - **四个执行引擎** —— Claude Code CLI、Codex CLI、Gemini CLI、SuperAgent SDK，统一实现同一套 `Dispatcher` 契约。每个引擎只接受固定几类 provider：
   - **Claude Code CLI**：`builtin`（本地登录）、`anthropic`、`anthropic-proxy`、`bedrock`、`vertex`
   - **Codex CLI**：`builtin`（ChatGPT 登录）、`openai`、`openai-compatible`
@@ -66,19 +67,54 @@ php artisan migrate
 
 ```bash
 # 查看 Dispatcher 适配器及其可用状态
-./vendor/bin/super-ai-core list-backends
+./vendor/bin/superaicore list-backends
 
 # 从 CLI 驱动四个引擎
-./vendor/bin/super-ai-core call "你好" --backend=claude_cli                              # Claude Code CLI（本地登录）
-./vendor/bin/super-ai-core call "你好" --backend=codex_cli                               # Codex CLI（ChatGPT 登录）
-./vendor/bin/super-ai-core call "你好" --backend=gemini_cli                              # Gemini CLI（Google OAuth）
-./vendor/bin/super-ai-core call "你好" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
+./vendor/bin/superaicore call "你好" --backend=claude_cli                              # Claude Code CLI（本地登录）
+./vendor/bin/superaicore call "你好" --backend=codex_cli                               # Codex CLI（ChatGPT 登录）
+./vendor/bin/superaicore call "你好" --backend=gemini_cli                              # Gemini CLI（Google OAuth）
+./vendor/bin/superaicore call "你好" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # 跳过 CLI 包装，直接打 HTTP API
-./vendor/bin/super-ai-core call "你好" --backend=anthropic_api --api-key=sk-ant-...      # Claude 引擎的 HTTP 模式
-./vendor/bin/super-ai-core call "你好" --backend=openai_api --api-key=sk-...             # Codex 引擎的 HTTP 模式
-./vendor/bin/super-ai-core call "你好" --backend=gemini_api --api-key=AIza...            # Gemini 引擎的 HTTP 模式
+./vendor/bin/superaicore call "你好" --backend=anthropic_api --api-key=sk-ant-...      # Claude 引擎的 HTTP 模式
+./vendor/bin/superaicore call "你好" --backend=openai_api --api-key=sk-...             # Codex 引擎的 HTTP 模式
+./vendor/bin/superaicore call "你好" --backend=gemini_api --api-key=AIza...            # Gemini 引擎的 HTTP 模式
 ```
+
+## Skill 与 sub-agent CLI
+
+Claude Code 的 skill（`.claude/skills/<name>/SKILL.md`）和 sub-agent（`.claude/agents/<name>.md`）会被自动发现——skill 三个来源（项目 > plugin > 用户），agent 两个来源（项目 > 用户），各自作为一等 CLI 子命令暴露出来：
+
+```bash
+# 查看已安装内容
+./vendor/bin/superaicore skill:list
+./vendor/bin/superaicore agent:list
+
+# 在 Claude 上跑一个 skill（默认）
+./vendor/bin/superaicore skill:run init
+
+# 在 Gemini 上原生跑——探测 + 翻译 + preamble 注入
+./vendor/bin/superaicore skill:run simplify --backend=gemini --exec=native
+
+# 先试 Gemini，不兼容就回退 Claude；哪个后端先写文件就硬锁在它上面
+./vendor/bin/superaicore skill:run simplify --exec=fallback --fallback-chain=gemini,claude
+
+# 跑一个 sub-agent；后端从 frontmatter 的 `model:` 推断
+./vendor/bin/superaicore agent:run security-reviewer "审查这份 diff"
+
+# 把每个 skill / agent 同步成 Gemini 自定义命令
+# （/skill:init、/agent:security-reviewer、…）
+./vendor/bin/superaicore gemini:sync
+```
+
+关键行为：
+
+- `--exec=claude`（默认）—— 不管 `--backend` 是什么，都跑在 Claude 上。
+- `--exec=native` —— 跑在 `--backend` 指定的 CLI 上。`CompatibilityProbe` 会标记在无 sub-agent 能力的后端上使用 `Agent` 工具的 skill；`SkillBodyTranslator` 把规范工具名（`` `Read` `` → `read_file` 等）按显式形状替换，并注入后端 preamble（Gemini / Codex）。散文里的"Read the config"这类裸词不会被改。
+- `--exec=fallback` —— 走一条链，跳过不兼容的跳；**硬锁定**在第一个触碰 cwd 的跳上（mtime 快照差分 + stream-json `tool_use` 事件）。默认链 `<backend>,claude`。
+- `arguments:` frontmatter 会被解析（free-form / positional / named）、校验，并渲染成结构化 `<arg name="...">` XML 追加到 prompt。
+- `allowed-tools:` frontmatter 会传给 `claude --allowedTools`；codex / gemini 无对应强制 flag，只打一条 `[note]`。
+- `gemini:sync` 不会覆盖用户手编辑过的 TOML，删除过的会被下次 sync 重建（通过 `~/.gemini/commands/.superaicore-manifest.json` 追踪）。
 
 ## PHP 调用示例
 

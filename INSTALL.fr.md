@@ -114,13 +114,37 @@ AI_CORE_PROCESS_MONITOR=false
 
 ```bash
 # Voir quels backends sont atteignables
-./vendor/bin/super-ai-core list-backends
+./vendor/bin/superaicore list-backends
 
 # Aller-retour via l'API Anthropic
-./vendor/bin/super-ai-core call "ping" --backend=anthropic_api --api-key="$ANTHROPIC_API_KEY"
+./vendor/bin/superaicore call "ping" --backend=anthropic_api --api-key="$ANTHROPIC_API_KEY"
 ```
 
 Attendu : une courte réponse texte et un bloc d'usage.
+
+### Test CLI skills & sous-agents
+
+Si des skills ou sous-agents Claude Code sont déjà installés (sous `./.claude/skills/` dans le projet, `~/.claude/plugins/*/skills/`, ou `~/.claude/skills/` / `~/.claude/agents/`), ils sont détectés automatiquement :
+
+```bash
+./vendor/bin/superaicore skill:list
+./vendor/bin/superaicore agent:list
+
+# --dry-run affiche la commande résolue sans appeler le CLI
+./vendor/bin/superaicore skill:run <nom> --dry-run
+
+# Générer les commandes personnalisées Gemini pour chaque skill/agent
+# (écrit dans ~/.gemini/commands/skill/*.toml et agent/*.toml)
+./vendor/bin/superaicore gemini:sync --dry-run
+```
+
+Aucune configuration requise. Sans `--dry-run`, la commande passe la main aux CLI backends (`claude`, `codex`, `gemini`) — installez ceux que vous comptez utiliser :
+
+```bash
+npm i -g @anthropic-ai/claude-code
+brew install codex        # ou : cargo install codex
+npm i -g @google/gemini-cli
+```
 
 ## 6. Ouvrir l'interface d'administration
 

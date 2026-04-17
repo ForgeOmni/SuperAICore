@@ -24,6 +24,7 @@ L'entrée `forgeomni/superagent` dans `composer.json` est présente pour que le 
 
 ## Fonctionnalités
 
+- **Exécuteur de skills & sous-agents** — détecte les skills Claude Code (`.claude/skills/<nom>/SKILL.md`) et les sous-agents (`.claude/agents/<nom>.md`) et les expose comme sous-commandes CLI (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Exécution par défaut sur Claude ; en option, natif sur Codex/Gemini avec sonde de compatibilité, traduction des noms d'outils, injection du préambule backend et chaîne de repli verrouillée sur effet-de-bord. `gemini:sync` duplique chaque skill/agent en commande personnalisée Gemini (`/skill:*`, `/agent:*`).
 - **Quatre moteurs d'exécution** — Claude Code CLI, Codex CLI, Gemini CLI et SuperAgent SDK — unifiés derrière un même contrat `Dispatcher`. Chaque moteur accepte un jeu fixe de types de provider :
   - **Claude Code CLI** : `builtin` (connexion locale), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`
   - **Codex CLI** : `builtin` (connexion ChatGPT), `openai`, `openai-compatible`
@@ -66,19 +67,55 @@ Guide complet étape par étape : [INSTALL.fr.md](INSTALL.fr.md).
 
 ```bash
 # Lister les adaptateurs Dispatcher et leur disponibilité
-./vendor/bin/super-ai-core list-backends
+./vendor/bin/superaicore list-backends
 
 # Piloter les quatre moteurs depuis la CLI
-./vendor/bin/super-ai-core call "Bonjour" --backend=claude_cli                              # Claude Code CLI (connexion locale)
-./vendor/bin/super-ai-core call "Bonjour" --backend=codex_cli                               # Codex CLI (connexion ChatGPT)
-./vendor/bin/super-ai-core call "Bonjour" --backend=gemini_cli                              # Gemini CLI (OAuth Google)
-./vendor/bin/super-ai-core call "Bonjour" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
+./vendor/bin/superaicore call "Bonjour" --backend=claude_cli                              # Claude Code CLI (connexion locale)
+./vendor/bin/superaicore call "Bonjour" --backend=codex_cli                               # Codex CLI (connexion ChatGPT)
+./vendor/bin/superaicore call "Bonjour" --backend=gemini_cli                              # Gemini CLI (OAuth Google)
+./vendor/bin/superaicore call "Bonjour" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # Court-circuiter la CLI et appeler directement les API HTTP
-./vendor/bin/super-ai-core call "Bonjour" --backend=anthropic_api --api-key=sk-ant-...      # Moteur Claude en mode HTTP
-./vendor/bin/super-ai-core call "Bonjour" --backend=openai_api --api-key=sk-...             # Moteur Codex en mode HTTP
-./vendor/bin/super-ai-core call "Bonjour" --backend=gemini_api --api-key=AIza...            # Moteur Gemini en mode HTTP
+./vendor/bin/superaicore call "Bonjour" --backend=anthropic_api --api-key=sk-ant-...      # Moteur Claude en mode HTTP
+./vendor/bin/superaicore call "Bonjour" --backend=openai_api --api-key=sk-...             # Moteur Codex en mode HTTP
+./vendor/bin/superaicore call "Bonjour" --backend=gemini_api --api-key=AIza...            # Moteur Gemini en mode HTTP
 ```
+
+## CLI Skills & sous-agents
+
+Les skills Claude Code (`.claude/skills/<nom>/SKILL.md`) et les sous-agents (`.claude/agents/<nom>.md`) sont détectés automatiquement depuis trois sources pour les skills (projet > plugin > utilisateur) et deux pour les agents (projet > utilisateur). Chacun devient une sous-commande CLI de première classe :
+
+```bash
+# Lister ce qui est installé
+./vendor/bin/superaicore skill:list
+./vendor/bin/superaicore agent:list
+
+# Exécuter un skill sur Claude (par défaut)
+./vendor/bin/superaicore skill:run init
+
+# Exécuter un skill nativement sur Gemini — sonde + traduction + préambule
+./vendor/bin/superaicore skill:run simplify --backend=gemini --exec=native
+
+# Essayer Gemini en premier, retomber sur Claude en cas d'incompatibilité ;
+# verrouiller dur sur le premier backend qui touche le cwd
+./vendor/bin/superaicore skill:run simplify --exec=fallback --fallback-chain=gemini,claude
+
+# Exécuter un sous-agent ; backend déduit du `model:` du frontmatter
+./vendor/bin/superaicore agent:run security-reviewer "audit this diff"
+
+# Exposer chaque skill/agent comme commande personnalisée Gemini
+# (/skill:init, /agent:security-reviewer, …)
+./vendor/bin/superaicore gemini:sync
+```
+
+Comportements clés :
+
+- `--exec=claude` (par défaut) — exécute sur Claude quel que soit `--backend`.
+- `--exec=native` — exécute sur le CLI de `--backend`. `CompatibilityProbe` signale les skills qui utilisent l'outil `Agent` sur les backends sans support de sous-agent ; `SkillBodyTranslator` réécrit les noms d'outils canoniques (`` `Read` `` → `read_file`, …) dans les formes explicites et injecte le préambule backend (Gemini / Codex). La prose nue comme « Read the config » reste intacte.
+- `--exec=fallback` — parcourt une chaîne ; saute les sauts incompatibles ; **verrouille dur** sur le premier saut qui touche le cwd (diff mtime + événements `tool_use` stream-json). Chaîne par défaut : `<backend>,claude`.
+- Le frontmatter `arguments:` est analysé (free-form / positionnel / nommé), validé et rendu comme bloc XML structuré `<arg name="...">` ajouté au prompt.
+- Le frontmatter `allowed-tools:` est transmis à `claude --allowedTools` ; codex/gemini affichent un `[note]` puisqu'aucun de leurs CLI n'a de flag d'application.
+- `gemini:sync` refuse d'écraser les TOML que vous avez modifiés à la main et recrée ceux que vous avez supprimés (suivi via `~/.gemini/commands/.superaicore-manifest.json`).
 
 ## Démarrage rapide — PHP
 

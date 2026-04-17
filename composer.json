@@ -29,7 +29,7 @@
             "SuperAICore\\Tests\\": "tests/"
         }
     },
-    "bin": ["bin/super-ai-core"],
+    "bin": ["bin/superaicore"],
     "extra": {
         "laravel": {
             "providers": [
