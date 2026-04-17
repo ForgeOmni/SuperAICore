@@ -35,27 +35,38 @@ class CodexCapabilities implements BackendCapabilities
     }
 
     /**
-     * Codex reads TOML. Render `[mcp_servers.<key>]` blocks.
+     * Codex reads TOML. We replace all `[mcp_servers.*]` blocks in the
+     * existing config.toml and keep everything else (model, approvals,
+     * projects, user's custom keys) as-is. Non-destructive merge.
      */
     public function renderMcpConfig(array $servers): string
     {
-        $out = '';
+        $path = (getenv('HOME') ?: '') . '/.codex/config.toml';
+        $existing = (is_file($path) && is_readable($path)) ? (string) @file_get_contents($path) : '';
+
+        // Strip every existing [mcp_servers.*] block (and its contents up to
+        // the next top-level section or EOF).
+        $stripped = preg_replace('/^\[mcp_servers(\.[^\]]+)?\].*?(?=^\[(?!mcp_servers)|\z)/sm', '', $existing);
+        $stripped = rtrim((string) $stripped) . "\n";
+
+        $mcp = '';
         foreach ($servers as $s) {
             if (empty($s['key']) || empty($s['command'])) continue;
-            $out .= "[mcp_servers.{$s['key']}]\n";
-            $out .= 'command = ' . self::tomlString($s['command']) . "\n";
+            $mcp .= "[mcp_servers.{$s['key']}]\n";
+            $mcp .= 'command = ' . self::tomlString($s['command']) . "\n";
             if (!empty($s['args']) && is_array($s['args'])) {
-                $out .= 'args = [' . implode(', ', array_map(fn ($a) => self::tomlString((string) $a), $s['args'])) . "]\n";
+                $mcp .= 'args = [' . implode(', ', array_map(fn ($a) => self::tomlString((string) $a), $s['args'])) . "]\n";
             }
             if (!empty($s['env']) && is_array($s['env'])) {
-                $out .= "[mcp_servers.{$s['key']}.env]\n";
+                $mcp .= "[mcp_servers.{$s['key']}.env]\n";
                 foreach ($s['env'] as $k => $v) {
-                    $out .= "{$k} = " . self::tomlString((string) $v) . "\n";
+                    $mcp .= "{$k} = " . self::tomlString((string) $v) . "\n";
                 }
             }
-            $out .= "\n";
+            $mcp .= "\n";
         }
-        return $out;
+
+        return $stripped . ($mcp === '' ? '' : "\n" . $mcp);
     }
 
     protected static function tomlString(string $value): string

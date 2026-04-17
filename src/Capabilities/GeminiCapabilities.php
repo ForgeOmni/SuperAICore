@@ -51,16 +51,32 @@ class GeminiCapabilities implements BackendCapabilities
     public function renderMcpConfig(array $servers): string
     {
         // Gemini uses the same `mcpServers` key as Claude.
-        $config = ['mcpServers' => []];
+        // Merge into whatever else the user has in settings.json (auth,
+        // theme, model, etc.) so we don't clobber it — the sync layer
+        // passes the file's prior content via the $servers wrapper when
+        // available, but as a guard we also try to read from disk.
+        $existing = [];
+        $path = self::homeDir() . '/.gemini/settings.json';
+        if (is_file($path) && is_readable($path)) {
+            $decoded = json_decode((string) @file_get_contents($path), true);
+            if (is_array($decoded)) $existing = $decoded;
+        }
+
+        $existing['mcpServers'] = [];
         foreach ($servers as $s) {
             if (empty($s['key'])) continue;
-            $config['mcpServers'][$s['key']] = array_filter([
+            $existing['mcpServers'][$s['key']] = array_filter([
                 'command' => $s['command'] ?? null,
                 'args' => $s['args'] ?? [],
                 'env' => $s['env'] ?? new \stdClass(),
             ]);
         }
-        return json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return json_encode($existing, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    protected static function homeDir(): string
+    {
+        return rtrim(getenv('HOME') ?: (getenv('USERPROFILE') ?: ''), '/\\');
     }
 
     const PREAMBLE = <<<'TXT'
