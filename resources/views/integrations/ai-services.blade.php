@@ -137,7 +137,7 @@
                         <div class="col-8"><label class="form-label">{{ __('super-ai-core::integrations.ai_cap_name') }}</label><input type="text" class="form-control form-control-sm" name="name" id="addCapName" required placeholder="Vision"></div>
                         <div class="col-12"><label class="form-label">{{ __('super-ai-core::integrations.ai_cap_desc') }}</label><textarea class="form-control form-control-sm" name="description" rows="2" placeholder="Image analysis and description"></textarea></div>
                         <div class="col-12">
-                            @include('integrations._pp-fields', ['prefix' => 'add'])
+                            @include('super-ai-core::integrations._pp-fields', ['prefix' => 'add'])
                         </div>
                     </div>
                 </div>
@@ -162,7 +162,7 @@
                         <div class="col-12"><label class="form-label">{{ __('super-ai-core::integrations.ai_cap_name') }}</label><input type="text" class="form-control form-control-sm" name="name" id="editCapName" required></div>
                         <div class="col-12"><label class="form-label">{{ __('super-ai-core::integrations.ai_cap_desc') }}</label><textarea class="form-control form-control-sm" name="description" id="editCapDesc" rows="2"></textarea></div>
                         <div class="col-12">
-                            @include('integrations._pp-fields', ['prefix' => 'edit'])
+                            @include('super-ai-core::integrations._pp-fields', ['prefix' => 'edit'])
                         </div>
                     </div>
                 </div>

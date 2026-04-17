@@ -5,6 +5,7 @@ namespace SuperAICore\Services;
 use SuperAICore\Contracts\Backend;
 use SuperAICore\Contracts\ProviderRepository;
 use SuperAICore\Contracts\RoutingRepository;
+use SuperAICore\Support\BackendState;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -52,6 +53,13 @@ class Dispatcher
 
         if (!$backend) {
             if ($this->logger) $this->logger->warning('Dispatcher: no backend resolved');
+            return null;
+        }
+
+        // Engine gate — the /providers page lets an operator turn an engine
+        // off; every provider that routes through that engine goes dark.
+        if (!BackendState::isDispatcherBackendAllowed($backend->name())) {
+            if ($this->logger) $this->logger->warning('Dispatcher: backend "' . $backend->name() . '" is disabled by operator');
             return null;
         }
 

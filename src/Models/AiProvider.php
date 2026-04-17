@@ -48,6 +48,41 @@ class AiProvider extends Model
         self::TYPE_OPENAI_COMPATIBLE => 'openai-compatible',
     ];
 
+    /**
+     * Valid backend → type matrix (inherited from SuperTeam).
+     * Arbitrary backend/type combinations are rejected at the validation layer
+     * and the "New provider" modal narrows the type dropdown based on backend.
+     *
+     *  claude     → Anthropic family (+ Bedrock / Vertex passthrough, builtin login)
+     *  codex      → OpenAI family (+ builtin ChatGPT login)
+     *  superagent → SDK can drive either provider family; no builtin
+     */
+    const BACKEND_TYPES = [
+        self::BACKEND_CLAUDE => [
+            self::TYPE_BUILTIN,
+            self::TYPE_ANTHROPIC,
+            self::TYPE_ANTHROPIC_PROXY,
+            self::TYPE_BEDROCK,
+            self::TYPE_VERTEX,
+        ],
+        self::BACKEND_CODEX => [
+            self::TYPE_BUILTIN,
+            self::TYPE_OPENAI,
+            self::TYPE_OPENAI_COMPATIBLE,
+        ],
+        self::BACKEND_SUPERAGENT => [
+            self::TYPE_ANTHROPIC,
+            self::TYPE_ANTHROPIC_PROXY,
+            self::TYPE_OPENAI,
+            self::TYPE_OPENAI_COMPATIBLE,
+        ],
+    ];
+
+    public static function typesForBackend(string $backend): array
+    {
+        return self::BACKEND_TYPES[$backend] ?? [];
+    }
+
     protected $table = 'ai_providers';
 
     protected $fillable = [

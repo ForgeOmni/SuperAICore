@@ -3,6 +3,7 @@
 namespace SuperAICore\Backends;
 
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Services\ClaudeModelResolver;
 use GuzzleHttp\Client;
 use Psr\Log\LoggerInterface;
 
@@ -35,7 +36,10 @@ class AnthropicApiBackend implements Backend
         }
 
         $baseUrl = rtrim($providerConfig['base_url'] ?? 'https://api.anthropic.com', '/');
-        $model = $options['model'] ?? $providerConfig['model'] ?? 'claude-sonnet-4-5-20241022';
+        // Resolve family aliases (opus/sonnet/haiku) to the current full ID
+        // so stale configs don't accidentally target a retired model.
+        $model = ClaudeModelResolver::resolve($options['model'] ?? $providerConfig['model'] ?? null)
+            ?? ClaudeModelResolver::defaultFor('sonnet');
         $maxTokens = $options['max_tokens'] ?? 500;
 
         $messages = $options['messages'] ?? [

@@ -8,6 +8,7 @@ use SuperAICore\Backends\CodexCliBackend;
 use SuperAICore\Backends\OpenAiApiBackend;
 use SuperAICore\Backends\SuperAgentBackend;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Support\SuperAgentDetector;
 use Psr\Log\LoggerInterface;
 
 class BackendRegistry
@@ -25,7 +26,9 @@ class BackendRegistry
         if ($config['openai_api']['enabled'] ?? true) {
             $this->register(new OpenAiApiBackend($logger));
         }
-        if ($config['superagent']['enabled'] ?? true) {
+        // SuperAgent backend is hidden entirely when the forgeomni/superagent
+        // SDK is not installed, regardless of config — avoids a dead option.
+        if (($config['superagent']['enabled'] ?? true) && SuperAgentDetector::isAvailable()) {
             $this->register(new SuperAgentBackend($logger));
         }
         if ($config['claude_cli']['enabled'] ?? true) {

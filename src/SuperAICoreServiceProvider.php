@@ -13,8 +13,10 @@ use SuperAICore\Repositories\EloquentUsageRepository;
 use SuperAICore\Services\BackendRegistry;
 use SuperAICore\Services\CostCalculator;
 use SuperAICore\Services\Dispatcher;
+use SuperAICore\Services\ProcessSourceRegistry;
 use SuperAICore\Services\ProviderResolver;
 use SuperAICore\Services\UsageTracker;
+use SuperAICore\Sources\AiProcessSource;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
@@ -33,6 +35,15 @@ class SuperAICoreServiceProvider extends ServiceProvider
         // Core singleton services (McpManager is all-static, no binding)
         $this->app->singleton(BackendRegistry::class);
         $this->app->singleton(CostCalculator::class);
+
+        // Process Monitor — host apps register their own ProcessSources in
+        // their ServiceProvider's boot(); we seed the built-in AiProcess
+        // source here so the page works out of the box.
+        $this->app->singleton(ProcessSourceRegistry::class, function () {
+            $registry = new ProcessSourceRegistry();
+            $registry->register(new AiProcessSource());
+            return $registry;
+        });
 
         $this->app->singleton(UsageTracker::class, function ($app) {
             return new UsageTracker($app->make(UsageRepository::class));

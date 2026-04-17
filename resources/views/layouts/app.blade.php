@@ -6,6 +6,23 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --tf-primary: #0d6efd;
+            --tf-primary-rgb: 13, 110, 253;
+            --tf-primary-light: #eff6ff;
+            --tf-border: #dee2e6;
+            --tf-bg: #f8f9fa;
+            --tf-text: #0f172a;
+            --tf-text-muted: #64748b;
+            --tf-success: #10b981;
+            --tf-warning: #f59e0b;
+            --tf-danger: #ef4444;
+            --tf-radius-sm: .375rem;
+            --tf-transition: all .15s ease;
+        }
+    </style>
+    @stack('styles')
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
@@ -22,13 +39,13 @@
             @endif
             <span class="navbar-brand"><i class="bi bi-cpu me-1"></i>{{ __('super-ai-core::messages.app_title') }}</span>
             <ul class="navbar-nav me-auto">
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.providers.index') }}">{{ __('super-ai-core::messages.providers') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.services.index') }}">{{ __('super-ai-core::messages.services') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.services.routing') }}">{{ __('super-ai-core::messages.routing') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.integrations.index') }}">{{ __('super-ai-core::messages.integrations') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.usage.index') }}">{{ __('super-ai-core::messages.usage') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.costs.index') }}">{{ __('super-ai-core::messages.costs') }}</a></li>
-                <li class="nav-item"><a class="nav-link" href="{{ route('super-ai-core.processes.index') }}">{{ __('super-ai-core::messages.processes') }}</a></li>
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.providers.*') ? 'active' : '' }}" href="{{ route('super-ai-core.providers.index') }}">{{ __('super-ai-core::messages.providers') }}</a></li>
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.services.*') && !request()->routeIs('super-ai-core.services.routing') ? 'active' : '' }}" href="{{ route('super-ai-core.services.index') }}">{{ __('super-ai-core::messages.services') }}</a></li>
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.services.routing') ? 'active' : '' }}" href="{{ route('super-ai-core.services.routing') }}">{{ __('super-ai-core::messages.routing') }}</a></li>
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.integrations.*') ? 'active' : '' }}" href="{{ route('super-ai-core.integrations.index') }}">{{ __('super-ai-core::messages.integrations') }}</a></li>
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.usage.*') ? 'active' : '' }}" href="{{ route('super-ai-core.usage.index') }}">{{ __('super-ai-core::messages.usage') }}</a></li>
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.costs.*') ? 'active' : '' }}" href="{{ route('super-ai-core.costs.index') }}">{{ __('super-ai-core::messages.costs') }}</a></li>
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.processes.*') ? 'active' : '' }}" href="{{ route('super-ai-core.processes.index') }}">{{ __('super-ai-core::messages.processes') }}</a></li>
             </ul>
             @php
                 $locales = config('super-ai-core.locales', []);
@@ -59,6 +76,9 @@
         @if(session('success'))
             <div class="alert alert-success">{{ session('success') }}</div>
         @endif
+        @if(session('error'))
+            <div class="alert alert-danger">{{ session('error') }}</div>
+        @endif
         @if($errors->any())
             <div class="alert alert-danger">{{ $errors->first() }}</div>
         @endif
@@ -66,5 +86,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    @stack('scripts')
 </body>
 </html>

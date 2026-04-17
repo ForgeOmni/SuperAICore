@@ -40,6 +40,12 @@ return [
     // and only wants the services.
     'views_enabled' => env('AI_CORE_VIEWS_ENABLED', true),
 
+    // Layout Blade view that package pages like the process monitor extend.
+    // Hosts override this in their app/config to use their own layout —
+    // e.g. SuperTeam sets 'layouts.app' so pages inherit its --tf-* design
+    // tokens, navbar and container.
+    'layout' => env('SUPER_AI_CORE_LAYOUT', 'super-ai-core::layouts.app'),
+
     // ─── Backends ───
     // Which backends are usable. Disable ones you don't need.
     'backends' => [

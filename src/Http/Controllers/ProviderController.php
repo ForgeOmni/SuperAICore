@@ -4,7 +4,9 @@ namespace SuperAICore\Http\Controllers;
 
 use SuperAICore\Models\AiProvider;
 use SuperAICore\Models\IntegrationConfig;
+use SuperAICore\Services\ClaudeModelResolver;
 use SuperAICore\Services\CliStatusDetector;
+use SuperAICore\Support\SuperAgentDetector;
 use GuzzleHttp\Client;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -26,15 +28,58 @@ class ProviderController extends Controller
         $cliStatuses = CliStatusDetector::all();
         $defaultBackend = IntegrationConfig::getValue('ai_execution', 'default_backend') ?: 'claude';
 
+        // Hide SuperAgent entirely when the SDK is not installed.
+        $backends = ['claude', 'codex'];
+        if (SuperAgentDetector::isAvailable()) {
+            $backends[] = 'superagent';
+        }
+
+        // Per-backend runtime on/off — persisted in IntegrationConfig, read by
+        // BackendRegistry + Dispatcher so providers under a disabled backend
+        // cannot be used.
+        $backendDisabled = [];
+        foreach ($backends as $be) {
+            $backendDisabled[$be] = self::isBackendDisabled($be);
+        }
+
         // Group providers by backend; UI prepends a synthetic "Built-in" per backend.
         $providersByBackend = [];
-        foreach (['claude', 'codex', 'superagent'] as $be) {
+        foreach ($backends as $be) {
             $providersByBackend[$be] = $providers->where('backend', $be)->values();
         }
 
+        // Matrix used by the "New provider" modal to narrow the type select.
+        $backendTypes = array_intersect_key(AiProvider::BACKEND_TYPES, array_flip($backends));
+
         return view('super-ai-core::providers.index', compact(
-            'providers', 'providersByBackend', 'cliStatuses', 'defaultBackend'
+            'providers', 'providersByBackend', 'cliStatuses', 'defaultBackend',
+            'backends', 'backendTypes', 'backendDisabled'
         ));
+    }
+
+    public function toggleBackend(Request $request)
+    {
+        $request->validate([
+            'backend' => 'required|in:' . implode(',', $this->availableBackends()),
+            'enabled' => 'required|boolean',
+        ]);
+
+        IntegrationConfig::setValue(
+            'ai_execution',
+            'backend_disabled.' . $request->input('backend'),
+            $request->boolean('enabled') ? '0' : '1'
+        );
+
+        return back()->with('success', __('super-ai-core::messages.backend_state_saved'));
+    }
+
+    /**
+     * Shared read path used by the controller, the BackendRegistry, and the
+     * Dispatcher to gate runtime usage of a backend.
+     */
+    public static function isBackendDisabled(string $backend): bool
+    {
+        return IntegrationConfig::getValue('ai_execution', 'backend_disabled.' . $backend) === '1';
     }
 
     /**
@@ -43,7 +88,7 @@ class ProviderController extends Controller
      */
     public function activateBuiltin(Request $request)
     {
-        $request->validate(['backend' => 'required|in:claude,codex,superagent']);
+        $request->validate(['backend' => 'required|in:' . implode(',', $this->availableBackends())]);
         $backend = $request->input('backend');
 
         AiProvider::where('scope', 'global')
@@ -84,7 +129,7 @@ class ProviderController extends Controller
 
     public function saveDefaultBackend(Request $request)
     {
-        $request->validate(['backend' => 'required|in:claude,codex,superagent']);
+        $request->validate(['backend' => 'required|in:' . implode(',', $this->availableBackends())]);
         IntegrationConfig::setValue('ai_execution', 'default_backend', $request->input('backend'));
         return back()->with('success', __('super-ai-core::messages.default_backend_saved'));
     }
@@ -187,11 +232,22 @@ class ProviderController extends Controller
 
     // ─── Helpers ───
 
+    protected function availableBackends(): array
+    {
+        $backends = [AiProvider::BACKEND_CLAUDE, AiProvider::BACKEND_CODEX];
+        if (SuperAgentDetector::isAvailable()) {
+            $backends[] = AiProvider::BACKEND_SUPERAGENT;
+        }
+        return $backends;
+    }
+
     protected function validated(Request $request, ?AiProvider $provider = null): array
     {
-        return $request->validate([
+        $backends = $this->availableBackends();
+
+        $data = $request->validate([
             'name' => 'required|string|max:100',
-            'backend' => 'nullable|in:' . implode(',', AiProvider::BACKENDS),
+            'backend' => ($provider ? 'nullable' : 'required') . '|in:' . implode(',', $backends),
             'type' => ($provider ? 'nullable' : 'required') . '|in:' . implode(',', array_keys(AiProvider::TYPES)),
             'api_key' => 'nullable|string|max:500',
             'base_url' => 'nullable|url|max:500',
@@ -201,6 +257,18 @@ class ProviderController extends Controller
             'extra_config.secret_access_key' => 'nullable|string|max:255',
             'extra_config.project_id' => 'nullable|string|max:255',
         ]);
+
+        // Enforce the backend → type matrix (same combinations SuperTeam used).
+        $backend = $data['backend'] ?? $provider?->backend;
+        $type = $data['type'] ?? $provider?->type;
+        if ($backend && $type) {
+            $allowed = AiProvider::typesForBackend($backend);
+            if (!in_array($type, $allowed, true)) {
+                abort(422, "Type '{$type}' is not allowed for backend '{$backend}'. Allowed: " . implode(', ', $allowed));
+            }
+        }
+
+        return $data;
     }
 
     protected function fetchAnthropicModels(AiProvider $provider): array
@@ -246,12 +314,12 @@ class ProviderController extends Controller
     protected function fallbackModels(string $type): array
     {
         if (str_starts_with($type, 'anthropic') || $type === AiProvider::TYPE_BEDROCK || $type === AiProvider::TYPE_VERTEX) {
-            return [
-                ['id' => 'claude-opus-4-6', 'display_name' => 'Opus 4.6'],
-                ['id' => 'claude-sonnet-4-6', 'display_name' => 'Sonnet 4.6'],
-                ['id' => 'claude-sonnet-4-5-20241022', 'display_name' => 'Sonnet 4.5'],
-                ['id' => 'claude-haiku-4-5-20251001', 'display_name' => 'Haiku 4.5'],
-            ];
+            // Derived from ClaudeModelResolver so new Claude generations
+            // only need to be added in one place.
+            return array_map(
+                fn ($m) => ['id' => $m['slug'], 'display_name' => $m['display_name']],
+                ClaudeModelResolver::catalog(),
+            );
         }
         if (str_starts_with($type, 'openai')) {
             return [

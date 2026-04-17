@@ -11,22 +11,40 @@
 </div>
 
 {{-- CLI Status + Default Backend --}}
+@php
+    $backendLabels = array_intersect_key(
+        ['claude' => 'Claude Code CLI', 'codex' => 'Codex CLI', 'superagent' => 'SuperAgent SDK'],
+        array_flip($backends)
+    );
+@endphp
 <div class="row g-3 mb-3">
-    @foreach(['claude' => 'Claude Code CLI', 'codex' => 'Codex CLI', 'superagent' => 'SuperAgent SDK'] as $be => $label)
-        @php $st = $cliStatuses[$be] ?? []; @endphp
+    @foreach($backendLabels as $be => $label)
+        @php
+            $st = $cliStatuses[$be] ?? [];
+            $isDisabled = !empty($backendDisabled[$be]);
+        @endphp
         <div class="col-md-4">
-            <div class="card border-0 shadow-sm h-100 {{ ($defaultBackend === $be) ? 'border-primary border-2' : '' }}">
+            <div class="card border-0 shadow-sm h-100 {{ ($defaultBackend === $be) ? 'border-primary border-2' : '' }} {{ $isDisabled ? 'opacity-50' : '' }}">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <div>
                             <h6 class="mb-0">{{ $label }}</h6>
                             <code class="small text-muted">{{ $be }}</code>
                         </div>
-                        @if(!empty($st['installed']))
-                            <span class="badge bg-success">{{ __('super-ai-core::messages.cli_installed') }}</span>
-                        @else
-                            <span class="badge bg-secondary">{{ __('super-ai-core::messages.cli_not_installed') }}</span>
-                        @endif
+                        <div class="d-flex flex-column align-items-end gap-1">
+                            @if(!empty($st['installed']))
+                                <span class="badge bg-success">{{ __('super-ai-core::messages.cli_installed') }}</span>
+                            @else
+                                <span class="badge bg-secondary">{{ __('super-ai-core::messages.cli_not_installed') }}</span>
+                            @endif
+                            <form method="POST" action="{{ route('super-ai-core.providers.toggle-backend') }}" class="form-check form-switch m-0">
+                                @csrf
+                                <input type="hidden" name="backend" value="{{ $be }}">
+                                <input type="hidden" name="enabled" value="{{ $isDisabled ? '1' : '0' }}">
+                                <input type="checkbox" class="form-check-input" onchange="this.form.submit()" {{ $isDisabled ? '' : 'checked' }}>
+                                <label class="form-check-label small">{{ $isDisabled ? __('super-ai-core::messages.engine_off') : __('super-ai-core::messages.engine_on') }}</label>
+                            </form>
+                        </div>
                     </div>
                     @if(!empty($st['installed']))
                         <div class="small text-muted">
@@ -62,12 +80,20 @@
 
 {{-- Provider list grouped by backend, with built-in rows --}}
 @foreach($providersByBackend as $be => $beProviders)
-    @php $beLabel = ['claude' => 'Claude Code', 'codex' => 'Codex', 'superagent' => 'SuperAgent SDK'][$be] ?? $be; @endphp
-    @php $anyActive = $beProviders->contains(fn ($p) => $p->is_active); @endphp
-    <div class="card border-0 shadow-sm mb-3">
-        <div class="card-header bg-white">
-            <strong><i class="bi bi-{{ ['claude'=>'robot','codex'=>'code-slash','superagent'=>'cpu'][$be] ?? 'plug' }} me-1"></i>{{ $beLabel }}</strong>
-            <code class="small text-muted ms-2">{{ $be }}</code>
+    @php
+        $beLabel = ['claude' => 'Claude Code', 'codex' => 'Codex', 'superagent' => 'SuperAgent SDK'][$be] ?? $be;
+        $anyActive = $beProviders->contains(fn ($p) => $p->is_active);
+        $beDisabled = !empty($backendDisabled[$be]);
+    @endphp
+    <div class="card border-0 shadow-sm mb-3 {{ $beDisabled ? 'opacity-50' : '' }}">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <div>
+                <strong><i class="bi bi-{{ ['claude'=>'robot','codex'=>'code-slash','superagent'=>'cpu'][$be] ?? 'plug' }} me-1"></i>{{ $beLabel }}</strong>
+                <code class="small text-muted ms-2">{{ $be }}</code>
+            </div>
+            @if($beDisabled)
+                <span class="badge bg-secondary"><i class="bi bi-power me-1"></i>{{ __('super-ai-core::messages.engine_disabled_badge') }}</span>
+            @endif
         </div>
         <div class="card-body p-0">
             <table class="table table-hover mb-0">
@@ -169,23 +195,15 @@
                 </div>
                 <div class="mb-2">
                     <label class="form-label small">{{ __('super-ai-core::messages.backend') }}</label>
-                    <select name="backend" class="form-select form-select-sm" required>
-                        <option value="claude">claude</option>
-                        <option value="codex">codex</option>
-                        <option value="superagent">superagent</option>
+                    <select name="backend" id="new-provider-backend" class="form-select form-select-sm" required>
+                        @foreach($backends as $be)
+                            <option value="{{ $be }}">{{ $be }}</option>
+                        @endforeach
                     </select>
                 </div>
                 <div class="mb-2">
                     <label class="form-label small">{{ __('super-ai-core::messages.type') }}</label>
-                    <select name="type" class="form-select form-select-sm" required>
-                        <option value="builtin">builtin</option>
-                        <option value="anthropic">anthropic</option>
-                        <option value="anthropic-proxy">anthropic-proxy</option>
-                        <option value="bedrock">bedrock</option>
-                        <option value="vertex">vertex</option>
-                        <option value="openai">openai</option>
-                        <option value="openai-compatible">openai-compatible</option>
-                    </select>
+                    <select name="type" id="new-provider-type" class="form-select form-select-sm" required></select>
                 </div>
                 <div class="mb-2">
                     <label class="form-label small">{{ __('super-ai-core::messages.api_key') }}</label>
@@ -205,6 +223,30 @@
 </div>
 
 <script>
+// Narrow the "type" select in the New-provider modal to only the types
+// that are valid for the currently chosen backend (same matrix SuperTeam used).
+const BACKEND_TYPES = @json($backendTypes);
+(function () {
+    const backendEl = document.getElementById('new-provider-backend');
+    const typeEl = document.getElementById('new-provider-type');
+    if (!backendEl || !typeEl) return;
+
+    function refreshTypes() {
+        const allowed = BACKEND_TYPES[backendEl.value] || [];
+        const prev = typeEl.value;
+        typeEl.innerHTML = '';
+        allowed.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t;
+            opt.textContent = t;
+            typeEl.appendChild(opt);
+        });
+        if (allowed.includes(prev)) typeEl.value = prev;
+    }
+    backendEl.addEventListener('change', refreshTypes);
+    refreshTypes();
+})();
+
 function testProvider(id) {
     const token = document.querySelector('meta[name="csrf-token"]').content;
     fetch('{{ url("super-ai-core/providers") }}/' + id + '/test', {

@@ -24,6 +24,7 @@ Route::get('locale/{code}', [LocaleController::class, 'switch'])->name('locale.s
 Route::get('providers', [ProviderController::class, 'index'])->name('providers.index');
 Route::get('providers/cli-status', [ProviderController::class, 'cliStatus'])->name('providers.cli-status');
 Route::post('providers/default-backend', [ProviderController::class, 'saveDefaultBackend'])->name('providers.default-backend');
+Route::post('providers/toggle-backend', [ProviderController::class, 'toggleBackend'])->name('providers.toggle-backend');
 Route::post('providers/activate-builtin', [ProviderController::class, 'activateBuiltin'])->name('providers.activate-builtin');
 Route::post('providers/test-builtin', [ProviderController::class, 'testBuiltin'])->name('providers.test-builtin');
 Route::post('providers', [ProviderController::class, 'store'])->name('providers.store');
@@ -56,12 +57,24 @@ Route::post('routings/{routing}/toggle', [AiServiceController::class, 'toggleRou
 
 // ─── MCP / Integrations ───
 Route::get('integrations', [IntegrationController::class, 'index'])->name('integrations.index');
+Route::get('integrations/status', [IntegrationController::class, 'status'])->name('integrations.status');
+Route::post('integrations/batch-check', [IntegrationController::class, 'batchCheck'])->name('integrations.batchCheck');
+Route::post('integrations/batch-install', [IntegrationController::class, 'batchInstall'])->name('integrations.batchInstall');
+
+// System tools (OS-level dependencies)
+Route::get('integrations/system-tools', [IntegrationController::class, 'systemToolsStatus'])->name('integrations.systemTools');
+Route::get('integrations/system-tools/{key}/commands', [IntegrationController::class, 'systemToolCommands'])->name('integrations.systemToolCommands');
+Route::post('integrations/system-tools/{key}/install', [IntegrationController::class, 'installSystemTool'])->name('integrations.installSystemTool');
+Route::post('integrations/system-tools/tesseract/language/{lang}', [IntegrationController::class, 'installTesseractLanguage'])->name('integrations.installTesseractLanguage');
+
+// MCP server ops (order matters: specific paths first so {key} doesn't swallow them)
 Route::post('integrations/{key}/install', [IntegrationController::class, 'install'])->name('integrations.install');
 Route::post('integrations/{key}/uninstall', [IntegrationController::class, 'uninstall'])->name('integrations.uninstall');
+Route::delete('integrations/{key}/uninstall', [IntegrationController::class, 'uninstall']);
 Route::get('integrations/{key}/test', [IntegrationController::class, 'test'])->name('integrations.test');
-Route::post('integrations/{key}/auth/start', [IntegrationController::class, 'startAuth'])->name('integrations.auth.start');
-Route::post('integrations/{key}/auth/clear', [IntegrationController::class, 'clearAuth'])->name('integrations.auth.clear');
-Route::get('integrations/status', [IntegrationController::class, 'status'])->name('integrations.status');
+Route::post('integrations/{key}/auth/start', [IntegrationController::class, 'startAuth'])->name('integrations.auth');
+Route::post('integrations/{key}/auth/clear', [IntegrationController::class, 'clearAuth'])->name('integrations.clearAuth');
+Route::delete('integrations/{key}/auth', [IntegrationController::class, 'clearAuth']);
 
 // ─── Usage ───
 Route::get('usage', [UsageController::class, 'index'])->name('usage.index');
@@ -72,7 +85,11 @@ Route::get('costs', [CostDashboardController::class, 'index'])->name('costs.inde
 // ─── Task Model Settings ───
 
 // ─── Process Monitor ───
+// Aggregates rows from every registered ProcessSource (built-in ai_processes
+// + host-contributed sources like TaskResult). IDs follow "{sourceKey}.{localId}".
 Route::get('processes', [ProcessController::class, 'index'])->name('processes.index');
 Route::post('processes/register', [ProcessController::class, 'register'])->name('processes.register');
 Route::post('processes/kill', [ProcessController::class, 'kill'])->name('processes.kill');
-Route::get('processes/{process}/log', [ProcessController::class, 'log'])->name('processes.log');
+Route::get('processes/{process}/log', [ProcessController::class, 'log'])
+    ->where('process', '[A-Za-z0-9_.-]+')
+    ->name('processes.log');

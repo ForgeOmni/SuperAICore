@@ -1,5 +1,5 @@
 {
-    "name": "forgeomni/super-ai-core",
+    "name": "forgeomni/superaicore",
     "description": "Laravel package for AI execution engine: pluggable backends (Claude CLI / Codex CLI / SuperAgent / Anthropic API / OpenAI API), provider/service/routing management UI, MCP server management, usage tracking, cost analytics, process monitor. Works standalone in a fresh Laravel install; UI is optional and overridable.",
     "keywords": ["laravel", "ai", "llm", "anthropic", "openai", "claude", "codex", "mcp", "agent"],
     "license": "MIT",

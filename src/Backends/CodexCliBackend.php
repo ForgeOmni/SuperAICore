@@ -3,6 +3,7 @@
 namespace SuperAICore\Backends;
 
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Services\CodexModelResolver;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 
@@ -34,6 +35,11 @@ class CodexCliBackend implements Backend
         $providerConfig = $options['provider_config'] ?? [];
         $prompt = $options['prompt'] ?? '';
         $model = $options['model'] ?? $providerConfig['model'] ?? null;
+
+        // Validate requested model against current codex login mode so a
+        // stale DB setting (e.g. "gpt-5" on a ChatGPT-auth'd CLI) doesn't
+        // fail the run — we substitute the closest compatible model.
+        $model = CodexModelResolver::resolve($model, $this->binary);
 
         $cmd = [$this->binary, 'exec'];  // one-shot mode
         if ($model) {
