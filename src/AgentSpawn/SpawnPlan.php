@@ -36,6 +36,13 @@ class SpawnPlan
         if ($raw === false) return null;
 
         $json = json_decode($raw, true);
+        if ($json === null) {
+            // Models (gemini-cli especially) sometimes emit raw \n / \t / \r
+            // inside string values, which JSON spec forbids. Re-escape those
+            // control chars and try again before giving up.
+            $cleaned = self::reescapeControlCharsInJsonStrings($raw);
+            $json = json_decode($cleaned, true);
+        }
         if (!is_array($json) || empty($json['agents']) || !is_array($json['agents'])) return null;
 
         $agents = [];
@@ -54,5 +61,46 @@ class SpawnPlan
             agents: $agents,
             concurrency: max(1, min(8, (int) ($json['concurrency'] ?? 4))),
         );
+    }
+
+    /**
+     * Walk the input char-by-char; inside "..." string literals, replace
+     * raw \n / \r / \t with their JSON-escaped forms. Outside string
+     * literals leaves everything alone. Models sometimes emit unescaped
+     * control chars inside string values, which json_decode rejects
+     * strictly — this re-escape lets us recover.
+     */
+    protected static function reescapeControlCharsInJsonStrings(string $raw): string
+    {
+        $out = '';
+        $len = strlen($raw);
+        $inString = false;
+        $escaped = false;
+        for ($i = 0; $i < $len; $i++) {
+            $c = $raw[$i];
+            if ($escaped) {
+                $out .= $c;
+                $escaped = false;
+                continue;
+            }
+            if ($c === '\\') {
+                $out .= $c;
+                $escaped = true;
+                continue;
+            }
+            if ($c === '"') {
+                $inString = !$inString;
+                $out .= $c;
+                continue;
+            }
+            if ($inString) {
+                if ($c === "\n") { $out .= '\\n'; continue; }
+                if ($c === "\r") { $out .= '\\r'; continue; }
+                if ($c === "\t") { $out .= '\\t'; continue; }
+                if (ord($c) < 0x20) { $out .= sprintf('\\u%04x', ord($c)); continue; }
+            }
+            $out .= $c;
+        }
+        return $out;
     }
 }
