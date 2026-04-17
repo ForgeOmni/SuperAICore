@@ -1,5 +1,10 @@
 # forgeomni/superaicore
 
+[![tests](https://github.com/ForgeOmni/SuperAICore/actions/workflows/tests.yml/badge.svg)](https://github.com/ForgeOmni/SuperAICore/actions/workflows/tests.yml)
+[![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![php](https://img.shields.io/badge/php-%E2%89%A58.1-blue.svg)](composer.json)
+[![laravel](https://img.shields.io/badge/laravel-10%20%7C%2011%20%7C%2012-orange.svg)](composer.json)
+
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
 Laravel package for unified AI execution across multiple backends: **Claude CLI**, **Codex CLI**, **SuperAgent SDK**, **Anthropic API**, **OpenAI API**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, and a complete admin UI.

@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Models;
 
+use SuperAICore\Models\Concerns\HasConfigurablePrefix;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -25,6 +26,8 @@ class AiProcess extends Model
     const STATUS_FINISHED = 'finished';
     const STATUS_FAILED   = 'failed';
     const STATUS_KILLED   = 'killed';
+
+    use HasConfigurablePrefix;
 
     protected $table = 'ai_processes';
 

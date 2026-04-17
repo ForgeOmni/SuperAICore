@@ -95,6 +95,9 @@ CODEX_CLI_BIN=codex
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
 
+# 表名前缀（默认 sac_，置空则保留原始 ai_* 名称）
+AI_CORE_TABLE_PREFIX=sac_
+
 # 使用量、MCP、监控
 AI_CORE_USAGE_TRACKING=true
 AI_CORE_USAGE_RETAIN_DAYS=180

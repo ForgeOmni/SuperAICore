@@ -26,6 +26,13 @@ return [
     // Host app's middleware (e.g. SuperTeam's SetLocale) should read this cookie.
     'locale_cookie' => env('SUPER_AI_CORE_LOCALE_COOKIE', 'locale'),
 
+    // ─── Table prefix ───
+    // Prepended to every package table (ai_providers → sac_ai_providers)
+    // so names can't collide with a host app's tables. Set to '' to keep
+    // the raw names. Read by every Eloquent model (via HasConfigurablePrefix)
+    // and every migration (via SuperAICore\Support\TablePrefix).
+    'table_prefix' => env('AI_CORE_TABLE_PREFIX', 'sac_'),
+
     // ─── Route registration ───
     'route' => [
         // Whether to register package routes at all. Disable if host wants

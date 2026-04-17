@@ -1,5 +1,6 @@
 <?php
 
+use SuperAICore\Support\TablePrefix;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -7,9 +8,10 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        if (Schema::hasTable('ai_providers')) return;
+        $table = TablePrefix::apply('ai_providers');
+        if (Schema::hasTable($table)) return;
 
-        Schema::create('ai_providers', function (Blueprint $table) {
+        Schema::create($table, function (Blueprint $table) {
             $table->id();
             $table->string('scope', 20)->default('global');
             $table->unsignedBigInteger('scope_id')->nullable();
@@ -32,6 +34,6 @@ return new class extends Migration {
 
     public function down(): void
     {
-        Schema::dropIfExists('ai_providers');
+        Schema::dropIfExists(TablePrefix::apply('ai_providers'));
     }
 };

@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Models;
 
+use SuperAICore\Models\Concerns\HasConfigurablePrefix;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -16,6 +17,8 @@ use Illuminate\Database\Eloquent\Model;
  */
 class AiServiceRouting extends Model
 {
+    use HasConfigurablePrefix;
+
     protected $table = 'ai_service_routing';
 
     protected $fillable = [

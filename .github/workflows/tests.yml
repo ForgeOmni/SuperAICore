@@ -1,0 +1,95 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  phpunit:
+    name: PHP ${{ matrix.php }} · Laravel ${{ matrix.laravel }} · ${{ matrix.dependency-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.2', '8.3']
+        laravel: ['10.*', '11.*', '12.*']
+        dependency-version: [prefer-stable]
+        include:
+          - laravel: '10.*'
+            testbench: '8.*'
+          - laravel: '11.*'
+            testbench: '9.*'
+          - laravel: '12.*'
+            testbench: '10.*'
+        exclude:
+          # Laravel 11 requires PHP >= 8.2
+          - laravel: '11.*'
+            php: '8.1'
+          # Laravel 12 requires PHP >= 8.2
+          - laravel: '12.*'
+            php: '8.1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, sqlite3, pdo_sqlite, json, openssl, xml
+          coverage: none
+          tools: composer:v2
+
+      - name: Cache composer deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ matrix.php }}-${{ matrix.laravel }}-${{ hashFiles('composer.json') }}
+          restore-keys: composer-${{ matrix.php }}-${{ matrix.laravel }}-
+
+      - name: Install dependencies
+        run: |
+          composer require \
+            "illuminate/support:${{ matrix.laravel }}" \
+            "illuminate/database:${{ matrix.laravel }}" \
+            "illuminate/http:${{ matrix.laravel }}" \
+            "illuminate/console:${{ matrix.laravel }}" \
+            "orchestra/testbench:${{ matrix.testbench }}" \
+            --no-interaction --no-update
+          composer update --${{ matrix.dependency-version }} --prefer-dist --no-interaction
+
+      - name: Run phpunit
+        run: ./vendor/bin/phpunit --testdox
+
+  phpunit-no-superagent:
+    name: PHP 8.2 · Laravel 11 · without SuperAgent SDK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.2
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, sqlite3, pdo_sqlite, json, openssl, xml
+          coverage: none
+          tools: composer:v2
+
+      - name: Install without forgeomni/superagent
+        run: |
+          composer remove forgeomni/superagent --no-update --no-interaction
+          composer require \
+            "illuminate/support:11.*" \
+            "illuminate/database:11.*" \
+            "illuminate/http:11.*" \
+            "illuminate/console:11.*" \
+            "orchestra/testbench:9.*" \
+            --no-interaction --no-update
+          composer update --prefer-dist --no-interaction
+
+      - name: Run phpunit (SDK-missing path active)
+        run: ./vendor/bin/phpunit --testdox

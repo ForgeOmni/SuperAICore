@@ -1,5 +1,10 @@
 # forgeomni/superaicore
 
+[![tests](https://github.com/ForgeOmni/SuperAICore/actions/workflows/tests.yml/badge.svg)](https://github.com/ForgeOmni/SuperAICore/actions/workflows/tests.yml)
+[![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![php](https://img.shields.io/badge/php-%E2%89%A58.1-blue.svg)](composer.json)
+[![laravel](https://img.shields.io/badge/laravel-10%20%7C%2011%20%7C%2012-orange.svg)](composer.json)
+
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
 用于统一调度多种 AI 后端的 Laravel 包，支持 **Claude CLI**、**Codex CLI**、**SuperAgent SDK**、**Anthropic API**、**OpenAI API**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析，以及一套完整的后台管理 UI。

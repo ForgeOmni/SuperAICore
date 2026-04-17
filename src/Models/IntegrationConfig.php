@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Models;
 
+use SuperAICore\Models\Concerns\HasConfigurablePrefix;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Crypt;
 
@@ -16,6 +17,8 @@ use Illuminate\Support\Facades\Crypt;
  */
 class IntegrationConfig extends Model
 {
+    use HasConfigurablePrefix;
+
     protected $table = 'integration_configs';
 
     protected $fillable = ['integration_key', 'field_key', 'value', 'is_secret'];

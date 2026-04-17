@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Models;
 
+use SuperAICore\Models\Concerns\HasConfigurablePrefix;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Crypt;
 
@@ -25,6 +26,8 @@ class AiService extends Model
     const PROTOCOL_OPENAI     = 'openai';
     const PROTOCOL_MINIMAX    = 'minimax';
     const PROTOCOL_SUPERAGENT = 'superagent';
+
+    use HasConfigurablePrefix;
 
     protected $table = 'ai_services';
 

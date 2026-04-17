@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Models;
 
+use SuperAICore\Models\Concerns\HasConfigurablePrefix;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -18,6 +19,8 @@ use Illuminate\Database\Eloquent\Model;
  */
 class AiModelSetting extends Model
 {
+    use HasConfigurablePrefix;
+
     protected $table = 'ai_model_settings';
 
     protected $fillable = [

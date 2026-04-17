@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Models;
 
+use SuperAICore\Models\Concerns\HasConfigurablePrefix;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Crypt;
@@ -25,6 +26,8 @@ use Illuminate\Support\Facades\Crypt;
  */
 class AiProvider extends Model
 {
+    use HasConfigurablePrefix;
+
     const BACKEND_CLAUDE     = 'claude';
     const BACKEND_CODEX      = 'codex';
     const BACKEND_SUPERAGENT = 'superagent';

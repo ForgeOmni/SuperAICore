@@ -1,5 +1,6 @@
 <?php
 
+use SuperAICore\Support\TablePrefix;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -7,9 +8,10 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        if (Schema::hasTable('integration_configs')) return;
+        $table = TablePrefix::apply('integration_configs');
+        if (Schema::hasTable($table)) return;
 
-        Schema::create('integration_configs', function (Blueprint $table) {
+        Schema::create($table, function (Blueprint $table) {
             $table->id();
             $table->string('integration_key', 100)->comment('MCP server key or 3rd-party tool key');
             $table->string('field_key', 100);
@@ -23,6 +25,6 @@ return new class extends Migration {
 
     public function down(): void
     {
-        Schema::dropIfExists('integration_configs');
+        Schema::dropIfExists(TablePrefix::apply('integration_configs'));
     }
 };
