@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-Laravel package for unified AI execution across multiple backends: **Claude CLI**, **Codex CLI**, **SuperAgent SDK**, **Anthropic API**, **OpenAI API**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, and a complete admin UI.
+Laravel package for unified AI execution across three execution engines: **Claude Code CLI**, **Codex CLI**, and **SuperAgent SDK**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, and a complete admin UI.
 
 Works standalone in a fresh Laravel install. The UI is optional and fully overridable, so it can be embedded inside a host application (e.g. SuperTeam) or disabled entirely when only the services are needed.
 
@@ -24,7 +24,11 @@ The `forgeomni/superagent` entry in `composer.json` is there so the SuperAgent b
 
 ## Features
 
-- **Five pluggable backends** — Claude CLI, Codex CLI, SuperAgent, Anthropic API, OpenAI API, unified behind a single `Dispatcher` contract.
+- **Three execution engines** — Claude Code CLI, Codex CLI, and SuperAgent SDK — unified behind a single `Dispatcher` contract. Each engine accepts a fixed set of provider types (inherited from SuperTeam):
+  - **Claude Code CLI**: `builtin` (local login), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`
+  - **Codex CLI**: `builtin` (ChatGPT login), `openai`, `openai-compatible`
+  - **SuperAgent SDK**: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`
+- Engines fan out to five internal Dispatcher adapters (`claude_cli`, `codex_cli`, `superagent`, `anthropic_api`, `openai_api`) — CLI adapters when a provider uses `builtin`, HTTP adapters when it uses an API key. Operators rarely need to know this, but the adapters are addressable directly from the CLI if needed.
 - **Provider / Service / Routing model** — map abstract capabilities (`summarize`, `translate`, `code_review`, ...) to concrete services, and services to provider credentials.
 - **MCP server manager** — install, enable, and configure MCP servers from the admin UI.
 - **Usage tracking** — every call persists prompt/response tokens, duration, and cost to `ai_usage_logs`.
@@ -59,13 +63,17 @@ Full step-by-step guide: [INSTALL.md](INSTALL.md).
 ## CLI quick start
 
 ```bash
-# List backends and their availability
+# List Dispatcher adapters and their availability
 ./vendor/bin/super-ai-core list-backends
 
-# Call any backend
-./vendor/bin/super-ai-core call "Hello" --backend=anthropic_api --api-key=sk-ant-...
-./vendor/bin/super-ai-core call "Hello" --backend=claude_cli
-./vendor/bin/super-ai-core call "Hello" --backend=superagent
+# Drive the three engines from the CLI
+./vendor/bin/super-ai-core call "Hello" --backend=claude_cli                              # Claude Code CLI (local login)
+./vendor/bin/super-ai-core call "Hello" --backend=codex_cli                               # Codex CLI (ChatGPT login)
+./vendor/bin/super-ai-core call "Hello" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
+
+# Skip the CLI wrapper and hit the HTTP APIs directly
+./vendor/bin/super-ai-core call "Hello" --backend=anthropic_api --api-key=sk-ant-...      # Claude engine, HTTP mode
+./vendor/bin/super-ai-core call "Hello" --backend=openai_api --api-key=sk-...             # Codex engine, HTTP mode
 ```
 
 ## PHP quick start
@@ -91,11 +99,21 @@ echo $result['text'];
 ## Architecture
 
 ```
-Dispatcher ← BackendRegistry  ← { ClaudeCli, CodexCli, SuperAgent, AnthropicApi, OpenAiApi }
-           ← ProviderResolver  (active provider from ProviderRepository)
-           ← RoutingRepository (task_type + capability → service)
-           ← UsageTracker      (writes to UsageRepository)
-           ← CostCalculator    (model pricing → USD)
+  Engines (user-facing)     Provider types                 Dispatcher adapters
+  ────────────────────      ──────────────────────         ───────────────────
+  Claude Code CLI ────────▶ builtin                  ────▶ claude_cli
+                            anthropic / bedrock /    ────▶ anthropic_api
+                            vertex / anthropic-proxy
+  Codex CLI       ────────▶ builtin                  ────▶ codex_cli
+                            openai / openai-compat   ────▶ openai_api
+  SuperAgent SDK  ────────▶ anthropic(-proxy) /      ────▶ superagent
+                            openai(-compatible)
+
+  Dispatcher ← BackendRegistry   (owns the 5 adapters above)
+             ← ProviderResolver  (active provider from ProviderRepository)
+             ← RoutingRepository (task_type + capability → service)
+             ← UsageTracker      (writes to UsageRepository)
+             ← CostCalculator    (model pricing → USD)
 ```
 
 All repositories are interfaces. The service provider auto-binds Eloquent implementations; swap them for JSON files, Redis, or an external API without touching the dispatcher.

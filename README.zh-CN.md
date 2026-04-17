@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-用于统一调度多种 AI 后端的 Laravel 包，支持 **Claude CLI**、**Codex CLI**、**SuperAgent SDK**、**Anthropic API**、**OpenAI API**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析，以及一套完整的后台管理 UI。
+用于统一调度三种 AI 执行引擎的 Laravel 包：**Claude Code CLI**、**Codex CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析，以及一套完整的后台管理 UI。
 
 在干净的 Laravel 项目中可独立运行。UI 可选、可完全替换，既能嵌入宿主应用（例如 SuperTeam），也可以在仅使用服务层时关掉。
 
@@ -24,7 +24,11 @@
 
 ## 特性
 
-- **五种可插拔后端** —— Claude CLI、Codex CLI、SuperAgent、Anthropic API、OpenAI API，统一实现同一套 `Dispatcher` 契约。
+- **三个执行引擎** —— Claude Code CLI、Codex CLI、SuperAgent SDK，统一实现同一套 `Dispatcher` 契约。每个引擎只接受固定几类 provider（沿用 SuperTeam 的组合）：
+  - **Claude Code CLI**：`builtin`（本地登录）、`anthropic`、`anthropic-proxy`、`bedrock`、`vertex`
+  - **Codex CLI**：`builtin`（ChatGPT 登录）、`openai`、`openai-compatible`
+  - **SuperAgent SDK**：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`
+- 三个引擎在 Dispatcher 内部扇出成五个适配器（`claude_cli`、`codex_cli`、`superagent`、`anthropic_api`、`openai_api`）—— provider 为 `builtin` 时走 CLI 适配器，持有 API Key 时走 HTTP 适配器。这是实现细节，一般无需关心；如需低层直调，CLI 也能直接指定这五个适配器名。
 - **Provider / Service / Routing 模型** —— 将抽象能力（`summarize`、`translate`、`code_review` 等）映射到具体服务，再将服务绑定到 provider 凭证。
 - **MCP 服务器管理器** —— 在后台 UI 中安装、启用、配置 MCP 服务器。
 - **使用量追踪** —— 每次调用将 prompt / response tokens、耗时、成本写入 `ai_usage_logs` 表。
@@ -59,13 +63,17 @@ php artisan migrate
 ## CLI 快速上手
 
 ```bash
-# 查看所有后端及可用状态
+# 查看 Dispatcher 适配器及其可用状态
 ./vendor/bin/super-ai-core list-backends
 
-# 调用任意后端
-./vendor/bin/super-ai-core call "你好" --backend=anthropic_api --api-key=sk-ant-...
-./vendor/bin/super-ai-core call "你好" --backend=claude_cli
-./vendor/bin/super-ai-core call "你好" --backend=superagent
+# 从 CLI 驱动三个引擎
+./vendor/bin/super-ai-core call "你好" --backend=claude_cli                              # Claude Code CLI（本地登录）
+./vendor/bin/super-ai-core call "你好" --backend=codex_cli                               # Codex CLI（ChatGPT 登录）
+./vendor/bin/super-ai-core call "你好" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
+
+# 跳过 CLI 包装，直接打 HTTP API
+./vendor/bin/super-ai-core call "你好" --backend=anthropic_api --api-key=sk-ant-...      # Claude 引擎的 HTTP 模式
+./vendor/bin/super-ai-core call "你好" --backend=openai_api --api-key=sk-...             # Codex 引擎的 HTTP 模式
 ```
 
 ## PHP 调用示例
@@ -91,11 +99,21 @@ echo $result['text'];
 ## 架构
 
 ```
-Dispatcher ← BackendRegistry  ← { ClaudeCli, CodexCli, SuperAgent, AnthropicApi, OpenAiApi }
-           ← ProviderResolver  （从 ProviderRepository 读取当前 provider）
-           ← RoutingRepository （task_type + capability → service）
-           ← UsageTracker      （写入 UsageRepository）
-           ← CostCalculator    （模型价格表 → USD）
+  面向用户的引擎            Provider 类型                     Dispatcher 适配器
+  ────────────────         ──────────────────────            ──────────────────
+  Claude Code CLI ────────▶ builtin                    ────▶ claude_cli
+                            anthropic / bedrock /      ────▶ anthropic_api
+                            vertex / anthropic-proxy
+  Codex CLI       ────────▶ builtin                    ────▶ codex_cli
+                            openai / openai-compat     ────▶ openai_api
+  SuperAgent SDK  ────────▶ anthropic(-proxy) /        ────▶ superagent
+                            openai(-compatible)
+
+  Dispatcher ← BackendRegistry   （管理上述 5 个适配器）
+             ← ProviderResolver  （从 ProviderRepository 读取当前 provider）
+             ← RoutingRepository （task_type + capability → service）
+             ← UsageTracker      （写入 UsageRepository）
+             ← CostCalculator    （模型价格表 → USD）
 ```
 
 所有 Repository 都是接口。ServiceProvider 默认绑定 Eloquent 实现；你可以替换为 JSON 文件、Redis 或外部 API，调度器无需改动。
