@@ -11,18 +11,49 @@ namespace SuperAICore\Services;
 class ProcessMonitor
 {
     /**
-     * Default keywords host apps care about. Pass a custom list to narrow or
-     * extend.
+     * Build the live keyword list from the EngineCatalog singleton. Falls
+     * back to the static DEFAULT_KEYWORDS when the container isn't booted.
+     *
+     * @return string[]
      */
-    const DEFAULT_KEYWORDS = ['claude', 'codex', 'gemini', 'superagent', 'task:execute', 'run:translate'];
+    public static function resolveDefaultKeywords(): array
+    {
+        if (function_exists('app')) {
+            try {
+                $catalog = app(EngineCatalog::class);
+                return array_values(array_unique(array_merge(
+                    $catalog->processScanKeywords(),
+                    self::EXTRA_KEYWORDS,
+                )));
+            } catch (\Throwable $e) {
+                // fall through
+            }
+        }
+        return self::DEFAULT_KEYWORDS;
+    }
 
     /**
-     * Scan `ps aux` and return rows matching any of $keywords.
+     * Default keywords host apps care about. Used when the EngineCatalog
+     * singleton isn't available (e.g. low-level tests). The live UI path
+     * resolves keywords from the catalog plus these fixed extras.
+     */
+    const DEFAULT_KEYWORDS = ['claude', 'codex', 'gemini', 'copilot', 'superagent', 'task:execute', 'run:translate'];
+
+    /** Always-on keywords appended on top of catalog-derived names. */
+    const EXTRA_KEYWORDS = ['task:execute', 'run:translate'];
+
+    /**
+     * Scan `ps aux` and return rows matching any of $keywords. When called
+     * with no args, the keyword list is sourced from EngineCatalog so adding
+     * a new engine surfaces its processes automatically.
      *
      * @return array<int,array{pid:int,user:string,cpu:string,mem:string,elapsed:string,command:string,started_at:?string,full_line:string}>
      */
-    public static function getSystemProcesses(array $keywords = self::DEFAULT_KEYWORDS): array
+    public static function getSystemProcesses(?array $keywords = null): array
     {
+        if ($keywords === null) {
+            $keywords = self::resolveDefaultKeywords();
+        }
         $processes = [];
 
         $output = [];

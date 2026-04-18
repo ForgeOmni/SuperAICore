@@ -23,6 +23,8 @@ class ListBackendsCommand extends Command
             $notes = match ($backend->name()) {
                 'claude_cli' => 'Requires `claude` in PATH',
                 'codex_cli' => 'Requires `codex` in PATH',
+                'gemini_cli' => 'Requires `gemini` in PATH',
+                'copilot_cli' => 'Requires `copilot` in PATH (run `copilot login` first)',
                 'anthropic_api' => 'Needs ANTHROPIC_API_KEY',
                 'openai_api' => 'Needs OPENAI_API_KEY',
                 'superagent' => 'Uses forgeomni/superagent in-process',

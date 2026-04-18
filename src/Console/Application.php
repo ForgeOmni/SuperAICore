@@ -5,6 +5,7 @@ namespace SuperAICore\Console;
 use SuperAICore\Console\Commands\AgentListCommand;
 use SuperAICore\Console\Commands\AgentRunCommand;
 use SuperAICore\Console\Commands\CallCommand;
+use SuperAICore\Console\Commands\CopilotSyncCommand;
 use SuperAICore\Console\Commands\GeminiSyncCommand;
 use SuperAICore\Console\Commands\ListBackendsCommand;
 use SuperAICore\Console\Commands\SkillListCommand;
@@ -29,5 +30,6 @@ class Application extends SymfonyApplication
         $this->add(new AgentListCommand());
         $this->add(new AgentRunCommand());
         $this->add(new GeminiSyncCommand());
+        $this->add(new CopilotSyncCommand());
     }
 }

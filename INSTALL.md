@@ -13,8 +13,11 @@ This guide walks through a full install of `forgeomni/superaicore` into an exist
 - Optional, per backend:
   - `claude` CLI on `$PATH` — for the Claude CLI backend
   - `codex` CLI on `$PATH` — for the Codex CLI backend
+  - `gemini` CLI on `$PATH` — for the Gemini CLI backend
+  - `copilot` CLI on `$PATH` (then `copilot login`) — for the GitHub Copilot CLI backend
   - Anthropic API key — for `anthropic_api`
   - OpenAI API key — for `openai_api`
+  - Google AI Studio key — for `gemini_api`
 
 ## 2. Require the package
 
@@ -88,6 +91,7 @@ SUPER_AI_CORE_LOCALE_COOKIE=locale
 AI_CORE_CLAUDE_CLI_ENABLED=true
 AI_CORE_CODEX_CLI_ENABLED=true
 AI_CORE_GEMINI_CLI_ENABLED=true
+AI_CORE_COPILOT_CLI_ENABLED=true
 AI_CORE_SUPERAGENT_ENABLED=true
 AI_CORE_ANTHROPIC_API_ENABLED=true
 AI_CORE_OPENAI_API_ENABLED=true
@@ -95,6 +99,8 @@ AI_CORE_GEMINI_API_ENABLED=true
 CLAUDE_CLI_BIN=claude
 CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
+COPILOT_CLI_BIN=copilot
+AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com
@@ -136,14 +142,19 @@ If you have any Claude Code skills or sub-agents installed (under `./.claude/ski
 # Generate Gemini custom commands for every discovered skill/agent
 # (writes to ~/.gemini/commands/skill/*.toml and agent/*.toml)
 ./vendor/bin/superaicore gemini:sync --dry-run
+
+# Translate Claude sub-agents into Copilot's `.agent.md` format.
+# Auto-runs on `agent:run --backend=copilot`; this flag is a manual preview.
+./vendor/bin/superaicore copilot:sync --dry-run
 ```
 
-No config needed. Running without `--dry-run` shells out to the backend CLIs (`claude`, `codex`, `gemini`) — install whichever ones you intend to target:
+No config needed. Running without `--dry-run` shells out to the backend CLIs (`claude`, `codex`, `gemini`, `copilot`) — install whichever ones you intend to target:
 
 ```bash
 npm i -g @anthropic-ai/claude-code
 brew install codex        # or: cargo install codex
 npm i -g @google/gemini-cli
+npm i -g @github/copilot   # then `copilot login` (OAuth device flow)
 ```
 
 ## 6. Open the admin UI

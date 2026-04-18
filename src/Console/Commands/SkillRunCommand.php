@@ -8,6 +8,7 @@ use SuperAICore\Registry\SkillRegistry;
 use SuperAICore\Runner\ClaudeSkillRunner;
 use SuperAICore\Runner\CodexSkillRunner;
 use SuperAICore\Runner\CompatibilityProbe;
+use SuperAICore\Runner\CopilotSkillRunner;
 use SuperAICore\Runner\FallbackChain;
 use SuperAICore\Runner\GeminiSkillRunner;
 use SuperAICore\Runner\SkillRunner;
@@ -40,7 +41,7 @@ final class SkillRunCommand extends Command
         $this
             ->addArgument('name', InputArgument::REQUIRED, 'Skill name')
             ->addArgument('args', InputArgument::IS_ARRAY | InputArgument::OPTIONAL, 'Free-form args appended to the skill prompt')
-            ->addOption('backend', 'b', InputOption::VALUE_REQUIRED, 'Target backend: claude|codex|gemini|superagent', 'claude')
+            ->addOption('backend', 'b', InputOption::VALUE_REQUIRED, 'Target backend: claude|codex|gemini|copilot|superagent', 'claude')
             ->addOption('exec', null, InputOption::VALUE_REQUIRED, 'Execution mode: claude|native|fallback', 'claude')
             ->addOption('fallback-chain', null, InputOption::VALUE_REQUIRED, 'Comma-separated backend chain for --exec=fallback (default: <backend>,claude)')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Print the resolved command without executing');
@@ -94,10 +95,11 @@ final class SkillRunCommand extends Command
                 return $this->runners[$b];
             }
             return match ($b) {
-                'claude' => new ClaudeSkillRunner(writer: $writer),
-                'codex'  => new CodexSkillRunner(writer: $writer),
-                'gemini' => new GeminiSkillRunner(writer: $writer),
-                default  => null,
+                'claude'  => new ClaudeSkillRunner(writer: $writer),
+                'codex'   => new CodexSkillRunner(writer: $writer),
+                'gemini'  => new GeminiSkillRunner(writer: $writer),
+                'copilot' => new CopilotSkillRunner(writer: $writer),
+                default   => null,
             };
         };
 
@@ -180,10 +182,11 @@ final class SkillRunCommand extends Command
     {
         $writer = fn(string $chunk) => $output->write($chunk);
         return match ($backend) {
-            'claude' => new ClaudeSkillRunner(writer: $writer),
-            'codex'  => new CodexSkillRunner(writer: $writer),
-            'gemini' => new GeminiSkillRunner(writer: $writer),
-            default  => null,
+            'claude'  => new ClaudeSkillRunner(writer: $writer),
+            'codex'   => new CodexSkillRunner(writer: $writer),
+            'gemini'  => new GeminiSkillRunner(writer: $writer),
+            'copilot' => new CopilotSkillRunner(writer: $writer),
+            default   => null,
         };
     }
 

@@ -19,7 +19,7 @@ class CallCommand extends Command
     {
         $this
             ->addArgument('prompt', InputArgument::REQUIRED, 'The prompt to send')
-            ->addOption('backend', 'b', InputOption::VALUE_REQUIRED, 'Backend: anthropic_api | openai_api | gemini_api | superagent | claude_cli | codex_cli | gemini_cli')
+            ->addOption('backend', 'b', InputOption::VALUE_REQUIRED, 'Backend: anthropic_api | openai_api | gemini_api | superagent | claude_cli | codex_cli | gemini_cli | copilot_cli')
             ->addOption('model', 'm', InputOption::VALUE_REQUIRED, 'Model id (e.g., claude-sonnet-4-5-20241022)')
             ->addOption('api-key', null, InputOption::VALUE_REQUIRED, 'API key override')
             ->addOption('base-url', null, InputOption::VALUE_REQUIRED, 'API base URL override')

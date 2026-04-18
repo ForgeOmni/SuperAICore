@@ -7,6 +7,7 @@ use SuperAICore\Registry\AgentRegistry;
 use SuperAICore\Runner\AgentRunner;
 use SuperAICore\Runner\ClaudeAgentRunner;
 use SuperAICore\Runner\CodexAgentRunner;
+use SuperAICore\Runner\CopilotAgentRunner;
 use SuperAICore\Runner\GeminiAgentRunner;
 use SuperAICore\Services\ClaudeModelResolver;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -35,7 +36,7 @@ final class AgentRunCommand extends Command
         $this
             ->addArgument('name', InputArgument::REQUIRED, 'Agent name')
             ->addArgument('task', InputArgument::REQUIRED, 'Task prompt for the agent')
-            ->addOption('backend', 'b', InputOption::VALUE_REQUIRED, 'Override backend: claude|codex|gemini. When omitted, inferred from the agent\'s `model:` frontmatter.')
+            ->addOption('backend', 'b', InputOption::VALUE_REQUIRED, 'Override backend: claude|codex|gemini|copilot. When omitted, inferred from the agent\'s `model:` frontmatter.')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Print the resolved command without executing');
     }
 
@@ -67,10 +68,11 @@ final class AgentRunCommand extends Command
     {
         $writer = fn(string $chunk) => $output->write($chunk);
         return match ($backend) {
-            'claude' => new ClaudeAgentRunner(writer: $writer),
-            'codex'  => new CodexAgentRunner(writer: $writer),
-            'gemini' => new GeminiAgentRunner(writer: $writer),
-            default  => null,
+            'claude'  => new ClaudeAgentRunner(writer: $writer),
+            'codex'   => new CodexAgentRunner(writer: $writer),
+            'gemini'  => new GeminiAgentRunner(writer: $writer),
+            'copilot' => new CopilotAgentRunner(writer: $writer),
+            default   => null,
         };
     }
 

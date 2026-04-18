@@ -71,6 +71,14 @@ return [
             'binary' => env('GEMINI_CLI_BIN', 'gemini'),
             'timeout' => 300,
         ],
+        'copilot_cli' => [
+            'enabled' => env('AI_CORE_COPILOT_CLI_ENABLED', true),
+            'binary' => env('COPILOT_CLI_BIN', 'copilot'),
+            'timeout' => 300,
+            // Copilot's default UX requires per-tool confirmation; CI / non-interactive
+            // runs need this on. Flip to false to opt back into prompts.
+            'allow_all_tools' => (bool) env('AI_CORE_COPILOT_ALLOW_ALL_TOOLS', true),
+        ],
         'gemini_api' => [
             'enabled' => env('AI_CORE_GEMINI_API_ENABLED', true),
             'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com'),
@@ -112,18 +120,73 @@ return [
         'enabled' => env('AI_CORE_PROCESS_MONITOR', false),
     ],
 
+    // ─── Engine catalog overrides ───
+    // SuperAICore ships sensible defaults for every engine (label, icon,
+    // dispatcher backends, available models, billing model) — see
+    // `EngineCatalog::seed()`. Host apps can override per-engine fields here
+    // without forking the catalog. New engines can also be added by name.
+    //
+    // Example — add a model to the Claude engine without touching the SDK:
+    //   'engines' => [
+    //       'claude' => [
+    //           'available_models' => [
+    //               'claude-opus-4-6', 'claude-sonnet-4-6',
+    //               'claude-haiku-4-5-20251001', 'my-custom-fine-tune',
+    //           ],
+    //       ],
+    //   ],
+    'engines' => [],
+
     // ─── Cost calculator unit prices ───
-    // USD per 1M tokens. Override via config publish.
+    // USD per 1M tokens. Each entry can include `billing_model` (default 'usage'):
+    //   - 'usage'       — per-token billing; cost calculator multiplies tokens × rate
+    //   - 'subscription' — flat-fee plan (e.g. GitHub Copilot); cost is always $0
+    //                      and the dashboard renders these in the "Subscription
+    //                      engines" section instead of mixing into USD totals.
+    //
+    // Override via config publish. Hosts can add unlisted models.
     'model_pricing' => [
+        // ─── Anthropic Claude ───
+        'claude-opus-4-7'             => ['input' => 15.00, 'output' => 75.00],
         'claude-opus-4-6'             => ['input' => 15.00, 'output' => 75.00],
+        'claude-opus-4-5'             => ['input' => 15.00, 'output' => 75.00],
         'claude-opus-4-20250514'      => ['input' => 15.00, 'output' => 75.00],
-        'claude-sonnet-4-5-20241022'  => ['input' => 3.00,  'output' => 15.00],
         'claude-sonnet-4-6'           => ['input' => 3.00,  'output' => 15.00],
+        'claude-sonnet-4-5'           => ['input' => 3.00,  'output' => 15.00],
+        'claude-sonnet-4-5-20241022'  => ['input' => 3.00,  'output' => 15.00],
+        'claude-sonnet-4'             => ['input' => 3.00,  'output' => 15.00],
+        'claude-haiku-4-5'            => ['input' => 1.00,  'output' => 5.00],
         'claude-haiku-4-5-20251001'   => ['input' => 1.00,  'output' => 5.00],
+
+        // ─── OpenAI GPT (estimates for unreleased model IDs; override per host) ───
+        'gpt-5'                       => ['input' => 5.00,  'output' => 15.00],
+        'gpt-5.1'                     => ['input' => 5.00,  'output' => 15.00],
+        'gpt-5.1-codex'               => ['input' => 5.00,  'output' => 15.00],
+        'gpt-5.1-codex-mini'          => ['input' => 0.50,  'output' => 2.00],
+        'gpt-5-mini'                  => ['input' => 0.30,  'output' => 1.20],
+        'gpt-4.1'                     => ['input' => 2.00,  'output' => 8.00],
         'gpt-4o'                      => ['input' => 2.50,  'output' => 10.00],
         'gpt-4o-mini'                 => ['input' => 0.15,  'output' => 0.60],
+
+        // ─── Google Gemini ───
+        'gemini-3-pro-preview'        => ['input' => 2.00,  'output' => 12.00],
         'gemini-2.5-pro'              => ['input' => 1.25,  'output' => 10.00],
         'gemini-2.5-flash'            => ['input' => 0.30,  'output' => 2.50],
         'gemini-2.5-flash-lite'       => ['input' => 0.10,  'output' => 0.40],
+
+        // ─── GitHub Copilot CLI (subscription billed; per-token cost is $0) ───
+        // The dashboard reports these under a separate "Subscription engines"
+        // section so monthly USD totals stay accurate.
+        'copilot:claude-sonnet-4-5'   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-opus-4-5'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-haiku-4-5'    => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-sonnet-4'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5'               => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.1'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.1-codex'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.1-codex-mini'  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5-mini'          => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-4.1'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gemini-3-pro-preview'=> ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
     ],
 ];

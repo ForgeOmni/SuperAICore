@@ -55,4 +55,40 @@ class CostCalculatorTest extends TestCase
         // gemini-2.5-flash-lite → input 0.10, output 0.40
         $this->assertEqualsWithDelta(0.50, $calc->calculate('gemini-2.5-flash-lite', 1_000_000, 1_000_000), 0.0001);
     }
+
+    public function test_subscription_billed_models_always_cost_zero(): void
+    {
+        $calc = new CostCalculator([
+            'copilot:claude-sonnet-4-5' => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        ]);
+        // Even with millions of tokens, subscription billing reports $0.
+        $this->assertSame(0.0, $calc->calculate('claude-sonnet-4-5', 999_000_000, 999_000_000, 'copilot_cli'));
+    }
+
+    public function test_billing_model_helper_returns_subscription_for_copilot_entry(): void
+    {
+        $calc = new CostCalculator([
+            'copilot:claude-sonnet-4-5' => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        ]);
+        $this->assertSame('subscription', $calc->billingModel('claude-sonnet-4-5', 'copilot_cli'));
+        $this->assertSame('usage',        $calc->billingModel('not-a-real-model', 'unknown'));
+    }
+
+    public function test_longest_prefix_match_avoids_wrong_family_collision(): void
+    {
+        // Pricing has both 'gpt-4o' (cheap) and 'gpt-5' (expensive); a model
+        // 'gpt-5.1-codex' must NOT pick up the gpt-4o rate.
+        $calc = new CostCalculator([
+            'gpt-4o' => ['input' => 2.50, 'output' => 10.00],
+            'gpt-5'  => ['input' => 5.00, 'output' => 15.00],
+        ]);
+        $this->assertEqualsWithDelta(20.0, $calc->calculate('gpt-5.1-codex', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_codex_pricing_resolves_for_gpt_5_family(): void
+    {
+        // Hits the seeded gpt-5 rate from config (5/15) → 5+15 = 20
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(20.0, $calc->calculate('gpt-5', 1_000_000, 1_000_000), 0.0001);
+    }
 }

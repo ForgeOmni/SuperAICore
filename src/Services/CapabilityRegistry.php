@@ -4,6 +4,7 @@ namespace SuperAICore\Services;
 
 use SuperAICore\Capabilities\ClaudeCapabilities;
 use SuperAICore\Capabilities\CodexCapabilities;
+use SuperAICore\Capabilities\CopilotCapabilities;
 use SuperAICore\Capabilities\GeminiCapabilities;
 use SuperAICore\Capabilities\SuperAgentCapabilities;
 use SuperAICore\Contracts\BackendCapabilities;
@@ -26,6 +27,7 @@ class CapabilityRegistry
         $this->register(new ClaudeCapabilities());
         $this->register(new CodexCapabilities());
         $this->register(new GeminiCapabilities());
+        $this->register(new CopilotCapabilities());
         $this->register(new SuperAgentCapabilities());
     }
 

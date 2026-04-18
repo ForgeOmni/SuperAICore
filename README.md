@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-Laravel package for unified AI execution across four execution engines: **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, and **SuperAgent SDK**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, and a complete admin UI.
+Laravel package for unified AI execution across five execution engines: **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, **GitHub Copilot CLI**, and **SuperAgent SDK**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, and a complete admin UI.
 
 Works standalone in a fresh Laravel install. The UI is optional and fully overridable, so it can be embedded inside a host application (e.g. SuperTeam) or disabled entirely when only the services are needed.
 
@@ -18,19 +18,21 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
 - **SuperAgent** is a minimal in-process PHP SDK that drives a single LLM tool-use loop (one agent, one conversation).
 - **SuperAICore** is a Laravel-wide orchestration layer — it picks a backend, resolves provider credentials, routes by capability, tracks usage, calculates cost, manages MCP servers, and ships an admin UI.
 
-**SuperAICore does not require SuperAgent to function.** SuperAgent is only one of five backends. The other four (Claude CLI, Codex CLI, Anthropic API, OpenAI API) work without it, and the `SuperAgentBackend` gracefully reports itself as unavailable (`class_exists(Agent::class)` check) when the SDK is absent. If you don't need SuperAgent, set `AI_CORE_SUPERAGENT_ENABLED=false` in your `.env` and the Dispatcher falls back to the remaining backends.
+**SuperAICore does not require SuperAgent to function.** SuperAgent is one of several backends. The CLI engines (Claude / Codex / Gemini / Copilot) and the HTTP backends (Anthropic / OpenAI / Google) work without it, and the `SuperAgentBackend` gracefully reports itself as unavailable (`class_exists(Agent::class)` check) when the SDK is absent. If you don't need SuperAgent, set `AI_CORE_SUPERAGENT_ENABLED=false` in your `.env` and the Dispatcher falls back to the remaining backends.
 
 The `forgeomni/superagent` entry in `composer.json` is there so the SuperAgent backend compiles out of the box. If you never use it, you can safely remove it from `composer.json` before `composer install` in your host app — nothing else in SuperAICore imports the SuperAgent namespace.
 
 ## Features
 
-- **Skill & sub-agent runner** — discovers Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/agents/<name>.md`) and exposes them as CLI subcommands (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Runs on Claude out of the box; optionally on Codex/Gemini with compatibility probe, tool-name translation, backend preamble injection, and a side-effect-locking fallback chain. `gemini:sync` mirrors every skill/agent into Gemini custom commands (`/skill:*`, `/agent:*`).
-- **Four execution engines** — Claude Code CLI, Codex CLI, Gemini CLI, and SuperAgent SDK — unified behind a single `Dispatcher` contract. Each engine accepts a fixed set of provider types:
+- **Skill & sub-agent runner** — discovers Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/agents/<name>.md`) and exposes them as CLI subcommands (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Runs on Claude out of the box; optionally on Codex/Gemini/Copilot with compatibility probe, tool-name translation, backend preamble injection, and a side-effect-locking fallback chain. `gemini:sync` mirrors skills/agents into Gemini custom commands; `copilot:sync` mirrors agents into `~/.copilot/agents/*.agent.md` (or runs automatically before `agent:run --backend=copilot`).
+- **Five execution engines** — Claude Code CLI, Codex CLI, Gemini CLI, GitHub Copilot CLI, and SuperAgent SDK — unified behind a single `Dispatcher` contract. Each engine accepts a fixed set of provider types:
   - **Claude Code CLI**: `builtin` (local login), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`
   - **Codex CLI**: `builtin` (ChatGPT login), `openai`, `openai-compatible`
   - **Gemini CLI**: `builtin` (Google OAuth login), `google-ai`, `vertex`
+  - **GitHub Copilot CLI**: `builtin` only (the `copilot` binary owns OAuth/keychain/refresh). Reads `.claude/skills/` natively (zero-translation skill pass-through). **Subscription billed** — costs are tracked separately from per-token engines on the dashboard.
   - **SuperAgent SDK**: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`
-- Engines fan out to seven internal Dispatcher adapters (`claude_cli`, `codex_cli`, `gemini_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`) — CLI adapters when a provider uses `builtin`, HTTP adapters when it uses an API key. Operators rarely need to know this, but the adapters are addressable directly from the CLI if needed.
+- Engines fan out to internal Dispatcher adapters (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`) — CLI adapters when a provider uses `builtin`, HTTP adapters when it uses an API key. Operators rarely need to know this, but the adapters are addressable directly from the CLI if needed.
+- **EngineCatalog single source of truth** — engine labels, icons, dispatcher backends, supported provider types, and available models live in one PHP service. Adding a new CLI engine means editing `EngineCatalog::seed()` and the providers UI, process monitor scan, and disable-toggle table all update automatically. Host apps can override per-engine fields via `super-ai-core.engines` config.
 - **Provider / Service / Routing model** — map abstract capabilities (`summarize`, `translate`, `code_review`, ...) to concrete services, and services to provider credentials.
 - **MCP server manager** — install, enable, and configure MCP servers from the admin UI.
 - **Usage tracking** — every call persists prompt/response tokens, duration, and cost to `ai_usage_logs`.
@@ -50,6 +52,7 @@ Optional, only when the respective backend is enabled:
 - `claude` CLI on `$PATH` for the Claude CLI backend — `npm i -g @anthropic-ai/claude-code`
 - `codex` CLI on `$PATH` for the Codex CLI backend — `brew install codex`
 - `gemini` CLI on `$PATH` for the Gemini CLI backend — `npm i -g @google/gemini-cli`
+- `copilot` CLI on `$PATH` for the GitHub Copilot CLI backend — `npm i -g @github/copilot` (then run `copilot login`)
 - An Anthropic / OpenAI / Google AI Studio API key for the HTTP backends
 
 ## Install
@@ -69,10 +72,11 @@ Full step-by-step guide: [INSTALL.md](INSTALL.md).
 # List Dispatcher adapters and their availability
 ./vendor/bin/superaicore list-backends
 
-# Drive the four engines from the CLI
+# Drive the five engines from the CLI
 ./vendor/bin/superaicore call "Hello" --backend=claude_cli                              # Claude Code CLI (local login)
 ./vendor/bin/superaicore call "Hello" --backend=codex_cli                               # Codex CLI (ChatGPT login)
 ./vendor/bin/superaicore call "Hello" --backend=gemini_cli                              # Gemini CLI (Google OAuth)
+./vendor/bin/superaicore call "Hello" --backend=copilot_cli                             # GitHub Copilot CLI (subscription)
 ./vendor/bin/superaicore call "Hello" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # Skip the CLI wrapper and hit the HTTP APIs directly
@@ -106,6 +110,11 @@ Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/a
 # Expose every skill/agent as a Gemini custom command
 # (/skill:init, /agent:security-reviewer, …)
 ./vendor/bin/superaicore gemini:sync
+
+# GitHub Copilot CLI: skills are zero-translation pass-through (Copilot reads
+# .claude/skills/ natively). Agents auto-sync on agent:run; manual entry point:
+./vendor/bin/superaicore copilot:sync                         # write ~/.copilot/agents/*.agent.md
+./vendor/bin/superaicore agent:run reviewer "audit" --backend=copilot
 ```
 
 Key behaviours:

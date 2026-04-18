@@ -14,6 +14,7 @@ use SuperAICore\Services\BackendRegistry;
 use SuperAICore\Services\CapabilityRegistry;
 use SuperAICore\Services\CostCalculator;
 use SuperAICore\Services\Dispatcher;
+use SuperAICore\Services\EngineCatalog;
 use SuperAICore\Services\ProcessSourceRegistry;
 use SuperAICore\Services\ProviderResolver;
 use SuperAICore\Services\UsageTracker;
@@ -36,6 +37,7 @@ class SuperAICoreServiceProvider extends ServiceProvider
         // Core singleton services (McpManager is all-static, no binding)
         $this->app->singleton(BackendRegistry::class);
         $this->app->singleton(CapabilityRegistry::class);
+        $this->app->singleton(EngineCatalog::class);
         $this->app->singleton(CostCalculator::class);
 
         // Process Monitor — host apps register their own ProcessSources in

@@ -5,6 +5,7 @@ namespace SuperAICore\Services;
 use SuperAICore\Backends\AnthropicApiBackend;
 use SuperAICore\Backends\ClaudeCliBackend;
 use SuperAICore\Backends\CodexCliBackend;
+use SuperAICore\Backends\CopilotCliBackend;
 use SuperAICore\Backends\GeminiApiBackend;
 use SuperAICore\Backends\GeminiCliBackend;
 use SuperAICore\Backends\OpenAiApiBackend;
@@ -51,6 +52,14 @@ class BackendRegistry
             $this->register(new GeminiCliBackend(
                 $config['gemini_cli']['binary'] ?? 'gemini',
                 $config['gemini_cli']['timeout'] ?? 300,
+                $logger,
+            ));
+        }
+        if ($config['copilot_cli']['enabled'] ?? true) {
+            $this->register(new CopilotCliBackend(
+                $config['copilot_cli']['binary'] ?? 'copilot',
+                $config['copilot_cli']['timeout'] ?? 300,
+                $config['copilot_cli']['allow_all_tools'] ?? true,
                 $logger,
             ));
         }

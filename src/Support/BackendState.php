@@ -3,6 +3,7 @@
 namespace SuperAICore\Support;
 
 use SuperAICore\Models\IntegrationConfig;
+use SuperAICore\Services\EngineCatalog;
 
 /**
  * Runtime enable/disable state for execution engines.
@@ -15,14 +16,15 @@ use SuperAICore\Models\IntegrationConfig;
  * The toggle state is persisted in IntegrationConfig so it survives deploys
  * and is shared across workers without touching .env.
  *
- * The four UI engines (claude, codex, gemini, superagent) fan out to seven
- * Dispatcher backends; the map below keeps that translation in one place.
+ * Dispatcher-backend → engine mapping is owned by EngineCatalog. The constant
+ * below is kept as a fallback when the container isn't booted (e.g. low-level
+ * unit tests instantiating BackendRegistry directly), but the live UI/runtime
+ * paths always resolve through the catalog so adding a new engine in
+ * EngineCatalog::seed() doesn't require editing this file.
  */
 class BackendState
 {
-    /**
-     * Map a Dispatcher backend name to the "engine" exposed on the UI.
-     */
+    /** Static fallback when EngineCatalog isn't available (e.g. bare unit tests). */
     const DISPATCHER_TO_ENGINE = [
         'claude_cli'    => 'claude',
         'anthropic_api' => 'claude',
@@ -30,6 +32,7 @@ class BackendState
         'openai_api'    => 'codex',
         'gemini_cli'    => 'gemini',
         'gemini_api'    => 'gemini',
+        'copilot_cli'   => 'copilot',
         'superagent'    => 'superagent',
     ];
 
@@ -40,10 +43,29 @@ class BackendState
 
     public static function isDispatcherBackendAllowed(string $backendName): bool
     {
-        $engine = self::DISPATCHER_TO_ENGINE[$backendName] ?? null;
+        $map = self::dispatcherToEngineMap();
+        $engine = $map[$backendName] ?? null;
         if ($engine === null) {
             return true;
         }
         return !self::isEngineDisabled($engine);
+    }
+
+    /**
+     * Resolve the live mapping. Prefers the EngineCatalog (so config-defined
+     * engines / new CLIs are picked up) and falls back to the constant.
+     *
+     * @return array<string,string>
+     */
+    public static function dispatcherToEngineMap(): array
+    {
+        if (function_exists('app')) {
+            try {
+                return app(EngineCatalog::class)->dispatcherToEngineMap();
+            } catch (\Throwable $e) {
+                // container not booted — fall through to constant
+            }
+        }
+        return self::DISPATCHER_TO_ENGINE;
     }
 }

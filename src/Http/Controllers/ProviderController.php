@@ -6,6 +6,7 @@ use SuperAICore\Models\AiProvider;
 use SuperAICore\Models\IntegrationConfig;
 use SuperAICore\Services\ClaudeModelResolver;
 use SuperAICore\Services\CliStatusDetector;
+use SuperAICore\Services\EngineCatalog;
 use SuperAICore\Support\SuperAgentDetector;
 use GuzzleHttp\Client;
 use Illuminate\Http\Request;
@@ -28,32 +29,39 @@ class ProviderController extends Controller
         $cliStatuses = CliStatusDetector::all();
         $defaultBackend = IntegrationConfig::getValue('ai_execution', 'default_backend') ?: 'claude';
 
-        // Hide SuperAgent entirely when the SDK is not installed.
-        $backends = ['claude', 'codex', 'gemini'];
-        if (SuperAgentDetector::isAvailable()) {
-            $backends[] = 'superagent';
+        // Engines come from the catalog, not a hardcoded list — so adding a
+        // new CLI in EngineCatalog::seed() (or via config 'engines' override)
+        // surfaces here automatically with its label, icon, and model list.
+        $catalog = app(EngineCatalog::class);
+        $engines = [];
+        foreach ($catalog->all() as $key => $descriptor) {
+            // SuperAgent is the only engine whose availability depends on a
+            // composer dep being present at runtime; skip it when missing.
+            if ($key === AiProvider::BACKEND_SUPERAGENT && !SuperAgentDetector::isAvailable()) {
+                continue;
+            }
+            $engines[$key] = $descriptor;
         }
+        $backends = array_keys($engines);
 
-        // Per-backend runtime on/off — persisted in IntegrationConfig, read by
-        // BackendRegistry + Dispatcher so providers under a disabled backend
-        // cannot be used.
         $backendDisabled = [];
         foreach ($backends as $be) {
             $backendDisabled[$be] = self::isBackendDisabled($be);
         }
 
-        // Group providers by backend; UI prepends a synthetic "Built-in" per backend.
         $providersByBackend = [];
         foreach ($backends as $be) {
             $providersByBackend[$be] = $providers->where('backend', $be)->values();
         }
 
-        // Matrix used by the "New provider" modal to narrow the type select.
-        $backendTypes = array_intersect_key(AiProvider::BACKEND_TYPES, array_flip($backends));
+        $backendTypes = [];
+        foreach ($backends as $be) {
+            $backendTypes[$be] = $engines[$be]->providerTypes;
+        }
 
         return view('super-ai-core::providers.index', compact(
             'providers', 'providersByBackend', 'cliStatuses', 'defaultBackend',
-            'backends', 'backendTypes', 'backendDisabled'
+            'backends', 'backendTypes', 'backendDisabled', 'engines'
         ));
     }
 
@@ -104,12 +112,20 @@ class ProviderController extends Controller
      */
     public function testBuiltin(Request $request, \SuperAICore\Services\Dispatcher $dispatcher)
     {
-        $request->validate(['backend' => 'required|in:claude,codex,gemini']);
-        $backendName = match ($request->input('backend')) {
-            'claude' => 'claude_cli',
-            'codex'  => 'codex_cli',
-            'gemini' => 'gemini_cli',
-        };
+        $catalog = app(EngineCatalog::class);
+        $cliEngines = array_filter(
+            $catalog->all(),
+            fn ($e) => $e->isCli && in_array(AiProvider::TYPE_BUILTIN, $e->providerTypes, true),
+        );
+        $request->validate(['backend' => 'required|in:' . implode(',', array_keys($cliEngines))]);
+
+        // Pick the first dispatcher backend in the engine's chain — for CLI
+        // engines that's always the *_cli entry, which is what builtin needs.
+        $engine = $cliEngines[$request->input('backend')];
+        $backendName = $engine->dispatcherBackends[0] ?? null;
+        if (!$backendName) {
+            return response()->json(['success' => false, 'message' => 'No dispatcher backend mapped for engine.']);
+        }
 
         try {
             $result = $dispatcher->dispatch([
@@ -238,13 +254,12 @@ class ProviderController extends Controller
 
     protected function availableBackends(): array
     {
-        $backends = [
-            AiProvider::BACKEND_CLAUDE,
-            AiProvider::BACKEND_CODEX,
-            AiProvider::BACKEND_GEMINI,
-        ];
-        if (SuperAgentDetector::isAvailable()) {
-            $backends[] = AiProvider::BACKEND_SUPERAGENT;
+        $backends = [];
+        foreach (app(EngineCatalog::class)->keys() as $key) {
+            if ($key === AiProvider::BACKEND_SUPERAGENT && !SuperAgentDetector::isAvailable()) {
+                continue;
+            }
+            $backends[] = $key;
         }
         return $backends;
     }
@@ -340,6 +355,11 @@ class ProviderController extends Controller
                 ['id' => 'gpt-4o', 'display_name' => 'GPT-4o'],
                 ['id' => 'gpt-4o-mini', 'display_name' => 'GPT-4o mini'],
             ];
+        }
+        // Final fallback: ask the catalog whatever models the engine claims.
+        if ($backend) {
+            $models = app(EngineCatalog::class)->modelsFor($backend);
+            return array_map(fn ($m) => ['id' => $m, 'display_name' => $m], $models);
         }
         return [];
     }

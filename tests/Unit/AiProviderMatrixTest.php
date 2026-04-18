@@ -58,6 +58,12 @@ class AiProviderMatrixTest extends TestCase
         $this->assertNotContains(AiProvider::TYPE_GOOGLE_AI, AiProvider::typesForBackend(AiProvider::BACKEND_SUPERAGENT));
     }
 
+    public function test_copilot_backend_allows_only_builtin(): void
+    {
+        $types = AiProvider::typesForBackend(AiProvider::BACKEND_COPILOT);
+        $this->assertSame([AiProvider::TYPE_BUILTIN], $types);
+    }
+
     public function test_unknown_backend_returns_empty_array(): void
     {
         $this->assertSame([], AiProvider::typesForBackend('nope'));

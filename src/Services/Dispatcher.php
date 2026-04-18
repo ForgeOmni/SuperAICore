@@ -74,15 +74,19 @@ class Dispatcher
 
         if (!$result) return null;
 
-        // Compute cost
+        // Compute cost. Backend name lets the calculator pick subscription
+        // pricing entries (e.g. copilot:claude-sonnet-4-5) and emit $0 for
+        // subscription-billed engines so dashboard totals stay correct.
         $cost = $this->costs->calculate(
             $result['model'] ?? 'unknown',
             $result['usage']['input_tokens'] ?? 0,
             $result['usage']['output_tokens'] ?? 0,
+            $backend->name(),
         );
 
         $result['cost_usd'] = $cost;
         $result['backend'] = $backend->name();
+        $result['billing_model'] = $this->costs->billingModel($result['model'] ?? 'unknown', $backend->name());
         $result['duration_ms'] = $durationMs;
 
         // Record usage

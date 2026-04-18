@@ -10,11 +10,12 @@ use Symfony\Component\Process\Process;
  * - claude (Claude Code CLI)
  * - codex (OpenAI Codex CLI)
  * - gemini (Google Gemini CLI)
+ * - copilot (GitHub Copilot CLI)
  * - superagent (SDK, no CLI — reports composer version)
  */
 class CliStatusDetector
 {
-    const BACKENDS = ['claude', 'codex', 'gemini', 'superagent'];
+    const BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'superagent'];
 
     public static function all(): array
     {
@@ -22,6 +23,7 @@ class CliStatusDetector
             'claude' => self::detectBinary('claude'),
             'codex' => self::detectBinary('codex'),
             'gemini' => self::detectBinary('gemini'),
+            'copilot' => self::detectBinary('copilot'),
             'superagent' => self::superagentStatus(),
         ];
     }
@@ -30,7 +32,7 @@ class CliStatusDetector
     {
         return match ($backend) {
             'superagent' => self::superagentStatus(),
-            'claude', 'codex', 'gemini' => self::detectBinary($backend),
+            'claude', 'codex', 'gemini', 'copilot' => self::detectBinary($backend),
             default => ['installed' => false, 'backend' => $backend],
         };
     }
@@ -84,6 +86,21 @@ class CliStatusDetector
                 'loggedIn' => str_contains($normalized, 'logged in'),
                 'status' => $out ?: null,
                 'method' => str_contains($normalized, 'chatgpt') ? 'ChatGPT' : null,
+            ];
+        }
+        if ($binary === 'copilot') {
+            // Copilot has no first-class `auth status` — keychain/token state lives
+            // inside the binary. Best heuristic: if any of the documented env vars is
+            // set, treat as headless-token mode; else fall back to whether the
+            // user-config dir Copilot writes on first login exists.
+            $envToken = getenv('COPILOT_GITHUB_TOKEN') ?: getenv('GH_TOKEN') ?: getenv('GITHUB_TOKEN');
+            $configDir = (getenv('XDG_CONFIG_HOME') ?: ((getenv('HOME') ?: '') . '/.config')) . '/copilot';
+            $homeDir   = (getenv('HOME') ?: '') . '/.copilot';
+            $hasState  = is_dir($configDir) || is_dir($homeDir);
+            return [
+                'loggedIn' => (bool) $envToken || $hasState,
+                'status'   => $envToken ? 'env-token' : ($hasState ? 'config-present' : 'not-logged-in'),
+                'method'   => $envToken ? 'env' : ($hasState ? 'oauth' : null),
             ];
         }
         return null;

@@ -88,19 +88,16 @@
 {{-- Provider list grouped by backend, with built-in rows --}}
 @foreach($providersByBackend as $be => $beProviders)
     @php
-        $beLabel = [
-            'claude'     => 'Claude Code',
-            'codex'      => 'Codex',
-            'gemini'     => 'Gemini',
-            'superagent' => 'SuperAgent SDK',
-        ][$be] ?? $be;
+        $engine = $engines[$be] ?? null;
+        $beLabel = $engine?->label ?? ucfirst($be);
+        $beIcon  = $engine?->icon  ?? 'plug';
         $anyActive = $beProviders->contains(fn ($p) => $p->is_active);
         $beDisabled = !empty($backendDisabled[$be]);
     @endphp
     <div class="card border-0 shadow-sm mb-3 {{ $beDisabled ? 'opacity-50' : '' }}">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <div>
-                <strong><i class="bi bi-{{ ['claude'=>'robot','codex'=>'code-slash','gemini'=>'stars','superagent'=>'cpu'][$be] ?? 'plug' }} me-1"></i>{{ $beLabel }}</strong>
+                <strong><i class="bi bi-{{ $beIcon }} me-1"></i>{{ $beLabel }}</strong>
                 <code class="small text-muted ms-2">{{ $be }}</code>
             </div>
             @if($beDisabled)

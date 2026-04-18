@@ -2972,7 +2972,23 @@ class McpManager
         }
         $registry ??= new CapabilityRegistry();
 
-        $backends ??= ['claude', 'codex', 'gemini'];
+        // Catalog-derived list so adding a new engine that supports MCP
+        // (CopilotCapabilities, future Goose, etc.) propagates here without
+        // editing this method. Falls back to the static set when the
+        // container isn't booted (low-level test contexts).
+        if ($backends === null) {
+            try {
+                $catalog = function_exists('app') ? app(EngineCatalog::class) : null;
+                $backends = $catalog
+                    ? array_values(array_filter(
+                        $catalog->keys(),
+                        fn ($k) => $registry->for($k)->supportsMcp(),
+                    ))
+                    : ['claude', 'codex', 'gemini', 'copilot'];
+            } catch (\Throwable $e) {
+                $backends = ['claude', 'codex', 'gemini', 'copilot'];
+            }
+        }
         $home = getenv('HOME') ?: (PHP_OS_FAMILY === 'Windows' ? (getenv('USERPROFILE') ?: '') : '');
         $report = [];
 

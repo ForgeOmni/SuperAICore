@@ -32,7 +32,8 @@ class AiProvider extends Model
     const BACKEND_CODEX      = 'codex';
     const BACKEND_SUPERAGENT = 'superagent';
     const BACKEND_GEMINI     = 'gemini';
-    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI];
+    const BACKEND_COPILOT    = 'copilot';
+    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT];
 
     const TYPE_BUILTIN           = 'builtin';
     const TYPE_ANTHROPIC         = 'anthropic';
@@ -63,6 +64,7 @@ class AiProvider extends Model
      *  codex      → OpenAI family (+ builtin ChatGPT login)
      *  superagent → SDK can drive either provider family; no builtin
      *  gemini     → Google AI Studio (google-ai) or Vertex AI (vertex) + builtin OAuth login
+     *  copilot    → builtin only (CLI owns OAuth/keychain/refresh; no API-key surface in v1)
      */
     const BACKEND_TYPES = [
         self::BACKEND_CLAUDE => [
@@ -87,6 +89,9 @@ class AiProvider extends Model
             self::TYPE_BUILTIN,
             self::TYPE_GOOGLE_AI,
             self::TYPE_VERTEX,
+        ],
+        self::BACKEND_COPILOT => [
+            self::TYPE_BUILTIN,
         ],
     ];
 
