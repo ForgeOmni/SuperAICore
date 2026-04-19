@@ -157,6 +157,13 @@ npm i -g @google/gemini-cli
 npm i -g @github/copilot   # then `copilot login` (OAuth device flow)
 ```
 
+One-shot alternative (recommended) — let superaicore detect and install:
+
+```bash
+./vendor/bin/superaicore cli:status                 # see what's missing
+./vendor/bin/superaicore cli:install --all-missing  # install everything (confirmation by default)
+```
+
 ## 6. Open the admin UI
 
 Default mount point is `/super-ai-core`. The package routes sit behind the `['web', 'auth']` middleware stack out of the box, so sign in to your Laravel app first, then visit:

@@ -13,8 +13,11 @@ Ce guide détaille l'installation complète de `forgeomni/superaicore` dans une 
 - Optionnel, selon le backend :
   - `claude` CLI dans `$PATH` — pour le backend Claude CLI
   - `codex` CLI dans `$PATH` — pour le backend Codex CLI
+  - `gemini` CLI dans `$PATH` — pour le backend Gemini CLI
+  - `copilot` CLI dans `$PATH` (puis `copilot login`) — pour le backend GitHub Copilot CLI
   - Clé API Anthropic — pour `anthropic_api`
   - Clé API OpenAI — pour `openai_api`
+  - Clé Google AI Studio — pour `gemini_api`
 
 ## 2. Installer via Composer
 
@@ -138,12 +141,20 @@ Si des skills ou sous-agents Claude Code sont déjà installés (sous `./.claude
 ./vendor/bin/superaicore gemini:sync --dry-run
 ```
 
-Aucune configuration requise. Sans `--dry-run`, la commande passe la main aux CLI backends (`claude`, `codex`, `gemini`) — installez ceux que vous comptez utiliser :
+Aucune configuration requise. Sans `--dry-run`, la commande passe la main aux CLI backends (`claude`, `codex`, `gemini`, `copilot`) — installez ceux que vous comptez utiliser :
 
 ```bash
 npm i -g @anthropic-ai/claude-code
 brew install codex        # ou : cargo install codex
 npm i -g @google/gemini-cli
+npm i -g @github/copilot   # puis `copilot login` (OAuth device flow)
+```
+
+Raccourci en une commande (recommandé) — laissez superaicore détecter et installer :
+
+```bash
+./vendor/bin/superaicore cli:status                 # voir ce qui manque
+./vendor/bin/superaicore cli:install --all-missing  # tout installer (confirmation par défaut)
 ```
 
 ## 6. Ouvrir l'interface d'administration

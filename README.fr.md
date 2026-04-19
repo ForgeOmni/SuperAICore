@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-Package Laravel pour l'exécution unifiée d'IA sur quatre moteurs d'exécution : **Claude Code CLI**, **Codex CLI**, **Gemini CLI** et **SuperAgent SDK**. Livré avec une CLI indépendante du framework, un dispatcher par capacité, la gestion des serveurs MCP, le suivi d'usage, l'analyse des coûts et une interface d'administration complète.
+Package Laravel pour l'exécution unifiée d'IA sur cinq moteurs d'exécution : **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, **GitHub Copilot CLI** et **SuperAgent SDK**. Livré avec une CLI indépendante du framework, un dispatcher par capacité, la gestion des serveurs MCP, le suivi d'usage, l'analyse des coûts et une interface d'administration complète.
 
 Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est optionnelle et entièrement remplaçable : elle peut être intégrée dans une application hôte (par ex. SuperTeam) ou désactivée si seuls les services sont nécessaires.
 
@@ -18,19 +18,23 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
 - **SuperAgent** est un SDK PHP léger, en processus, qui pilote une seule boucle LLM avec tool-use (un agent, une conversation).
 - **SuperAICore** est une couche d'orchestration à l'échelle de Laravel — elle choisit le backend, résout les identifiants du provider, route par capacité, suit l'usage, calcule les coûts, gère les serveurs MCP et fournit une UI d'administration.
 
-**SuperAICore ne dépend pas de SuperAgent pour fonctionner.** SuperAgent n'est que l'un des cinq backends. Les quatre autres (Claude CLI, Codex CLI, Anthropic API, OpenAI API) fonctionnent sans lui, et `SuperAgentBackend` se déclare poliment indisponible via un contrôle `class_exists(Agent::class)` lorsque le SDK est absent. Si vous n'avez pas besoin de SuperAgent, définissez `AI_CORE_SUPERAGENT_ENABLED=false` dans votre `.env` et le Dispatcher se rabat sur les backends restants.
+**SuperAICore ne dépend pas de SuperAgent pour fonctionner.** SuperAgent n'est que l'un des backends disponibles. Les moteurs CLI (Claude / Codex / Gemini / Copilot) et les backends HTTP (Anthropic / OpenAI / Google) fonctionnent sans lui, et `SuperAgentBackend` se déclare poliment indisponible via un contrôle `class_exists(Agent::class)` lorsque le SDK est absent. Si vous n'avez pas besoin de SuperAgent, définissez `AI_CORE_SUPERAGENT_ENABLED=false` dans votre `.env` et le Dispatcher se rabat sur les backends restants.
 
 L'entrée `forgeomni/superagent` dans `composer.json` est présente pour que le backend SuperAgent compile tel quel. Si vous ne l'utilisez jamais, vous pouvez la retirer du `composer.json` de votre application hôte avant `composer install` — aucun autre code de SuperAICore n'importe l'espace de noms SuperAgent.
 
 ## Fonctionnalités
 
-- **Exécuteur de skills & sous-agents** — détecte les skills Claude Code (`.claude/skills/<nom>/SKILL.md`) et les sous-agents (`.claude/agents/<nom>.md`) et les expose comme sous-commandes CLI (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Exécution par défaut sur Claude ; en option, natif sur Codex/Gemini avec sonde de compatibilité, traduction des noms d'outils, injection du préambule backend et chaîne de repli verrouillée sur effet-de-bord. `gemini:sync` duplique chaque skill/agent en commande personnalisée Gemini (`/skill:*`, `/agent:*`).
-- **Quatre moteurs d'exécution** — Claude Code CLI, Codex CLI, Gemini CLI et SuperAgent SDK — unifiés derrière un même contrat `Dispatcher`. Chaque moteur accepte un jeu fixe de types de provider :
+- **Exécuteur de skills & sous-agents** — détecte les skills Claude Code (`.claude/skills/<nom>/SKILL.md`) et les sous-agents (`.claude/agents/<nom>.md`) et les expose comme sous-commandes CLI (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Exécution par défaut sur Claude ; en option, natif sur Codex/Gemini/Copilot avec sonde de compatibilité, traduction des noms d'outils, injection du préambule backend et chaîne de repli verrouillée sur effet-de-bord. `gemini:sync` duplique chaque skill/agent en commande personnalisée Gemini ; `copilot:sync` miroir les agents dans `~/.copilot/agents/*.agent.md` (ou s'exécute automatiquement avant `agent:run --backend=copilot`) ; `copilot:sync-hooks` fusionne les hooks style Claude dans la configuration Copilot.
+- **Installateur CLI en une commande** — `cli:status` liste ce qui est installé / connecté + un indice d'installation ; `cli:install [backend] [--all-missing]` délègue au gestionnaire de paquets canonique (`npm`/`brew`/`script`) avec confirmation par défaut. Explicite par choix — aucun CLI n'est jamais auto-installé comme effet de bord d'un dispatch.
+- **Fan-out parallèle Copilot** — `copilot:fleet <tâche> --agents a,b,c` exécute la même tâche sur N sous-agents Copilot en parallèle, agrège les résultats par agent, et enregistre chaque enfant dans le moniteur de processus.
+- **Cinq moteurs d'exécution** — Claude Code CLI, Codex CLI, Gemini CLI, GitHub Copilot CLI et SuperAgent SDK — unifiés derrière un même contrat `Dispatcher`. Chaque moteur accepte un jeu fixe de types de provider :
   - **Claude Code CLI** : `builtin` (connexion locale), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`
   - **Codex CLI** : `builtin` (connexion ChatGPT), `openai`, `openai-compatible`
   - **Gemini CLI** : `builtin` (connexion Google OAuth), `google-ai`, `vertex`
+  - **GitHub Copilot CLI** : `builtin` uniquement (le binaire `copilot` gère OAuth/keychain/refresh). Lit `.claude/skills/` nativement (passage sans traduction). **Facturation par abonnement** — suivie séparément des moteurs par token sur le tableau de bord.
   - **SuperAgent SDK** : `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`
-- Les moteurs se déploient en interne sur sept adaptateurs Dispatcher (`claude_cli`, `codex_cli`, `gemini_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`) — adaptateur CLI quand le provider est `builtin`, adaptateur HTTP quand il utilise une clé API. Détail d'implémentation ; tous les noms restent adressables depuis la CLI si besoin.
+- Les moteurs se déploient en interne sur huit adaptateurs Dispatcher (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`) — adaptateur CLI quand le provider est `builtin`, adaptateur HTTP quand il utilise une clé API. Détail d'implémentation ; tous les noms restent adressables depuis la CLI si besoin.
+- **EngineCatalog, source unique de vérité** — labels, icônes, backends Dispatcher, matrices de types de provider et catalogues de modèles vivent dans un service PHP unique. Ajouter un nouveau moteur CLI revient à éditer `EngineCatalog::seed()` et tout (UI, scan du moniteur, matrice de bascules) se met à jour. Les applications hôtes peuvent surcharger chaque champ via la config `super-ai-core.engines`.
 - **Modèle Provider / Service / Routing** — associer des capacités abstraites (`summarize`, `translate`, `code_review`…) à des services concrets, puis les services à des identifiants provider.
 - **Gestionnaire de serveurs MCP** — installer, activer et configurer les serveurs MCP depuis l'UI d'administration.
 - **Suivi d'usage** — chaque appel persiste les tokens prompt/réponse, la durée et le coût dans `ai_usage_logs`.
@@ -50,7 +54,10 @@ Optionnel, uniquement quand le backend correspondant est activé :
 - `claude` CLI dans `$PATH` — `npm i -g @anthropic-ai/claude-code`
 - `codex` CLI dans `$PATH` — `brew install codex`
 - `gemini` CLI dans `$PATH` — `npm i -g @google/gemini-cli`
+- `copilot` CLI dans `$PATH` — `npm i -g @github/copilot` (puis `copilot login`)
 - Clé API Anthropic / OpenAI / Google AI Studio pour les backends HTTP
+
+Vous ne voulez pas mémoriser les noms de paquets ? Lancez `./vendor/bin/superaicore cli:status` pour voir ce qui manque puis `./vendor/bin/superaicore cli:install --all-missing` pour tout installer en une passe (confirmation par défaut).
 
 ## Installation
 
@@ -69,10 +76,11 @@ Guide complet étape par étape : [INSTALL.fr.md](INSTALL.fr.md).
 # Lister les adaptateurs Dispatcher et leur disponibilité
 ./vendor/bin/superaicore list-backends
 
-# Piloter les quatre moteurs depuis la CLI
+# Piloter les cinq moteurs depuis la CLI
 ./vendor/bin/superaicore call "Bonjour" --backend=claude_cli                              # Claude Code CLI (connexion locale)
 ./vendor/bin/superaicore call "Bonjour" --backend=codex_cli                               # Codex CLI (connexion ChatGPT)
 ./vendor/bin/superaicore call "Bonjour" --backend=gemini_cli                              # Gemini CLI (OAuth Google)
+./vendor/bin/superaicore call "Bonjour" --backend=copilot_cli                             # GitHub Copilot CLI (abonnement)
 ./vendor/bin/superaicore call "Bonjour" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # Court-circuiter la CLI et appeler directement les API HTTP
@@ -106,6 +114,22 @@ Les skills Claude Code (`.claude/skills/<nom>/SKILL.md`) et les sous-agents (`.c
 # Exposer chaque skill/agent comme commande personnalisée Gemini
 # (/skill:init, /agent:security-reviewer, …)
 ./vendor/bin/superaicore gemini:sync
+
+# GitHub Copilot CLI : les skills sont en passage sans traduction
+# (Copilot lit .claude/skills/ nativement). Les agents se synchronisent
+# automatiquement lors de agent:run ; point d'entrée manuel :
+./vendor/bin/superaicore copilot:sync                         # écrit ~/.copilot/agents/*.agent.md
+./vendor/bin/superaicore agent:run reviewer "audit" --backend=copilot
+
+# Exécuter la même tâche sur N agents Copilot en parallèle
+./vendor/bin/superaicore copilot:fleet "refactoriser auth" --agents planner,reviewer,tester
+
+# Refléter vos hooks style Claude (.claude/settings.json:hooks) vers Copilot
+./vendor/bin/superaicore copilot:sync-hooks                   # écrit ~/.copilot/config.json:hooks
+
+# Bootstrapper les CLIs manquants (explicite — jamais auto)
+./vendor/bin/superaicore cli:status                           # tableau installé / version / auth / indice
+./vendor/bin/superaicore cli:install --all-missing            # npm/brew/script avec confirmation
 ```
 
 Comportements clés :
@@ -149,10 +173,11 @@ echo $result['text'];
                               openai / openai-compat   ────▶ openai_api
   Gemini CLI      ──────────▶ builtin / vertex         ────▶ gemini_cli
                               google-ai                ────▶ gemini_api
+  Copilot CLI     ──────────▶ builtin                  ────▶ copilot_cli
   SuperAgent SDK  ──────────▶ anthropic(-proxy) /      ────▶ superagent
                               openai(-compatible)
 
-  Dispatcher ← BackendRegistry   (contient les 7 adaptateurs ci-dessus)
+  Dispatcher ← BackendRegistry   (contient les 8 adaptateurs ci-dessus)
              ← ProviderResolver  (provider actif depuis ProviderRepository)
              ← RoutingRepository (task_type + capability → service)
              ← UsageTracker      (écrit dans UsageRepository)

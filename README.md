@@ -24,7 +24,9 @@ The `forgeomni/superagent` entry in `composer.json` is there so the SuperAgent b
 
 ## Features
 
-- **Skill & sub-agent runner** — discovers Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/agents/<name>.md`) and exposes them as CLI subcommands (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Runs on Claude out of the box; optionally on Codex/Gemini/Copilot with compatibility probe, tool-name translation, backend preamble injection, and a side-effect-locking fallback chain. `gemini:sync` mirrors skills/agents into Gemini custom commands; `copilot:sync` mirrors agents into `~/.copilot/agents/*.agent.md` (or runs automatically before `agent:run --backend=copilot`).
+- **Skill & sub-agent runner** — discovers Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/agents/<name>.md`) and exposes them as CLI subcommands (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Runs on Claude out of the box; optionally on Codex/Gemini/Copilot with compatibility probe, tool-name translation, backend preamble injection, and a side-effect-locking fallback chain. `gemini:sync` mirrors skills/agents into Gemini custom commands; `copilot:sync` mirrors agents into `~/.copilot/agents/*.agent.md` (or runs automatically before `agent:run --backend=copilot`); `copilot:sync-hooks` merges Claude-style hooks into Copilot's config.
+- **One-shot CLI installer** — `cli:status` shows which engine CLIs are installed / logged in + an install hint for anything missing; `cli:install [backend] [--all-missing]` shells out to the canonical package manager (`npm`/`brew`/`script`) with confirmation by default. Explicit by design — no CLI ever auto-installs as a dispatch side-effect.
+- **Parallel Copilot fan-out** — `copilot:fleet <task> --agents a,b,c` runs the same task across N Copilot sub-agents concurrently, aggregates per-agent results, and registers each child in the Process Monitor.
 - **Five execution engines** — Claude Code CLI, Codex CLI, Gemini CLI, GitHub Copilot CLI, and SuperAgent SDK — unified behind a single `Dispatcher` contract. Each engine accepts a fixed set of provider types:
   - **Claude Code CLI**: `builtin` (local login), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`
   - **Codex CLI**: `builtin` (ChatGPT login), `openai`, `openai-compatible`
@@ -54,6 +56,8 @@ Optional, only when the respective backend is enabled:
 - `gemini` CLI on `$PATH` for the Gemini CLI backend — `npm i -g @google/gemini-cli`
 - `copilot` CLI on `$PATH` for the GitHub Copilot CLI backend — `npm i -g @github/copilot` (then run `copilot login`)
 - An Anthropic / OpenAI / Google AI Studio API key for the HTTP backends
+
+Don't want to remember the exact package names? Run `./vendor/bin/superaicore cli:status` to see what's missing and `./vendor/bin/superaicore cli:install --all-missing` to bootstrap everything in one go (confirmation prompt by default).
 
 ## Install
 
@@ -115,6 +119,16 @@ Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/a
 # .claude/skills/ natively). Agents auto-sync on agent:run; manual entry point:
 ./vendor/bin/superaicore copilot:sync                         # write ~/.copilot/agents/*.agent.md
 ./vendor/bin/superaicore agent:run reviewer "audit" --backend=copilot
+
+# Run the same task across N Copilot agents in parallel
+./vendor/bin/superaicore copilot:fleet "refactor auth" --agents planner,reviewer,tester
+
+# Mirror your Claude-style hooks (.claude/settings.json:hooks) into Copilot
+./vendor/bin/superaicore copilot:sync-hooks                   # writes ~/.copilot/config.json:hooks
+
+# Bootstrap missing engine CLIs (explicit — never auto-installs)
+./vendor/bin/superaicore cli:status                           # table of installed / version / auth / hint
+./vendor/bin/superaicore cli:install --all-missing            # npm/brew/script install with confirmation
 ```
 
 Key behaviours:

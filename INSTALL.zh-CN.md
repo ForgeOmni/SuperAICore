@@ -13,8 +13,11 @@
 - 按后端选择性安装：
   - `claude` CLI 在 `$PATH` 中 —— Claude CLI 后端
   - `codex` CLI 在 `$PATH` 中 —— Codex CLI 后端
+  - `gemini` CLI 在 `$PATH` 中 —— Gemini CLI 后端
+  - `copilot` CLI 在 `$PATH` 中（再跑 `copilot login`）—— GitHub Copilot CLI 后端
   - Anthropic API Key —— `anthropic_api`
   - OpenAI API Key —— `openai_api`
+  - Google AI Studio Key —— `gemini_api`
 
 ## 2. 通过 Composer 安装
 
@@ -136,14 +139,26 @@ AI_CORE_PROCESS_MONITOR=false
 # 为每个 skill/agent 生成 Gemini 自定义命令
 # （写入 ~/.gemini/commands/skill/*.toml 与 agent/*.toml）
 ./vendor/bin/superaicore gemini:sync --dry-run
+
+# 把 Claude 风格 agent 翻译成 Copilot 的 .agent.md 格式
+# （`agent:run --backend=copilot` 会自动触发；这里是手动预览）
+./vendor/bin/superaicore copilot:sync --dry-run
 ```
 
-不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`）—— 按需装：
+不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`、`copilot`）—— 按需装：
 
 ```bash
 npm i -g @anthropic-ai/claude-code
 brew install codex        # 或 cargo install codex
 npm i -g @google/gemini-cli
+npm i -g @github/copilot   # 然后 `copilot login`（OAuth device flow）
+```
+
+一键替代（推荐）—— 让 superaicore 自己检测并安装：
+
+```bash
+./vendor/bin/superaicore cli:status                 # 看哪几个缺
+./vendor/bin/superaicore cli:install --all-missing  # 一次装齐（带确认提示）
 ```
 
 ## 6. 打开后台 UI
