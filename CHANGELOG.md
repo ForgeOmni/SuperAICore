@@ -4,6 +4,42 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] — 2026-04-19
+
+Follow-up release that closes two regressions shipped in 0.5.7/0.5.8 and finishes turning `EngineCatalog` into the single source of truth for host-app model pickers.
+
+**Regressions fixed:**
+1. The Copilot CLI card never appeared on `/providers` because the view filtered the CLI-status list through a hardcoded 4-engine map, silently dropping copilot.
+2. CLI auth detection reported every CLI as "not signed in" under `php artisan serve` (and any FPM pool with `clear_env = yes`), because the request worker's env is stripped of `HOME`/`USER`/`LOGNAME` — `claude auth status`, `codex login status`, and the Copilot config-dir heuristic all need HOME to locate their credential stores.
+
+**Catalog work:** model dropdowns that host apps used to hand-roll per backend (`if ($backend === 'claude') … elseif …`) now resolve from a single `EngineCatalog::modelOptions($key)` / `modelAliases($key)` call. New engines registered via `super-ai-core.engines` config light up in every host dropdown automatically.
+
+### Fixed
+
+**Providers page: Copilot card now renders**
+- `resources/views/providers/index.blade.php` previously narrowed the CLI-status card list through `array_intersect_key` against a hardcoded `['claude', 'codex', 'gemini', 'superagent']` array, so the copilot engine — registered in the catalog since 0.5.7 — never produced a card. Rewrote to iterate the live `$engines` catalog so every enabled CLI surfaces automatically with its label, install status, version, path, auth state, and install hint. Added the `npm i -g @github/copilot` install hint for the "not installed" path.
+
+**CLI auth detection survives env-stripped request workers**
+- `Services\CliStatusDetector::childEnv()` — new helper that rebuilds the minimum env a CLI child needs (`HOME`, `USER`, `LOGNAME`, `PATH`, plus passthroughs for `TMPDIR`, `XDG_*`, `LANG`, and every documented CLI OAuth token env var) and hands it explicitly to every `Process::fromShellCommandline()` call. When `getenv('HOME')` is false (PHP's built-in dev server, FPM with `clear_env=yes`, supervisor configs that scrub env), we fall back to `posix_getpwuid(posix_getuid())` — the kernel knows the real user regardless of what PHP's env table says.
+- `detectBinary()`, `detectAuth()` (claude/codex/copilot branches), `probeCopilotLive()`, and `findPath()` (both `node -v` + `which <binary>`) all now use the rebuilt env. Fixes the symptom where claude/codex/copilot cards showed "未登录" / "Not signed in" on `/providers` after a fresh `php artisan serve` even though all three CLIs were authenticated.
+
+### Changed
+
+**`EngineCatalog` is now the single source of truth for model dropdowns**
+- `modelOptions(string $key, bool $withPlaceholder = true, string $placeholder = '— 继承默认 —'): array` — returns the associative shape `['' => placeholder, '<id>' => '<display>', ...]` that Blade `<select>` lists consume directly. Per-engine `ModelResolver` (Claude / Codex / Gemini / Copilot / SuperAgent) drives the body when present, so family aliases (`sonnet`, `pro`, `flash`) appear alongside the full catalog in one pass. Engines without a dedicated resolver (host-registered CLIs) fall back to `EngineDescriptor::availableModels`.
+- `modelAliases(string $key): array` — same data reshaped as a sequential `[{id, name}, ...]` list, matching the JSON envelope task create/show blades' model-picker JS already expects.
+- Host apps previously hand-maintained per-backend `switch ($backend)` statements in 3–4 controllers to build the same lists. They can now delete those and call the catalog. New engines plugged in via `super-ai-core.engines` config then auto-populate every host dropdown without host-side code changes.
+
+**New `CopilotModelResolver`**
+- `Services\CopilotModelResolver` — canonical model catalog for the Copilot CLI. Copilot's IDs use **dot** separators (`claude-sonnet-4.6`, `gpt-5.1`) — unlike Claude CLI's **dashes** (`claude-sonnet-4-6`). Before this resolver, hosts that piped a Claude-shaped ID through the copilot backend would get silently rejected ("Model '...' from --model flag is not available", exit 1, no assistant output). `resolve()` rewrites known family aliases (`sonnet`/`opus`/`haiku` → latest Copilot dot-ID) and passes unknown input through; `catalog()` / `families()` / `defaultFor()` mirror the shape the other resolvers already expose so `EngineCatalog::modelOptions('copilot')` gets family aliases + full catalog for free. The seeded `copilot` `available_models` list is rebuilt as a projection of this resolver so dashboard/legacy callers stay in sync.
+
+**Copilot engine label tightened**
+- `EngineCatalog::seed()` — `label` field for `copilot` changed from `'GitHub Copilot CLI'` to `'GitHub Copilot'`. Shows up on `/providers` card headers and in every `Built-in (<label>)` string that reads `$engine->label`. Docs and READMEs still refer to "GitHub Copilot CLI" in contexts where the CLI tool itself is being described.
+
+### Tests
+- 6 new `EngineCatalogTest` cases — resolver-driven options for claude + copilot (family aliases + full catalog), host-registered engine options (descriptor fallback), placeholder on/off, `modelAliases()` shape, unknown-engine guard.
+- Full suite: 225 tests / 634 assertions / 1 pre-existing skip, zero regressions.
+
 ## [0.5.8] — 2026-04-18
 
 Follow-up release on top of 0.5.7. Declarative CLI command-shape lands on `EngineDescriptor` so host apps stop duplicating process-launch tables, a builder registry derives argv from that spec with a per-engine override hatch, the Copilot auth heuristic gets an opt-in liveness probe, and the Gemini/Copilot sync writers share a single non-destructive skeleton. All additive — no breaking changes.

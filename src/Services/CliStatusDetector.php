@@ -50,7 +50,8 @@ class CliStatusDetector
             ];
         }
 
-        $versionProcess = Process::fromShellCommandline("\"{$path}\" --version 2>/dev/null");
+        $env = self::childEnv();
+        $versionProcess = Process::fromShellCommandline("\"{$path}\" --version 2>/dev/null", null, $env);
         $versionProcess->setTimeout(5);
         $versionProcess->run();
         $version = trim($versionProcess->getOutput()) ?: null;
@@ -66,10 +67,68 @@ class CliStatusDetector
         ];
     }
 
+    /**
+     * Build a minimally complete env for CLI child processes.
+     *
+     * Why this exists: PHP's built-in dev server (`php artisan serve`), FPM
+     * with `clear_env=yes`, and some supervisor setups strip HOME/USER/
+     * LOGNAME/TMPDIR from the request worker's environment. CLI tools
+     * (`claude auth status`, `codex login status`, copilot keychain lookups)
+     * need HOME to locate their credential stores — without it they report
+     * "not signed in" even though the user is authenticated.
+     *
+     * We rebuild the essentials from `posix_getpwuid()` (the kernel knows
+     * the real user regardless of PHP env scrubbing) and inherit anything
+     * already set so hosts can still inject OAuth tokens via env vars.
+     */
+    protected static function childEnv(): array
+    {
+        $home = getenv('HOME') ?: ($_SERVER['HOME'] ?? '');
+        $user = getenv('USER') ?: getenv('LOGNAME') ?: ($_SERVER['USER'] ?? '');
+
+        if ((!$home || !$user) && function_exists('posix_getpwuid') && function_exists('posix_getuid')) {
+            $pw = @posix_getpwuid(posix_getuid());
+            if (is_array($pw)) {
+                $home = $home ?: ($pw['dir'] ?? '');
+                $user = $user ?: ($pw['name'] ?? '');
+            }
+        }
+
+        $env = [];
+        if ($home) {
+            $env['HOME'] = $home;
+        }
+        if ($user) {
+            $env['USER'] = $user;
+            $env['LOGNAME'] = $user;
+        }
+        $env['PATH'] = getenv('PATH') ?: '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin';
+        // Keychain-backed auth on macOS needs TMPDIR; Linux CLI tools sometimes
+        // read XDG_CONFIG_HOME. Pass through when present.
+        foreach (['TMPDIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
+                  'LANG', 'LC_ALL', 'LC_CTYPE',
+                  // Host-provided OAuth/token overrides for each CLI.
+                  'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY',
+                  'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'] as $k) {
+            $v = getenv($k);
+            if ($v !== false && $v !== '') {
+                $env[$k] = $v;
+            }
+        }
+        return $env;
+    }
+
+    /** Resolve HOME via childEnv logic (single source of truth for dir lookups). */
+    protected static function resolvedHome(): string
+    {
+        return self::childEnv()['HOME'] ?? '';
+    }
+
     protected static function detectAuth(string $binary, string $path): ?array
     {
+        $env = self::childEnv();
         if ($binary === 'claude') {
-            $p = Process::fromShellCommandline("\"{$path}\" auth status 2>/dev/null");
+            $p = Process::fromShellCommandline("\"{$path}\" auth status 2>/dev/null", null, $env);
             $p->setTimeout(5);
             $p->run();
             $out = trim($p->getOutput());
@@ -77,7 +136,7 @@ class CliStatusDetector
             return is_array($decoded) ? $decoded : null;
         }
         if ($binary === 'codex') {
-            $p = Process::fromShellCommandline("\"{$path}\" login status 2>&1");
+            $p = Process::fromShellCommandline("\"{$path}\" login status 2>&1", null, $env);
             $p->setTimeout(5);
             $p->run();
             $out = trim($p->getOutput());
@@ -93,10 +152,12 @@ class CliStatusDetector
             // inside the binary. Best heuristic: if any of the documented env vars is
             // set, treat as headless-token mode; else fall back to whether the
             // user-config dir Copilot writes on first login exists.
-            $envToken = getenv('COPILOT_GITHUB_TOKEN') ?: getenv('GH_TOKEN') ?: getenv('GITHUB_TOKEN');
-            $configDir = (getenv('XDG_CONFIG_HOME') ?: ((getenv('HOME') ?: '') . '/.config')) . '/copilot';
-            $homeDir   = (getenv('HOME') ?: '') . '/.copilot';
-            $hasState  = is_dir($configDir) || is_dir($homeDir);
+            $envToken = $env['COPILOT_GITHUB_TOKEN'] ?? $env['GH_TOKEN'] ?? $env['GITHUB_TOKEN'] ?? null;
+            $home = self::resolvedHome();
+            $xdg = $env['XDG_CONFIG_HOME'] ?? ($home ? $home . '/.config' : '');
+            $configDir = $xdg ? $xdg . '/copilot' : '';
+            $homeDir   = $home ? $home . '/.copilot' : '';
+            $hasState  = ($configDir && is_dir($configDir)) || ($homeDir && is_dir($homeDir));
 
             $result = [
                 'loggedIn' => (bool) $envToken || $hasState,
@@ -138,7 +199,7 @@ class CliStatusDetector
         if (isset(self::$copilotLiveCache[$path])) {
             return self::$copilotLiveCache[$path];
         }
-        $p = Process::fromShellCommandline("\"{$path}\" --help 2>&1");
+        $p = Process::fromShellCommandline("\"{$path}\" --help 2>&1", null, self::childEnv());
         $p->setTimeout(3);
         try {
             $p->run();
@@ -176,15 +237,16 @@ class CliStatusDetector
 
     protected static function findPath(string $binary): ?string
     {
+        $env = self::childEnv();
         if (PHP_OS_FAMILY === 'Windows') {
-            $appdata = getenv('APPDATA');
+            $appdata = $env['APPDATA'] ?? getenv('APPDATA');
             $candidates = [];
             if ($appdata) {
                 $candidates[] = "{$appdata}/npm/{$binary}.cmd";
                 $candidates[] = "{$appdata}/npm/{$binary}";
             }
         } else {
-            $home = getenv('HOME') ?: '/root';
+            $home = self::resolvedHome() ?: '/root';
             $candidates = [
                 "{$home}/.npm-global/bin/{$binary}",
                 "{$home}/.local/bin/{$binary}",
@@ -192,7 +254,7 @@ class CliStatusDetector
                 "/usr/bin/{$binary}",
                 "/opt/homebrew/bin/{$binary}",
             ];
-            $nodeVerP = Process::fromShellCommandline('node -v 2>/dev/null');
+            $nodeVerP = Process::fromShellCommandline('node -v 2>/dev/null', null, $env);
             $nodeVerP->setTimeout(3);
             $nodeVerP->run();
             $nodeVer = trim($nodeVerP->getOutput());
@@ -206,7 +268,7 @@ class CliStatusDetector
         }
 
         $cmd = PHP_OS_FAMILY === 'Windows' ? "where {$binary} 2>NUL" : "which {$binary} 2>/dev/null";
-        $p = Process::fromShellCommandline($cmd);
+        $p = Process::fromShellCommandline($cmd, null, $env);
         $p->setTimeout(3);
         $p->run();
         $result = trim($p->getOutput());

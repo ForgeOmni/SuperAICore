@@ -134,6 +134,127 @@ class EngineCatalog
     }
 
     /**
+     * Dropdown options shaped `['' => placeholder, '<id>' => '<display>', ...]`.
+     *
+     * Per-engine ModelResolver (Claude/Codex/Gemini/SuperAgent) drives the list
+     * when available — that keeps family aliases ("sonnet", "pro") alongside
+     * full catalog entries. Engines without a resolver (copilot, host-registered
+     * CLIs) fall back to the EngineDescriptor's `availableModels`.
+     *
+     * Host pickers should call this instead of hand-maintaining per-backend
+     * match statements — new engines then appear in every dropdown for free.
+     */
+    public function modelOptions(string $key, bool $withPlaceholder = true, string $placeholder = '— 继承默认 —'): array
+    {
+        $engine = $this->get($key);
+        if (!$engine) {
+            return $withPlaceholder ? ['' => $placeholder] : [];
+        }
+
+        $options = $withPlaceholder ? ['' => $placeholder] : [];
+
+        $fromResolver = $this->resolverOptions($key);
+        if ($fromResolver !== null) {
+            return $options + $fromResolver;
+        }
+
+        // Fallback: engine's own availableModels list (copilot, host engines).
+        foreach ($engine->availableModels as $m) {
+            $options[$m] = $m;
+        }
+        return $options;
+    }
+
+    /**
+     * Same data as `modelOptions()` but shaped as a sequential list of
+     * `['id' => ..., 'name' => ...]` entries — the format task create/show
+     * JS expects when rendering the model picker.
+     *
+     * @return array<int, array{id: string, name: string}>
+     */
+    public function modelAliases(string $key): array
+    {
+        $opts = $this->modelOptions($key, withPlaceholder: false);
+        $out = [];
+        foreach ($opts as $id => $name) {
+            $out[] = ['id' => (string) $id, 'name' => (string) $name];
+        }
+        return $out;
+    }
+
+    /**
+     * Resolver-driven option body (no placeholder prefix) for engines that
+     * ship a dedicated ModelResolver. Returns null when none applies so the
+     * caller can fall back to EngineDescriptor::availableModels.
+     *
+     * Matches the exact shape team-side hand-rolled before: family aliases
+     * first ("sonnet (claude-sonnet-4-6)"), then the full catalog.
+     *
+     * @return array<string,string>|null
+     */
+    protected function resolverOptions(string $key): ?array
+    {
+        switch ($key) {
+            case 'claude':
+                if (!class_exists(ClaudeModelResolver::class)) return null;
+                $out = [];
+                foreach (ClaudeModelResolver::families() as $family) {
+                    $full = ClaudeModelResolver::defaultFor($family);
+                    $out[$family] = ucfirst($family) . ($full ? " ({$full})" : '');
+                }
+                foreach (ClaudeModelResolver::catalog() as $m) {
+                    $out[$m['slug']] = $m['display_name'];
+                }
+                return $out;
+
+            case 'gemini':
+                if (!class_exists(GeminiModelResolver::class)) return null;
+                $out = [];
+                foreach (array_keys(GeminiModelResolver::ALIASES) as $family) {
+                    $full = GeminiModelResolver::defaultFor($family);
+                    $out[$family] = ucfirst($family) . ($full ? " ({$full})" : '');
+                }
+                foreach (GeminiModelResolver::catalog() as $m) {
+                    $out[$m['slug']] = $m['display_name'];
+                }
+                return $out;
+
+            case 'codex':
+                if (!class_exists(CodexModelResolver::class)) return null;
+                $catalog = CodexModelResolver::catalog();
+                if (empty($catalog)) return null; // let caller fall back
+                $out = [];
+                foreach ($catalog as $m) {
+                    $out[$m['slug']] = $m['display_name'];
+                }
+                return $out;
+
+            case 'superagent':
+                $resolver = '\\SuperAgent\\Providers\\ModelResolver';
+                if (!class_exists($resolver)) return null;
+                $families = $resolver::allFamilies();
+                $out = [];
+                foreach ($families as $family => $fullId) {
+                    $out[$family] = ucfirst($family) . " ({$fullId})";
+                }
+                return $out;
+
+            case 'copilot':
+                if (!class_exists(CopilotModelResolver::class)) return null;
+                $out = [];
+                foreach (CopilotModelResolver::families() as $family) {
+                    $full = CopilotModelResolver::defaultFor($family);
+                    $out[$family] = ucfirst($family) . ($full ? " ({$full})" : '');
+                }
+                foreach (CopilotModelResolver::catalog() as $m) {
+                    $out[$m['slug']] = $m['display_name'];
+                }
+                return $out;
+        }
+        return null;
+    }
+
+    /**
      * Built-in engine seeds. Models lists are authoritative for the SDK's
      * "what does this CLI route?" question — when adding/retiring a model,
      * just edit here. Hosts can override per engine via config.
@@ -219,25 +340,30 @@ class EngineCatalog
                 ),
             ],
             'copilot' => [
-                'label'               => 'GitHub Copilot CLI',
+                'label'               => 'GitHub Copilot',
                 'icon'                => 'github',
                 'dispatcher_backends' => ['copilot_cli'],
                 'is_cli'              => true,
                 'cli_binary'          => 'copilot',
-                // Copilot CLI defaults to Claude Sonnet 4.5 and routes the rest
-                // server-side based on subscription. Listing them so the UI can
-                // surface a model picker without duplicating the catalogue.
-                'default_model'       => 'claude-sonnet-4-5',
+                // Copilot CLI routes models server-side based on subscription.
+                // Identifiers use DOT separators (not Claude CLI's dashes).
+                // Authoritative catalog lives in CopilotModelResolver; this
+                // list is a projection so EngineDescriptor.availableModels
+                // stays populated for legacy callers. Last verified 2026-04-19
+                // against copilot CLI 1.0.32.
+                'default_model'       => 'claude-sonnet-4.6',
                 'billing_model'       => 'subscription',
                 'available_models'    => [
-                    'claude-sonnet-4-5',
-                    'claude-opus-4-5',
-                    'claude-haiku-4-5',
+                    'claude-sonnet-4.6',
+                    'claude-sonnet-4.5',
                     'claude-sonnet-4',
-                    'gpt-5',
+                    'claude-opus-4.6',
+                    'claude-opus-4.5',
+                    'claude-haiku-4.5',
                     'gpt-5.1',
                     'gpt-5.1-codex',
                     'gpt-5.1-codex-mini',
+                    'gpt-5',
                     'gpt-5-mini',
                     'gpt-4.1',
                     'gemini-3-pro-preview',

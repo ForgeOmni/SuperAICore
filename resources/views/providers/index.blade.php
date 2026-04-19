@@ -12,15 +12,10 @@
 
 {{-- CLI Status + Default Backend --}}
 @php
-    $backendLabels = array_intersect_key(
-        [
-            'claude'     => 'Claude Code CLI',
-            'codex'      => 'Codex CLI',
-            'gemini'     => 'Gemini CLI',
-            'superagent' => 'SuperAgent SDK',
-        ],
-        array_flip($backends)
-    );
+    $backendLabels = [];
+    foreach ($backends as $be) {
+        $backendLabels[$be] = $engines[$be]?->label ?? ucfirst($be);
+    }
 @endphp
 <div class="row g-3 mb-3">
     @foreach($backendLabels as $be => $label)
@@ -75,6 +70,8 @@
                                 <code>brew install codex</code>
                             @elseif($be === 'gemini')
                                 <code>npm i -g @google/gemini-cli</code>
+                            @elseif($be === 'copilot')
+                                <code>npm i -g @github/copilot</code>
                             @endif
                         </div>
                     @endif

@@ -107,6 +107,13 @@ class CliProcessBuilderRegistry
 
             $model = $options['model'] ?? null;
             if ($model !== null && $model !== '' && $spec->modelFlag !== null) {
+                // Copilot CLI uses dot-separated model IDs (claude-sonnet-4.6,
+                // gpt-5.1) and rejects Claude-CLI's dash format outright — the
+                // resolver translates dashes → dots and falls back to the
+                // family default when a requested version isn't routable yet.
+                if ($engine->key === 'copilot' && class_exists(CopilotModelResolver::class)) {
+                    $model = CopilotModelResolver::resolve($model) ?? $model;
+                }
                 $cmd[] = $spec->modelFlag;
                 $cmd[] = $model;
             }

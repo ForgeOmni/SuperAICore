@@ -3,6 +3,7 @@
 namespace SuperAICore\Backends;
 
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Services\CopilotModelResolver;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 
@@ -46,6 +47,9 @@ class CopilotCliBackend implements Backend
         }
 
         $model = $options['model'] ?? $providerConfig['model'] ?? null;
+        // Translate Claude-CLI dashes → copilot dots and fall back to the
+        // latest routable sibling when an exact version isn't wired up yet.
+        $model = CopilotModelResolver::resolve($model);
 
         // JSONL mode lets us extract:
         //   - the actual response text (assembled from assistant.message events)

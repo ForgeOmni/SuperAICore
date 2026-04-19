@@ -51,8 +51,9 @@ final class EngineCatalogTest extends TestCase
         $catalog = new EngineCatalog([]);
         $copilotModels = $catalog->modelsFor('copilot');
 
+        // Copilot uses dot-separated model IDs (not Claude CLI's dashes).
         $this->assertNotEmpty($copilotModels);
-        $this->assertContains('claude-sonnet-4-5', $copilotModels);
+        $this->assertContains('claude-sonnet-4.6', $copilotModels);
         $this->assertContains('gpt-5.1', $copilotModels);
     }
 
@@ -101,5 +102,79 @@ final class EngineCatalogTest extends TestCase
 
         $this->assertSame(AiProvider::typesForBackend('copilot'), $copilot->providerTypes);
         $this->assertContains(AiProvider::TYPE_BUILTIN, $copilot->providerTypes);
+    }
+
+    public function test_model_options_claude_uses_resolver_family_aliases(): void
+    {
+        $catalog = new EngineCatalog([]);
+        $opts = $catalog->modelOptions('claude');
+
+        // Placeholder always first
+        $this->assertSame('— 继承默认 —', $opts['']);
+        // Family aliases from ClaudeModelResolver::families()
+        $this->assertArrayHasKey('sonnet', $opts);
+        $this->assertStringContainsString('Sonnet', $opts['sonnet']);
+        // Full catalog entries present too
+        $this->assertArrayHasKey('claude-sonnet-4-6', $opts);
+    }
+
+    public function test_model_options_copilot_uses_resolver_family_aliases(): void
+    {
+        $catalog = new EngineCatalog([]);
+        $opts = $catalog->modelOptions('copilot');
+
+        // CopilotModelResolver ships family aliases alongside the full catalog.
+        $this->assertSame('— 继承默认 —', $opts['']);
+        $this->assertArrayHasKey('claude-sonnet-4.6', $opts);
+        $this->assertArrayHasKey('gpt-5.1', $opts);
+        // At least one family alias should be present (shape, not exact key).
+        $hasFamily = array_filter(
+            array_keys($opts),
+            fn ($k) => $k !== '' && !str_contains($k, '.') && !str_contains($k, '-'),
+        );
+        $this->assertNotEmpty($hasFamily, 'Expected at least one family alias key in copilot options');
+    }
+
+    public function test_model_options_host_registered_engine_uses_available_models(): void
+    {
+        $catalog = new EngineCatalog([
+            'mistral' => [
+                'label' => 'Mistral',
+                'available_models' => ['mistral-large', 'mistral-small'],
+            ],
+        ]);
+        $opts = $catalog->modelOptions('mistral');
+
+        $this->assertArrayHasKey('mistral-large', $opts);
+        $this->assertArrayHasKey('mistral-small', $opts);
+    }
+
+    public function test_model_options_without_placeholder_omits_empty_key(): void
+    {
+        $catalog = new EngineCatalog([]);
+        $opts = $catalog->modelOptions('copilot', withPlaceholder: false);
+
+        $this->assertArrayNotHasKey('', $opts);
+        $this->assertArrayHasKey('claude-sonnet-4.6', $opts);
+    }
+
+    public function test_model_aliases_returns_sequential_id_name_pairs(): void
+    {
+        $catalog = new EngineCatalog([]);
+        $aliases = $catalog->modelAliases('copilot');
+
+        $this->assertIsList($aliases);
+        $this->assertArrayHasKey('id', $aliases[0]);
+        $this->assertArrayHasKey('name', $aliases[0]);
+        $ids = array_column($aliases, 'id');
+        $this->assertContains('claude-sonnet-4.6', $ids);
+    }
+
+    public function test_model_options_unknown_engine_returns_placeholder_only(): void
+    {
+        $catalog = new EngineCatalog([]);
+        $opts = $catalog->modelOptions('nope');
+
+        $this->assertSame(['' => '— 继承默认 —'], $opts);
     }
 }

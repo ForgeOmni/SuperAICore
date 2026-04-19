@@ -15,7 +15,7 @@ final class CliProcessBuilderRegistryTest extends TestCase
 
         $cmd = $registry->build('copilot', [
             'prompt' => 'hello',
-            'model'  => 'claude-sonnet-4-5',
+            'model'  => 'claude-sonnet-4.6',
         ]);
 
         $this->assertSame('copilot', $cmd[0]);
@@ -24,7 +24,7 @@ final class CliProcessBuilderRegistryTest extends TestCase
         $this->assertContains('--output-format=json', $cmd);
         $this->assertContains('--allow-all-tools', $cmd);
         $this->assertContains('--model', $cmd);
-        $this->assertContains('claude-sonnet-4-5', $cmd);
+        $this->assertContains('claude-sonnet-4.6', $cmd);
     }
 
     public function test_default_builder_uses_positional_prompt_when_spec_has_no_prompt_flag(): void
