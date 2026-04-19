@@ -3,9 +3,8 @@
 namespace SuperAICore\Runner;
 
 use SuperAICore\Console\Commands\CopilotSyncCommand;
-use SuperAICore\Models\AiProcess;
 use SuperAICore\Registry\Agent;
-use SuperAICore\Support\ProcessRegistrar;
+use SuperAICore\Runner\Concerns\MonitoredProcess;
 use SuperAICore\Sync\CopilotAgentWriter;
 use SuperAICore\Sync\Manifest;
 use Symfony\Component\Process\Process;
@@ -26,6 +25,8 @@ use Symfony\Component\Process\Process;
  */
 final class CopilotAgentRunner implements AgentRunner
 {
+    use MonitoredProcess;
+
     public function __construct(
         private readonly string $binary = 'copilot',
         private readonly bool $allowAllTools = true,
@@ -76,35 +77,18 @@ final class CopilotAgentRunner implements AgentRunner
             return 0;
         }
 
-        // start() + wait() instead of run() so we have the PID *before* the
-        // call blocks — needed to register into ai_processes for the monitor.
         $process = new Process($cmd);
-        $process->setTimeout(null);
-        $process->start();
 
-        $logFile = ProcessRegistrar::defaultLogPath('copilot', "agent-{$agent->name}");
-        $logFh = ProcessRegistrar::openLog($logFile);
-        $procRow = ProcessRegistrar::start(
+        return $this->runMonitored(
+            process: $process,
             backend: 'copilot',
-            pid: (int) $process->getPid(),
-            command: implode(' ', array_slice($cmd, 0, 4)) . ' ...',
-            logFile: $logFile,
+            commandSummary: implode(' ', array_slice($cmd, 0, 4)) . ' ...',
             externalLabel: "agent:{$agent->name}",
             metadata: ['kind' => 'agent', 'agent_name' => $agent->name],
         );
-
-        $exit = $process->wait(function ($type, $buffer) use ($logFh) {
-            $this->emit($buffer);
-            if ($logFh) @fwrite($logFh, $buffer);
-        });
-
-        if ($logFh) @fclose($logFh);
-        ProcessRegistrar::end($procRow, $exit === 0 ? AiProcess::STATUS_FINISHED : AiProcess::STATUS_FAILED);
-
-        return $exit;
     }
 
-    private function emit(string $chunk): void
+    protected function emit(string $chunk): void
     {
         if ($this->writer) {
             ($this->writer)($chunk);

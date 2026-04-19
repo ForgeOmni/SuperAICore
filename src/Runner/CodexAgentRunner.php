@@ -4,6 +4,7 @@ namespace SuperAICore\Runner;
 
 use SuperAICore\Capabilities\CodexCapabilities;
 use SuperAICore\Registry\Agent;
+use SuperAICore\Runner\Concerns\MonitoredProcess;
 use Symfony\Component\Process\Process;
 
 /**
@@ -14,6 +15,8 @@ use Symfony\Component\Process\Process;
  */
 final class CodexAgentRunner implements AgentRunner
 {
+    use MonitoredProcess;
+
     public function __construct(
         private readonly string $binary = 'codex',
         private readonly ?\Closure $writer = null,
@@ -44,13 +47,17 @@ final class CodexAgentRunner implements AgentRunner
 
         $process = new Process($cmd);
         $process->setInput($prompt);
-        $process->setTimeout(null);
-        return $process->run(function ($type, $buffer) {
-            $this->emit($buffer);
-        });
+
+        return $this->runMonitored(
+            process: $process,
+            backend: 'codex',
+            commandSummary: implode(' ', array_slice($cmd, 0, 4)) . " <stdin: agent:{$agent->name}>",
+            externalLabel: "agent:{$agent->name}",
+            metadata: ['kind' => 'agent', 'agent_name' => $agent->name],
+        );
     }
 
-    private function emit(string $chunk): void
+    protected function emit(string $chunk): void
     {
         if ($this->writer) {
             ($this->writer)($chunk);

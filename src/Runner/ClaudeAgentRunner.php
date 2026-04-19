@@ -3,6 +3,7 @@
 namespace SuperAICore\Runner;
 
 use SuperAICore\Registry\Agent;
+use SuperAICore\Runner\Concerns\MonitoredProcess;
 use SuperAICore\Services\ClaudeModelResolver;
 use Symfony\Component\Process\Process;
 
@@ -16,6 +17,8 @@ use Symfony\Component\Process\Process;
  */
 final class ClaudeAgentRunner implements AgentRunner
 {
+    use MonitoredProcess;
+
     public function __construct(
         private readonly string $binary = 'claude',
         private readonly ?\Closure $writer = null,
@@ -44,13 +47,17 @@ final class ClaudeAgentRunner implements AgentRunner
         }
 
         $process = new Process($cmd);
-        $process->setTimeout(null);
-        return $process->run(function ($type, $buffer) {
-            $this->emit($buffer);
-        });
+
+        return $this->runMonitored(
+            process: $process,
+            backend: 'claude',
+            commandSummary: $this->binary . " -p <agent:{$agent->name}>",
+            externalLabel: "agent:{$agent->name}",
+            metadata: ['kind' => 'agent', 'agent_name' => $agent->name],
+        );
     }
 
-    private function emit(string $chunk): void
+    protected function emit(string $chunk): void
     {
         if ($this->writer) {
             ($this->writer)($chunk);

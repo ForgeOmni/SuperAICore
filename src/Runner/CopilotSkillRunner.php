@@ -2,9 +2,8 @@
 
 namespace SuperAICore\Runner;
 
-use SuperAICore\Models\AiProcess;
 use SuperAICore\Registry\Skill;
-use SuperAICore\Support\ProcessRegistrar;
+use SuperAICore\Runner\Concerns\MonitoredProcess;
 use Symfony\Component\Process\Process;
 
 /**
@@ -19,6 +18,8 @@ use Symfony\Component\Process\Process;
  */
 final class CopilotSkillRunner implements SkillRunner
 {
+    use MonitoredProcess;
+
     public function __construct(
         private readonly string $binary = 'copilot',
         private readonly bool $allowAllTools = true,
@@ -50,35 +51,18 @@ final class CopilotSkillRunner implements SkillRunner
             return 0;
         }
 
-        // start() first so we capture the PID before wait() blocks; the
-        // monitor needs the PID to mark the row alive/dead via posix_kill(0).
         $process = new Process($cmd);
-        $process->setTimeout(null);
-        $process->start();
 
-        $logFile = ProcessRegistrar::defaultLogPath('copilot', "skill-{$skill->name}");
-        $logFh = ProcessRegistrar::openLog($logFile);
-        $procRow = ProcessRegistrar::start(
+        return $this->runMonitored(
+            process: $process,
             backend: 'copilot',
-            pid: (int) $process->getPid(),
-            command: $this->binary . " -p <skill:{$skill->name}> -s",
-            logFile: $logFile,
+            commandSummary: $this->binary . " -p <skill:{$skill->name}> -s",
             externalLabel: "skill:{$skill->name}",
             metadata: ['kind' => 'skill', 'skill_name' => $skill->name],
         );
-
-        $exit = $process->wait(function ($type, $buffer) use ($logFh) {
-            $this->emit($buffer);
-            if ($logFh) @fwrite($logFh, $buffer);
-        });
-
-        if ($logFh) @fclose($logFh);
-        ProcessRegistrar::end($procRow, $exit === 0 ? AiProcess::STATUS_FINISHED : AiProcess::STATUS_FAILED);
-
-        return $exit;
     }
 
-    private function emit(string $chunk): void
+    protected function emit(string $chunk): void
     {
         if ($this->writer) {
             ($this->writer)($chunk);

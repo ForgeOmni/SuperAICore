@@ -9,6 +9,11 @@ use Symfony\Component\Process\Process;
 
 /**
  * Spawns the `codex` CLI (OpenAI's codex-rs). Uses OPENAI_API_KEY env var.
+ *
+ * Token usage is extracted from `codex exec --json`, which emits a JSONL
+ * event stream terminating in `turn.completed` (or `turn.failed`). The
+ * `turn.completed.usage` object carries `input_tokens`, `output_tokens`,
+ * and `cached_input_tokens`.
  */
 class CodexCliBackend implements Backend
 {
@@ -41,7 +46,7 @@ class CodexCliBackend implements Backend
         // fail the run — we substitute the closest compatible model.
         $model = CodexModelResolver::resolve($model, $this->binary);
 
-        $cmd = [$this->binary, 'exec'];  // one-shot mode
+        $cmd = [$this->binary, 'exec', '--json', '--full-auto', '--skip-git-repo-check'];
         if ($model) {
             $cmd[] = '--model';
             $cmd[] = $model;
@@ -66,18 +71,87 @@ class CodexCliBackend implements Backend
                 return null;
             }
 
-            $text = trim($process->getOutput());
-            if ($text === '') return null;
+            $parsed = $this->parseJsonl($process->getOutput());
+            if (!$parsed || $parsed['text'] === '') return null;
 
             return [
-                'text' => $text,
-                'model' => $model ?? 'codex-default',
-                'usage' => ['input_tokens' => 0, 'output_tokens' => 0],
-                'stop_reason' => null,
+                'text'        => $parsed['text'],
+                'model'       => $model ?? 'codex-default',
+                'usage'       => [
+                    'input_tokens'         => $parsed['input_tokens'],
+                    'output_tokens'        => $parsed['output_tokens'],
+                    'cached_input_tokens'  => $parsed['cached_input_tokens'],
+                ],
+                'stop_reason' => $parsed['stop_reason'],
             ];
         } catch (\Throwable $e) {
             if ($this->logger) $this->logger->warning("CodexCliBackend error: {$e->getMessage()}");
             return null;
         }
+    }
+
+    /**
+     * Parse the JSONL event stream codex-rs emits under `exec --json`.
+     * Public for testing.
+     *
+     * Events observed (0.x schema, 2026-04):
+     *   {"type":"thread.started","thread_id":"..."}
+     *   {"type":"turn.started"}
+     *   {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
+     *   {"type":"turn.completed","usage":{"input_tokens":N,"output_tokens":N,"cached_input_tokens":N}}
+     *   {"type":"turn.failed","error":{"message":"..."}}
+     *
+     * @return array{text:string, input_tokens:int, output_tokens:int, cached_input_tokens:int, stop_reason:?string}|null
+     */
+    public function parseJsonl(string $output): ?array
+    {
+        $text = '';
+        $inputTokens = 0;
+        $outputTokens = 0;
+        $cachedInputTokens = 0;
+        $stopReason = null;
+        $sawAny = false;
+
+        foreach (explode("\n", $output) as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] !== '{') continue;
+            $event = json_decode($line, true);
+            if (!is_array($event)) continue;
+            $sawAny = true;
+
+            $type = $event['type'] ?? '';
+
+            switch ($type) {
+                case 'item.completed':
+                    $item = $event['item'] ?? [];
+                    if (($item['type'] ?? '') === 'agent_message' && isset($item['text']) && is_string($item['text'])) {
+                        $text .= $item['text'];
+                    }
+                    break;
+
+                case 'turn.completed':
+                    $stopReason = 'end_turn';
+                    $usage = $event['usage'] ?? [];
+                    $inputTokens       = (int) ($usage['input_tokens'] ?? 0);
+                    $outputTokens      = (int) ($usage['output_tokens'] ?? 0);
+                    $cachedInputTokens = (int) ($usage['cached_input_tokens'] ?? 0);
+                    break;
+
+                case 'turn.failed':
+                case 'error':
+                    $stopReason = 'error';
+                    break;
+            }
+        }
+
+        if (!$sawAny) return null;
+
+        return [
+            'text'                => trim($text),
+            'input_tokens'        => $inputTokens,
+            'output_tokens'       => $outputTokens,
+            'cached_input_tokens' => $cachedInputTokens,
+            'stop_reason'         => $stopReason,
+        ];
     }
 }

@@ -3,6 +3,7 @@
 namespace SuperAICore\Runner;
 
 use SuperAICore\Registry\Skill;
+use SuperAICore\Runner\Concerns\MonitoredProcess;
 use Symfony\Component\Process\Process;
 
 /**
@@ -12,6 +13,8 @@ use Symfony\Component\Process\Process;
  */
 final class ClaudeSkillRunner implements SkillRunner
 {
+    use MonitoredProcess;
+
     public function __construct(
         private readonly string $binary = 'claude',
         private readonly ?\Closure $writer = null,
@@ -37,13 +40,17 @@ final class ClaudeSkillRunner implements SkillRunner
         }
 
         $process = new Process($cmd);
-        $process->setTimeout(null);
-        return $process->run(function ($type, $buffer) {
-            $this->emit($buffer);
-        });
+
+        return $this->runMonitored(
+            process: $process,
+            backend: 'claude',
+            commandSummary: $this->binary . " -p <skill:{$skill->name}>",
+            externalLabel: "skill:{$skill->name}",
+            metadata: ['kind' => 'skill', 'skill_name' => $skill->name],
+        );
     }
 
-    private function emit(string $chunk): void
+    protected function emit(string $chunk): void
     {
         if ($this->writer) {
             ($this->writer)($chunk);

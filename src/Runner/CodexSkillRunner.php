@@ -3,6 +3,7 @@
 namespace SuperAICore\Runner;
 
 use SuperAICore\Registry\Skill;
+use SuperAICore\Runner\Concerns\MonitoredProcess;
 use Symfony\Component\Process\Process;
 
 /**
@@ -11,6 +12,8 @@ use Symfony\Component\Process\Process;
  */
 final class CodexSkillRunner implements SkillRunner
 {
+    use MonitoredProcess;
+
     public function __construct(
         private readonly string $binary = 'codex',
         private readonly ?\Closure $writer = null,
@@ -36,13 +39,17 @@ final class CodexSkillRunner implements SkillRunner
 
         $process = new Process($cmd);
         $process->setInput($prompt);
-        $process->setTimeout(null);
-        return $process->run(function ($type, $buffer) {
-            $this->emit($buffer);
-        });
+
+        return $this->runMonitored(
+            process: $process,
+            backend: 'codex',
+            commandSummary: implode(' ', array_slice($cmd, 0, 4)) . " <stdin: skill:{$skill->name}>",
+            externalLabel: "skill:{$skill->name}",
+            metadata: ['kind' => 'skill', 'skill_name' => $skill->name],
+        );
     }
 
-    private function emit(string $chunk): void
+    protected function emit(string $chunk): void
     {
         if ($this->writer) {
             ($this->writer)($chunk);
