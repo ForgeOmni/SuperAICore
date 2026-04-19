@@ -98,6 +98,10 @@ AI_CORE_GEMINI_API_ENABLED=true
 CLAUDE_CLI_BIN=claude
 CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
+# Sonde de liveness optionnelle pour la ligne copilot de `cli:status`
+# (0.5.8+). Désactivée par défaut — un `copilot --help` à chaque sondage
+# de statut serait du gaspillage.
+SUPERAICORE_COPILOT_PROBE=false
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com

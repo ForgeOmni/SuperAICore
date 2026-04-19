@@ -34,7 +34,8 @@
   - **GitHub Copilot CLI**：仅 `builtin`（`copilot` 二进制自行处理 OAuth / keychain / 刷新）。原生读取 `.claude/skills/`（零翻译直通）。**订阅计费** —— 仪表盘独立统计，不混入按 token 计费引擎。
   - **SuperAgent SDK**：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`
 - 五个引擎在 Dispatcher 内部扇出成八个适配器（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— provider 为 `builtin` 时走 CLI 适配器，持有 API Key 时走 HTTP 适配器。这是实现细节，一般无需关心；如需低层直调，CLI 也能直接指定这些适配器名。
-- **EngineCatalog 单一数据源** —— 引擎的标签、图标、Dispatcher 后端、支持的 provider 类型、可用模型都集中在一个 PHP 服务里。新增一个 CLI 引擎只需改 `EngineCatalog::seed()`，providers UI、进程扫描、开关矩阵全部自动跟进。宿主应用可通过 `super-ai-core.engines` 配置覆盖每个引擎字段。
+- **EngineCatalog 单一数据源** —— 引擎的标签、图标、Dispatcher 后端、支持的 provider 类型、可用模型，以及声明式的 **`ProcessSpec`**（二进制名、版本/登录状态参数、prompt/output/model flag、默认 flag）都集中在一个 PHP 服务里。新增一个 CLI 引擎只需改 `EngineCatalog::seed()`，providers UI、进程扫描、开关矩阵、默认 CLI 命令形状全部自动跟进。宿主应用可通过 `super-ai-core.engines` 配置覆盖每个引擎字段（包括 `process_spec`）。
+- **CliProcessBuilderRegistry** —— 基于引擎的 `ProcessSpec` 组装 `argv`（`build($key, ['prompt' => …, 'model' => …])`）。默认 builder 覆盖全部内置引擎；宿主可 `register($key, $callable)` 无需 fork 就替换成自定义形状。另暴露 `versionCommand()` / `authStatusCommand()` 给状态探测。以单例注册。
 - **Provider / Service / Routing 模型** —— 将抽象能力（`summarize`、`translate`、`code_review` 等）映射到具体服务，再将服务绑定到 provider 凭证。
 - **MCP 服务器管理器** —— 在后台 UI 中安装、启用、配置 MCP 服务器。
 - **使用量追踪** —— 每次调用将 prompt / response tokens、耗时、成本写入 `ai_usage_logs` 表。

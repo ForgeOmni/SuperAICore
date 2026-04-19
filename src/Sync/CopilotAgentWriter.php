@@ -19,29 +19,21 @@ use SuperAICore\Translator\CopilotToolPermissions;
  *   Claude `tools` (array) → Copilot `tools` (array of allow-tool exprs)
  *   Claude `model`        → DROPPED (Copilot routes models server-side via subscription)
  *
- * Non-destructive merge (same contract as GeminiCommandWriter):
- *   - Same content on disk → unchanged
- *   - Different content + we wrote it → user-edited, leave alone
- *   - Source agent gone → remove the .agent.md (unless user-edited)
- *   - User deleted the .agent.md → recreate
+ * Non-destructive merge contract lives in AbstractManifestWriter.
  *
  * Auto-sync caller: pass a single agent to `syncOne()` for the lazy
  * "make sure this one agent file is fresh before `copilot --agent X` runs"
  * path used by CopilotAgentRunner.
  */
-final class CopilotAgentWriter
+final class CopilotAgentWriter extends AbstractManifestWriter
 {
-    public const STATUS_WRITTEN     = 'written';
-    public const STATUS_UNCHANGED   = 'unchanged';
-    public const STATUS_USER_EDITED = 'user-edited';
-    public const STATUS_REMOVED     = 'removed';
-    public const STATUS_STALE_KEPT  = 'stale-kept';
-
     public function __construct(
         private readonly string $agentsDir,
-        private readonly Manifest $manifest,
+        Manifest $manifest,
         private readonly ?CopilotToolPermissions $perms = null,
-    ) {}
+    ) {
+        parent::__construct($manifest);
+    }
 
     /**
      * Sync the full agent set. Returns a per-status path report.
@@ -51,78 +43,15 @@ final class CopilotAgentWriter
      */
     public function sync(array $agents, bool $dryRun = false): array
     {
-        $report = [
-            'written'     => [],
-            'unchanged'   => [],
-            'user_edited' => [],
-            'removed'     => [],
-            'stale_kept'  => [],
-        ];
-
         $targets = [];
         foreach ($agents as $a) {
-            $targets[$this->agentPath($a->name)] = [$this->renderAgent($a), $a->path];
+            $targets[$this->agentPath($a->name)] = [
+                'contents' => $this->renderAgent($a),
+                'source'   => $a->path,
+            ];
         }
 
-        $previousEntries = $this->manifest->read();
-        $nextEntries     = [];
-
-        foreach ($targets as $path => [$contents, $source]) {
-            $hash = hash('sha256', $contents);
-
-            if (is_file($path)) {
-                $onDisk  = (string) @file_get_contents($path);
-                $current = hash('sha256', $onDisk);
-                $ours    = $previousEntries[$path] ?? null;
-
-                if ($current === $hash) {
-                    $report['unchanged'][] = $path;
-                    $nextEntries[$path] = $hash;
-                    continue;
-                }
-
-                if ($ours !== null && $ours !== $current) {
-                    $report['user_edited'][] = $path;
-                    $nextEntries[$path] = $ours;
-                    continue;
-                }
-            }
-
-            if (!$dryRun) {
-                $dir = dirname($path);
-                if (!is_dir($dir)) {
-                    @mkdir($dir, 0755, true);
-                }
-                @file_put_contents($path, $contents);
-            }
-            $report['written'][] = $path;
-            $nextEntries[$path] = $hash;
-        }
-
-        foreach ($previousEntries as $oldPath => $oldHash) {
-            if (isset($targets[$oldPath])) {
-                continue;
-            }
-            if (!is_file($oldPath)) {
-                continue;
-            }
-            $current = hash('sha256', (string) @file_get_contents($oldPath));
-            if ($current !== $oldHash) {
-                $report['stale_kept'][] = $oldPath;
-                $nextEntries[$oldPath]  = $oldHash;
-                continue;
-            }
-            if (!$dryRun) {
-                @unlink($oldPath);
-            }
-            $report['removed'][] = $oldPath;
-        }
-
-        if (!$dryRun) {
-            $this->manifest->write($nextEntries);
-        }
-
-        return $report;
+        return $this->applyTargets($targets, $dryRun);
     }
 
     /**
@@ -134,33 +63,10 @@ final class CopilotAgentWriter
      */
     public function syncOne(Agent $agent): array
     {
-        $path = $this->agentPath($agent->name);
-        $contents = $this->renderAgent($agent);
-        $hash = hash('sha256', $contents);
-
-        $manifest = $this->manifest->read();
-
-        if (is_file($path)) {
-            $current = hash('sha256', (string) @file_get_contents($path));
-            if ($current === $hash) {
-                return ['status' => self::STATUS_UNCHANGED, 'path' => $path];
-            }
-            $ours = $manifest[$path] ?? null;
-            if ($ours !== null && $ours !== $current) {
-                return ['status' => self::STATUS_USER_EDITED, 'path' => $path];
-            }
-        }
-
-        $dir = dirname($path);
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
-        }
-        @file_put_contents($path, $contents);
-
-        $manifest[$path] = $hash;
-        $this->manifest->write($manifest);
-
-        return ['status' => self::STATUS_WRITTEN, 'path' => $path];
+        return $this->applyOne(
+            $this->agentPath($agent->name),
+            $this->renderAgent($agent),
+        );
     }
 
     public function agentPath(string $name): string

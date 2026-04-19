@@ -97,13 +97,62 @@ class CliStatusDetector
             $configDir = (getenv('XDG_CONFIG_HOME') ?: ((getenv('HOME') ?: '') . '/.config')) . '/copilot';
             $homeDir   = (getenv('HOME') ?: '') . '/.copilot';
             $hasState  = is_dir($configDir) || is_dir($homeDir);
-            return [
+
+            $result = [
                 'loggedIn' => (bool) $envToken || $hasState,
                 'status'   => $envToken ? 'env-token' : ($hasState ? 'config-present' : 'not-logged-in'),
                 'method'   => $envToken ? 'env' : ($hasState ? 'oauth' : null),
             ];
+
+            // Optional CLI-based liveness probe. Copilot has no cheap auth-status
+            // subcommand, so the best we can do without paying for an inference
+            // is verify the binary itself runs and emits its help text. Gated
+            // because spawning a child process on every status poll is wasteful.
+            // Opt-in via env SUPERAICORE_COPILOT_PROBE=1. Result cached in-process.
+            // Uses static:: so hosts/tests can subclass and swap the probe.
+            if (static::copilotProbeEnabled()) {
+                $result['live'] = static::probeCopilotLive($path);
+            }
+
+            return $result;
         }
         return null;
+    }
+
+    /** @var array<string,bool> */
+    private static array $copilotLiveCache = [];
+
+    protected static function copilotProbeEnabled(): bool
+    {
+        $v = getenv('SUPERAICORE_COPILOT_PROBE');
+        return $v === '1' || strtolower((string) $v) === 'true';
+    }
+
+    /**
+     * Run `<copilot> --help` under a short timeout. Exposed as protected so
+     * tests (or hosts with a better probe) can replace it. Cached per path
+     * within this request.
+     */
+    protected static function probeCopilotLive(string $path): bool
+    {
+        if (isset(self::$copilotLiveCache[$path])) {
+            return self::$copilotLiveCache[$path];
+        }
+        $p = Process::fromShellCommandline("\"{$path}\" --help 2>&1");
+        $p->setTimeout(3);
+        try {
+            $p->run();
+        } catch (\Throwable) {
+            return self::$copilotLiveCache[$path] = false;
+        }
+        $out = (string) $p->getOutput();
+        // Be lenient: any non-empty help text containing a known Copilot keyword
+        // is enough. We're verifying "binary runs and responds", not parsing
+        // help grammar.
+        $live = $p->isSuccessful() && $out !== '' && (
+            stripos($out, 'copilot') !== false || stripos($out, 'usage') !== false
+        );
+        return self::$copilotLiveCache[$path] = $live;
     }
 
     protected static function superagentStatus(): array

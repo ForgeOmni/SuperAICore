@@ -4,11 +4,24 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.8] — 2026-04-18
 
-Post-0.5.7 improvements sourced from `docs/copilot-followups.md` and a fresh one-shot CLI installer. Version number is unchanged — bump is a separate manual step.
+Follow-up release on top of 0.5.7. Declarative CLI command-shape lands on `EngineDescriptor` so host apps stop duplicating process-launch tables, a builder registry derives argv from that spec with a per-engine override hatch, the Copilot auth heuristic gets an opt-in liveness probe, and the Gemini/Copilot sync writers share a single non-destructive skeleton. All additive — no breaking changes.
 
 ### Added
+
+**Engine process-spec + CLI builder registry**
+- `Support\ProcessSpec` — declarative command-shape metadata (binary, version args, auth-status args, prompt/output/model flags, default flags, default timeout). Host apps previously duplicated this table; it now lives on the engine catalog.
+- `Support\EngineDescriptor` gains a nullable `processSpec` field, surfaced in `toArray()` and seeded for every CLI engine (claude/codex/gemini/copilot). `superagent` stays null. Hosts can override per-engine via `super-ai-core.engines.<key>.process_spec` (accepts `ProcessSpec` instance or array).
+- `Services\CliProcessBuilderRegistry` — assembles argv arrays from a ProcessSpec (`build($key, ['prompt' => ..., 'model' => ...])`). Default builder covers all seeded engines; hosts call `register($key, $callable)` to override without forking. Also exposes `versionCommand()` / `authStatusCommand()` for the status detector path. Registered as a singleton on the service provider.
+
+**Copilot CLI liveness probe (opt-in)**
+- `Services\CliStatusDetector::detectAuth('copilot', ...)` now optionally verifies the binary itself runs (`copilot --help` under 3s timeout) and returns the result as `auth.live`. Gated behind `SUPERAICORE_COPILOT_PROBE=1` so status pages stay fast by default; result cached per-path within a request. `static::` dispatch lets hosts/tests subclass and swap the probe.
+
+### Changed
+
+**Sync writers share a single non-destructive skeleton**
+- New `Sync\AbstractManifestWriter` hoists the contract that both `GeminiCommandWriter` and `CopilotAgentWriter` were implementing by hand: on-disk hash compare, user-edit detection, manifest round-trips, dry-run, stale cleanup, status constants. Concrete writers now only render targets and delegate to `applyTargets()` / `applyOne()`. `CopilotHookWriter` stays standalone — its single-JSON-file contract is too different to share.
 
 **CLI installer — one-shot bootstrap for engine CLIs**
 - `cli:status` — table of installed / version / auth / install-hint per backend (`claude` / `codex` / `gemini` / `copilot` / `superagent`). Pass `--json` for machine-readable output.
@@ -36,7 +49,8 @@ Post-0.5.7 improvements sourced from `docs/copilot-followups.md` and a fresh one
 - 6 new `ClaudeCliBackendTest` + 6 new `CodexCliBackendTest` + 6 new `GeminiCliBackendTest` cases covering real JSONL/JSON envelopes, model-selection heuristics, failure paths, missing-field tolerance.
 - 3 new `CopilotFleetRunnerTest` cases (dry-run fan-out + model override).
 - 8 new `CopilotHookWriterTest` cases (written / unchanged / user-edited / cleared / hash stability / settings reader).
-- Full suite: 205 tests / 567 assertions / 1 pre-existing skip, zero regressions.
+- 4 new `ProcessSpecTest` + 6 new `CliProcessBuilderRegistryTest` + 4 new `CliStatusDetectorCopilotProbeTest` cases covering seed shape, host overrides, default/override builders, positional-prompt CLIs, gated probe on/off + cache.
+- Full suite: 219 tests / 617 assertions / 1 pre-existing skip, zero regressions.
 
 ## [0.5.7] — 2026-04-18
 

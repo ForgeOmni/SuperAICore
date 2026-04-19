@@ -26,6 +26,7 @@ final class EngineDescriptor
      * @param ?string  $cliBinary            binary name (when isCli=true)
      * @param ?string  $defaultModel         convenience pick when caller doesn't specify one
      * @param string   $billingModel         'usage' (per-token, USD) | 'subscription' (flat fee, e.g. Copilot)
+     * @param ?ProcessSpec $processSpec      declarative command-shape for CLI engines (null for non-CLI)
      */
     public function __construct(
         public readonly string $key,
@@ -38,6 +39,7 @@ final class EngineDescriptor
         public readonly ?string $cliBinary = null,
         public readonly ?string $defaultModel = null,
         public readonly string $billingModel = 'usage',
+        public readonly ?ProcessSpec $processSpec = null,
     ) {}
 
     public function toArray(): array
@@ -53,6 +55,7 @@ final class EngineDescriptor
             'cli_binary'          => $this->cliBinary,
             'default_model'       => $this->defaultModel,
             'billing_model'       => $this->billingModel,
+            'process_spec'        => $this->processSpec?->toArray(),
         ];
     }
 }

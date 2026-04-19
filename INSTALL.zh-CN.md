@@ -98,6 +98,9 @@ AI_CORE_GEMINI_API_ENABLED=true
 CLAUDE_CLI_BIN=claude
 CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
+# 0.5.8+：cli:status 中 copilot 行的可选 liveness 探测，默认关闭
+# （每次状态轮询 spawn 一次 `copilot --help` 成本过高）。
+SUPERAICORE_COPILOT_PROBE=false
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com

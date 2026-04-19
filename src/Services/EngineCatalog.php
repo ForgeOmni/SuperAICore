@@ -4,6 +4,7 @@ namespace SuperAICore\Services;
 
 use SuperAICore\Models\AiProvider;
 use SuperAICore\Support\EngineDescriptor;
+use SuperAICore\Support\ProcessSpec;
 
 /**
  * Single source of truth for execution-engine metadata.
@@ -50,6 +51,7 @@ class EngineCatalog
                 cliBinary:          $merged['cli_binary'] ?? null,
                 defaultModel:       $merged['default_model'] ?? null,
                 billingModel:       (string) ($merged['billing_model'] ?? 'usage'),
+                processSpec:        $this->resolveProcessSpec($merged['process_spec'] ?? null),
             );
         }
 
@@ -68,6 +70,7 @@ class EngineCatalog
                 cliBinary:          $cfg['cli_binary'] ?? null,
                 defaultModel:       $cfg['default_model'] ?? null,
                 billingModel:       (string) ($cfg['billing_model'] ?? 'usage'),
+                processSpec:        $this->resolveProcessSpec($cfg['process_spec'] ?? null),
             );
         }
     }
@@ -155,6 +158,14 @@ class EngineCatalog
                     'claude-sonnet-4-5-20241022',
                     'claude-haiku-4-5-20251001',
                 ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'claude',
+                    versionArgs:      ['--version'],
+                    authStatusArgs:   ['auth', 'status'],
+                    promptFlag:       '--print',
+                    outputFormatFlag: '--output-format=json',
+                    modelFlag:        '--model',
+                ),
             ],
             'codex' => [
                 'label'               => 'Codex',
@@ -174,6 +185,15 @@ class EngineCatalog
                     'gpt-4o',
                     'gpt-4o-mini',
                 ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'codex',
+                    versionArgs:      ['--version'],
+                    authStatusArgs:   ['login', 'status'],
+                    promptFlag:       null,
+                    outputFormatFlag: '--json',
+                    modelFlag:        '--model',
+                    defaultFlags:     ['exec'],
+                ),
             ],
             'gemini' => [
                 'label'               => 'Gemini',
@@ -189,6 +209,14 @@ class EngineCatalog
                     'gemini-2.5-flash',
                     'gemini-2.5-flash-lite',
                 ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'gemini',
+                    versionArgs:      ['--version'],
+                    authStatusArgs:   null,
+                    promptFlag:       '--prompt',
+                    outputFormatFlag: '--output-format=json',
+                    modelFlag:        '--model',
+                ),
             ],
             'copilot' => [
                 'label'               => 'GitHub Copilot CLI',
@@ -214,6 +242,15 @@ class EngineCatalog
                     'gpt-4.1',
                     'gemini-3-pro-preview',
                 ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'copilot',
+                    versionArgs:      ['--version'],
+                    authStatusArgs:   null,
+                    promptFlag:       '-p',
+                    outputFormatFlag: '--output-format=json',
+                    modelFlag:        '--model',
+                    defaultFlags:     ['--allow-all-tools'],
+                ),
             ],
             'superagent' => [
                 'label'               => 'SuperAgent SDK',
@@ -224,7 +261,18 @@ class EngineCatalog
                 'default_model'       => null,
                 'billing_model'       => 'usage',
                 'available_models'    => [],
+                'process_spec'        => null,
             ],
         ];
+    }
+
+    /**
+     * Accept either a ProcessSpec instance (seed) or an array (host config).
+     */
+    protected function resolveProcessSpec(mixed $value): ?ProcessSpec
+    {
+        if ($value instanceof ProcessSpec) return $value;
+        if (is_array($value)) return ProcessSpec::fromArray($value);
+        return null;
     }
 }

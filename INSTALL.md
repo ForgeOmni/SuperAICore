@@ -101,6 +101,9 @@ CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
 COPILOT_CLI_BIN=copilot
 AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
+# Opt-in liveness probe for `cli:status` copilot row (0.5.8+). Off by
+# default — spawning `copilot --help` on every status poll is wasteful.
+SUPERAICORE_COPILOT_PROBE=false
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com

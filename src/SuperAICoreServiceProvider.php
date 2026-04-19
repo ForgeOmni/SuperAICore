@@ -12,6 +12,7 @@ use SuperAICore\Repositories\EloquentServiceRepository;
 use SuperAICore\Repositories\EloquentUsageRepository;
 use SuperAICore\Services\BackendRegistry;
 use SuperAICore\Services\CapabilityRegistry;
+use SuperAICore\Services\CliProcessBuilderRegistry;
 use SuperAICore\Services\CostCalculator;
 use SuperAICore\Services\Dispatcher;
 use SuperAICore\Services\EngineCatalog;
@@ -39,6 +40,9 @@ class SuperAICoreServiceProvider extends ServiceProvider
         $this->app->singleton(CapabilityRegistry::class);
         $this->app->singleton(EngineCatalog::class);
         $this->app->singleton(CostCalculator::class);
+        $this->app->singleton(CliProcessBuilderRegistry::class, function ($app) {
+            return new CliProcessBuilderRegistry($app->make(EngineCatalog::class));
+        });
 
         // Process Monitor — host apps register their own ProcessSources in
         // their ServiceProvider's boot(); we seed the built-in AiProcess
