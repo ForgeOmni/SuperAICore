@@ -35,6 +35,8 @@ The `forgeomni/superagent` entry in `composer.json` is there so the SuperAgent b
   - **SuperAgent SDK**: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`
 - Engines fan out to internal Dispatcher adapters (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`) — CLI adapters when a provider uses `builtin`, HTTP adapters when it uses an API key. Operators rarely need to know this, but the adapters are addressable directly from the CLI if needed.
 - **EngineCatalog single source of truth** — engine labels, icons, dispatcher backends, supported provider types, available models, and the declarative **`ProcessSpec`** (binary, version/auth-status args, prompt/output/model flags, default flags) live in one PHP service. Adding a new CLI engine means editing `EngineCatalog::seed()` and the providers UI, process monitor scan, disable-toggle table, and default CLI command shape all update automatically. The same catalog also drives host-app model dropdowns via `modelOptions($key)` / `modelAliases($key)` (0.5.9+), so hosts stop hand-rolling per-backend switches — a new engine's models appear in every picker for free. Host apps can override per-engine fields (including `process_spec`) via `super-ai-core.engines` config.
+- **Dynamic model catalog** (0.6.0+) — `CostCalculator`, `ClaudeModelResolver`, `GeminiModelResolver`, and `EngineCatalog::seed()`'s `available_models` all fall through to SuperAgent's `ModelCatalog` (bundled `resources/models.json` + user override at `~/.superagent/models.json`). Running `superagent models update` (or the new `super-ai-core:models update`) refreshes pricing and model lists for every Anthropic / OpenAI / Gemini / Bedrock / OpenRouter row without a `composer update` or `vendor:publish`. Config-published prices and explicit `available_models` overrides stay authoritative.
+- **Gemini OAuth shown on `/providers`** (0.6.0+) — `CliStatusDetector::detectAuth('gemini')` reads `~/.gemini/oauth_creds.json` via SuperAgent's `GeminiCliCredentials`, falls back to `GEMINI_API_KEY` / `GOOGLE_API_KEY`, and reports `{loggedIn, method, expires_at}` on the provider card the same way Claude Code / Codex do.
 - **CliProcessBuilderRegistry** — assembles `argv` arrays from an engine's `ProcessSpec` (`build($key, ['prompt' => …, 'model' => …])`). Default builders cover all seeded engines; hosts call `register($key, $callable)` to swap in a custom shape without forking. Also exposes `versionCommand()` and `authStatusCommand()` for status detectors. Resolved as a singleton.
 - **Provider / Service / Routing model** — map abstract capabilities (`summarize`, `translate`, `code_review`, ...) to concrete services, and services to provider credentials.
 - **MCP server manager** — install, enable, and configure MCP servers from the admin UI.
@@ -130,6 +132,11 @@ Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/a
 # Bootstrap missing engine CLIs (explicit — never auto-installs)
 ./vendor/bin/superaicore cli:status                           # table of installed / version / auth / hint
 ./vendor/bin/superaicore cli:install --all-missing            # npm/brew/script install with confirmation
+
+# Inspect or refresh the model catalog (0.6.0+)
+./vendor/bin/superaicore super-ai-core:models status                     # sources, override mtime, total rows
+./vendor/bin/superaicore super-ai-core:models list --provider=anthropic  # per-1M pricing + aliases
+./vendor/bin/superaicore super-ai-core:models update                     # fetch $SUPERAGENT_MODELS_URL
 ```
 
 Key behaviours:

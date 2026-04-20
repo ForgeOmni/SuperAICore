@@ -39,6 +39,21 @@ class EngineCatalog
             : []);
 
         foreach ($this->seed() as $key => $defaults) {
+            // Expand the seed's `available_models` with the SuperAgent
+            // ModelCatalog *only when the host did not supply its own list*.
+            // Host overrides stay authoritative; defaults pick up every new
+            // model the bundled + user-override catalog knows. Copilot keeps
+            // its own list because its IDs use dot separators that don't
+            // overlap with the catalog's dash form.
+            $hostSetModels = is_array($overrides[$key] ?? null)
+                && array_key_exists('available_models', $overrides[$key]);
+            if (!$hostSetModels) {
+                $defaults['available_models'] = $this->expandFromCatalog(
+                    $key,
+                    (array) ($defaults['available_models'] ?? [])
+                );
+            }
+
             $merged = array_merge($defaults, $overrides[$key] ?? []);
             $this->engines[$key] = new EngineDescriptor(
                 key:                $key,
@@ -143,9 +158,15 @@ class EngineCatalog
      *
      * Host pickers should call this instead of hand-maintaining per-backend
      * match statements — new engines then appear in every dropdown for free.
+     *
+     * When `$placeholder` is null (default), the translated string for
+     * `super-ai-core::messages.inherit_default` is used so en/zh-CN/fr
+     * users all see the right label. Pass a literal to force a specific
+     * string (e.g. tests or non-Laravel hosts).
      */
-    public function modelOptions(string $key, bool $withPlaceholder = true, string $placeholder = '— 继承默认 —'): array
+    public function modelOptions(string $key, bool $withPlaceholder = true, ?string $placeholder = null): array
     {
+        $placeholder ??= $this->defaultPlaceholder();
         $engine = $this->get($key);
         if (!$engine) {
             return $withPlaceholder ? ['' => $placeholder] : [];
@@ -400,5 +421,84 @@ class EngineCatalog
         if ($value instanceof ProcessSpec) return $value;
         if (is_array($value)) return ProcessSpec::fromArray($value);
         return null;
+    }
+
+    /**
+     * Union the seed's `available_models` with ids pulled from SuperAgent's
+     * ModelCatalog for engines whose IDs share the catalog's naming.
+     *
+     * - claude  → catalog provider `anthropic` (only ids starting with `claude-`)
+     * - gemini  → catalog provider `gemini`    (only ids starting with `gemini`)
+     * - codex   → catalog provider `openai`    (only ids starting with `gpt-`)
+     * - copilot → no-op (dot-IDs; Copilot's catalog is authoritative elsewhere)
+     * - other   → seed unchanged
+     *
+     * Seed entries keep their original order at the front so family aliases
+     * like `claude-opus-4-6` stay in the familiar spot; catalog-only ids get
+     * appended at the end. Duplicates are removed.
+     *
+     * @param string[] $seedModels
+     * @return string[]
+     */
+    protected function expandFromCatalog(string $key, array $seedModels): array
+    {
+        $catalogProvider = match ($key) {
+            'claude' => 'anthropic',
+            'gemini' => 'gemini',
+            'codex'  => 'openai',
+            default  => null,
+        };
+        if ($catalogProvider === null) {
+            return $seedModels;
+        }
+        if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            return $seedModels;
+        }
+
+        try {
+            $rows = \SuperAgent\Providers\ModelCatalog::modelsFor($catalogProvider);
+        } catch (\Throwable) {
+            return $seedModels;
+        }
+
+        $allowPrefix = match ($key) {
+            'claude' => 'claude-',
+            'gemini' => 'gemini',
+            'codex'  => 'gpt-',
+            default  => '',
+        };
+
+        $extra = [];
+        foreach ($rows as $row) {
+            $id = (string) ($row['id'] ?? '');
+            if ($id === '' || ($allowPrefix && !str_starts_with($id, $allowPrefix))) {
+                continue;
+            }
+            if (!in_array($id, $seedModels, true)) {
+                $extra[] = $id;
+            }
+        }
+        return array_values(array_unique(array_merge($seedModels, $extra)));
+    }
+
+    /**
+     * Localized "inherit default" placeholder for model-picker dropdowns.
+     * Falls back to an English literal when the translator isn't bootable
+     * (e.g. tests that don't register the lang files) so the UI never
+     * shows a raw translation key.
+     */
+    protected function defaultPlaceholder(): string
+    {
+        if (function_exists('trans')) {
+            try {
+                $text = trans('super-ai-core::messages.inherit_default');
+                if (is_string($text) && $text !== '' && $text !== 'super-ai-core::messages.inherit_default') {
+                    return $text;
+                }
+            } catch (\Throwable) {
+                // fall through
+            }
+        }
+        return '(inherit default)';
     }
 }

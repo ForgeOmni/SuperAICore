@@ -60,11 +60,30 @@ class ClaudeModelResolver
     /**
      * Resolve a family alias or explicit ID to the concrete model ID
      * the API will accept. Unknown input is passed through unchanged.
+     *
+     * Resolution order:
+     *   1. Local FAMILIES table (authoritative for `opus`/`sonnet`/`haiku`).
+     *   2. SuperAgent's ModelCatalog (picks up aliases added via
+     *      `superagent models update` — e.g. `claude-opus-4`).
+     *   3. Pass through unchanged.
      */
     public static function resolve(?string $model): ?string
     {
         if ($model === null || $model === '') return null;
-        return self::FAMILIES[$model] ?? $model;
+        if (isset(self::FAMILIES[$model])) {
+            return self::FAMILIES[$model];
+        }
+        if (class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            try {
+                $resolved = \SuperAgent\Providers\ModelCatalog::resolveAlias($model);
+                if ($resolved !== null && str_starts_with($resolved, 'claude-')) {
+                    return $resolved;
+                }
+            } catch (\Throwable) {
+                // fall through
+            }
+        }
+        return $model;
     }
 
     /**

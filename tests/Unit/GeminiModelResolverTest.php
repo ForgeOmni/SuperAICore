@@ -44,4 +44,27 @@ class GeminiModelResolverTest extends TestCase
             $this->assertArrayHasKey('display_name', $entry);
         }
     }
+
+    public function test_model_catalog_fallback_resolves_gemini_shorthand(): void
+    {
+        if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            $this->markTestSkipped('SuperAgent ModelCatalog not installed');
+        }
+
+        // `gemini` (bare) is NOT in our local ALIASES, but the bundled catalog
+        // lists it as an alias for gemini-2.0-flash. The resolver should fall
+        // through and return a gemini-prefixed id.
+        $resolved = GeminiModelResolver::resolve('gemini');
+        $this->assertNotNull($resolved);
+        $this->assertStringStartsWith('gemini', (string) $resolved);
+        // And it should NOT be the bare input (verifying we actually resolved)
+        $this->assertNotSame('gemini', $resolved);
+    }
+
+    public function test_resolver_does_not_leak_non_gemini_catalog_matches(): void
+    {
+        // `opus` resolves to a Claude model in the shared catalog. Gemini's
+        // resolver must not return a Claude id — it should pass through.
+        $this->assertSame('opus', GeminiModelResolver::resolve('opus'));
+    }
 }

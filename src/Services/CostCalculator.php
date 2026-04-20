@@ -74,6 +74,11 @@ class CostCalculator
      *   1. Backend-prefixed key (e.g. "copilot:claude-sonnet-4-5")
      *   2. Exact model id
      *   3. Longest-prefix match against any pricing key
+     *   4. SuperAgent ModelCatalog (bundled resources/models.json + user
+     *      override at ~/.superagent/models.json). Users who run
+     *      `superagent models update` immediately get accurate pricing
+     *      for every Anthropic/OpenAI/Gemini/Bedrock/OpenRouter row
+     *      without republishing this config.
      *
      * This avoids the previous bug where `gpt-5` matched `gpt-4o` because
      * both started with "gpt".
@@ -106,7 +111,31 @@ class CostCalculator
                 $bestLen = strlen($key);
             }
         }
-        return $best;
+        if ($best !== null) {
+            return $best;
+        }
+
+        return $this->pricingFromCatalog($model);
+    }
+
+    /**
+     * Consult SuperAgent's ModelCatalog (bundled + user override) for a
+     * model that isn't in the host's `model_pricing` config. Returns null
+     * if the class isn't available, the model is unknown, or the entry
+     * lacks input/output rates.
+     *
+     * @return array{input:float,output:float}|null
+     */
+    private function pricingFromCatalog(string $model): ?array
+    {
+        if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            return null;
+        }
+        try {
+            return \SuperAgent\Providers\ModelCatalog::pricing($model);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function backendToEngine(string $backend): ?string

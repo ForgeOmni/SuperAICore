@@ -110,7 +110,7 @@ final class EngineCatalogTest extends TestCase
         $opts = $catalog->modelOptions('claude');
 
         // Placeholder always first
-        $this->assertSame('— 继承默认 —', $opts['']);
+        $this->assertSame('(inherit default)', $opts['']);
         // Family aliases from ClaudeModelResolver::families()
         $this->assertArrayHasKey('sonnet', $opts);
         $this->assertStringContainsString('Sonnet', $opts['sonnet']);
@@ -124,7 +124,7 @@ final class EngineCatalogTest extends TestCase
         $opts = $catalog->modelOptions('copilot');
 
         // CopilotModelResolver ships family aliases alongside the full catalog.
-        $this->assertSame('— 继承默认 —', $opts['']);
+        $this->assertSame('(inherit default)', $opts['']);
         $this->assertArrayHasKey('claude-sonnet-4.6', $opts);
         $this->assertArrayHasKey('gpt-5.1', $opts);
         // At least one family alias should be present (shape, not exact key).
@@ -175,6 +175,82 @@ final class EngineCatalogTest extends TestCase
         $catalog = new EngineCatalog([]);
         $opts = $catalog->modelOptions('nope');
 
+        // Without a Laravel translator registered (plain PHPUnit parent),
+        // modelOptions() falls back to the English literal. The Laravel-
+        // integration test suite covers the translated path via Orchestra.
+        $this->assertCount(1, $opts);
+        $this->assertArrayHasKey('', $opts);
+        $this->assertSame('(inherit default)', $opts['']);
+    }
+
+    public function test_model_options_accepts_explicit_placeholder(): void
+    {
+        $catalog = new EngineCatalog([]);
+        $opts = $catalog->modelOptions('nope', true, '— 继承默认 —');
         $this->assertSame(['' => '— 继承默认 —'], $opts);
+    }
+
+    public function test_claude_seed_is_expanded_with_catalog_models(): void
+    {
+        if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            $this->markTestSkipped('SuperAgent ModelCatalog not installed');
+        }
+
+        $catalog = new EngineCatalog([]);
+        $models = $catalog->modelsFor('claude');
+
+        // Seed list is preserved up front — existing callers never break.
+        $this->assertContains('claude-opus-4-6', $models);
+        // Catalog-only id (not in EngineCatalog::seed()) appears too.
+        $this->assertContains('claude-opus-4-7', $models);
+        // Non-claude catalog rows never leak in (filter by `claude-` prefix).
+        foreach ($models as $id) {
+            $this->assertStringStartsWith('claude', $id);
+        }
+    }
+
+    public function test_gemini_seed_is_expanded_with_catalog_models(): void
+    {
+        if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            $this->markTestSkipped('SuperAgent ModelCatalog not installed');
+        }
+
+        $catalog = new EngineCatalog([]);
+        $models = $catalog->modelsFor('gemini');
+
+        $this->assertContains('gemini-2.5-pro', $models);
+        // `gemini-2.0-flash` ships in the catalog but not in the local seed.
+        $this->assertContains('gemini-2.0-flash', $models);
+    }
+
+    public function test_host_available_models_override_wins_over_catalog_expansion(): void
+    {
+        // When the host app publishes its own `available_models`, we never
+        // augment it with catalog entries — host config is authoritative.
+        $catalog = new EngineCatalog([
+            'claude' => ['available_models' => ['claude-custom-fine-tune']],
+        ]);
+        $this->assertSame(
+            ['claude-custom-fine-tune'],
+            $catalog->modelsFor('claude')
+        );
+    }
+
+    public function test_copilot_models_stay_untainted_by_catalog_expansion(): void
+    {
+        $catalog = new EngineCatalog([]);
+        $models = $catalog->modelsFor('copilot');
+
+        // Copilot's seed uses dot separators. Catalog expansion keys off the
+        // engine name, and `copilot` isn't in the allow-list — so no catalog
+        // ids should have been appended. Verify by checking every dash-form
+        // Claude ID from the bundled catalog (e.g. `claude-opus-4-7`,
+        // `claude-sonnet-4-6`) is absent.
+        $this->assertNotContains('claude-opus-4-7', $models);
+        $this->assertNotContains('claude-sonnet-4-6', $models);
+        $this->assertNotContains('claude-haiku-4-5-20251001', $models);
+        // Seed dot-form IDs remain.
+        $this->assertContains('claude-sonnet-4.6', $models);
+        $this->assertContains('gpt-5.1', $models);
     }
 }

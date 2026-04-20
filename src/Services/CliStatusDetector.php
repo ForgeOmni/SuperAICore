@@ -15,26 +15,86 @@ use Symfony\Component\Process\Process;
  */
 class CliStatusDetector
 {
+    /**
+     * Built-in backends known to this class. Host-registered CLI engines
+     * (added via `super-ai-core.engines` config) are merged in at runtime
+     * by `resolveBackends()` so `cli:status` / `/providers` pick them up
+     * without this const being rewritten.
+     */
     const BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'superagent'];
 
     public static function all(): array
     {
-        return [
-            'claude' => self::detectBinary('claude'),
-            'codex' => self::detectBinary('codex'),
-            'gemini' => self::detectBinary('gemini'),
-            'copilot' => self::detectBinary('copilot'),
-            'superagent' => self::superagentStatus(),
-        ];
+        $out = [];
+        foreach (self::resolveBackends() as $backend) {
+            $out[$backend] = self::detect($backend);
+        }
+        return $out;
     }
 
     public static function detect(string $backend): array
     {
-        return match ($backend) {
-            'superagent' => self::superagentStatus(),
-            'claude', 'codex', 'gemini', 'copilot' => self::detectBinary($backend),
-            default => ['installed' => false, 'backend' => $backend],
-        };
+        if ($backend === 'superagent') {
+            return self::superagentStatus();
+        }
+        // Built-in CLI engines dispatch to detectBinary() directly so we don't
+        // pay for an EngineCatalog lookup on the hot path. Everything else
+        // (host-registered CLI engines) must live in the catalog with
+        // `is_cli: true` + a `cli_binary` to be probed; anything else is
+        // reported as not-installed so the cli:status row still renders.
+        if (in_array($backend, ['claude', 'codex', 'gemini', 'copilot'], true)) {
+            return self::detectBinary($backend);
+        }
+        $engine = self::catalogEngine($backend);
+        if ($engine && ($engine->isCli ?? false) && !empty($engine->cliBinary)) {
+            return self::detectBinary((string) $engine->cliBinary);
+        }
+        return ['installed' => false, 'backend' => $backend];
+    }
+
+    /**
+     * Full list of backends to probe: built-in CLIs + any extra CLI engines
+     * a host registered via config. Returns built-ins first so the render
+     * order stays stable across installs.
+     *
+     * @return string[]
+     */
+    protected static function resolveBackends(): array
+    {
+        $backends = self::BACKENDS;
+        foreach (self::catalogKeys() as $key) {
+            if (in_array($key, $backends, true)) continue;
+            $engine = self::catalogEngine($key);
+            if ($engine && ($engine->isCli ?? false)) {
+                $backends[] = $key;
+            }
+        }
+        return $backends;
+    }
+
+    /** @return string[] */
+    protected static function catalogKeys(): array
+    {
+        if (!function_exists('app') || !class_exists(\SuperAICore\Services\EngineCatalog::class)) {
+            return [];
+        }
+        try {
+            return array_keys(app(\SuperAICore\Services\EngineCatalog::class)->all());
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    protected static function catalogEngine(string $key): ?\SuperAICore\Support\EngineDescriptor
+    {
+        if (!function_exists('app') || !class_exists(\SuperAICore\Services\EngineCatalog::class)) {
+            return null;
+        }
+        try {
+            return app(\SuperAICore\Services\EngineCatalog::class)->get($key);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     protected static function detectBinary(string $binary): array
@@ -147,6 +207,13 @@ class CliStatusDetector
                 'method' => str_contains($normalized, 'chatgpt') ? 'ChatGPT' : null,
             ];
         }
+        if ($binary === 'gemini') {
+            // Gemini CLI has no `auth status` subcommand. Read the credential
+            // files it writes on first `gemini login` directly — same discovery
+            // order as SuperAgent\Auth\GeminiCliCredentials so the two stay in
+            // sync. Falls back to env-var API keys when no file is present.
+            return self::detectGeminiAuth($env);
+        }
         if ($binary === 'copilot') {
             // Copilot has no first-class `auth status` — keychain/token state lives
             // inside the binary. Best heuristic: if any of the documented env vars is
@@ -178,6 +245,71 @@ class CliStatusDetector
             return $result;
         }
         return null;
+    }
+
+    /**
+     * Read Gemini CLI credentials from the files it writes on `gemini login`.
+     * Prefers SuperAgent\Auth\GeminiCliCredentials when available (so the
+     * normalization stays consistent with `superagent auth login gemini`);
+     * falls back to a local probe of the same path list otherwise.
+     *
+     * @return array{loggedIn:bool,status:?string,method:?string,expires_at:?int}
+     */
+    protected static function detectGeminiAuth(array $env): array
+    {
+        $home = $env['HOME'] ?? '';
+        $envKey = $env['GEMINI_API_KEY'] ?? $env['GOOGLE_API_KEY'] ?? null;
+
+        if ($home && class_exists(\SuperAgent\Auth\GeminiCliCredentials::class)) {
+            try {
+                $creds = (new \SuperAgent\Auth\GeminiCliCredentials(
+                    $home . '/.gemini/oauth_creds.json',
+                    $home . '/.gemini/credentials.json',
+                    $home . '/.gemini/settings.json',
+                ))->read();
+                if (is_array($creds)) {
+                    $mode = (string) ($creds['mode'] ?? '');
+                    return [
+                        'loggedIn'   => true,
+                        'status'     => (string) ($creds['source'] ?? $mode),
+                        'method'     => $mode ?: null,
+                        'expires_at' => $creds['expires_at'] ?? null,
+                    ];
+                }
+            } catch (\Throwable) {
+                // fall through
+            }
+        }
+
+        // Local fallback: check the same files without the SuperAgent helper.
+        if ($home) {
+            foreach (['/.gemini/oauth_creds.json', '/.gemini/credentials.json'] as $rel) {
+                if (is_file($home . $rel)) {
+                    return [
+                        'loggedIn'   => true,
+                        'status'     => ltrim($rel, '/'),
+                        'method'     => 'oauth',
+                        'expires_at' => null,
+                    ];
+                }
+            }
+        }
+
+        if ($envKey) {
+            return [
+                'loggedIn'   => true,
+                'status'     => 'env-key',
+                'method'     => 'api_key',
+                'expires_at' => null,
+            ];
+        }
+
+        return [
+            'loggedIn'   => false,
+            'status'     => 'not-logged-in',
+            'method'     => null,
+            'expires_at' => null,
+        ];
     }
 
     /** @var array<string,bool> */

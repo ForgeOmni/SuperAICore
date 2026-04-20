@@ -19,9 +19,14 @@ class BackendRegistry
     /** @var Backend[] */
     protected array $backends = [];
 
-    public function __construct(?LoggerInterface $logger = null, array $config = [])
-    {
+    public function __construct(
+        ?LoggerInterface $logger = null,
+        array $config = [],
+        ?callable $superagentAvailable = null,
+    ) {
         $config = $config ?: (function_exists('config') ? (config('super-ai-core.backends') ?? []) : []);
+        // Injectable for tests; prod callers pass nothing and get the real detector.
+        $sdkAvailable = $superagentAvailable ?? [SuperAgentDetector::class, 'isAvailable'];
 
         if ($config['anthropic_api']['enabled'] ?? true) {
             $this->register(new AnthropicApiBackend($logger));
@@ -31,7 +36,7 @@ class BackendRegistry
         }
         // SuperAgent backend is hidden entirely when the forgeomni/superagent
         // SDK is not installed, regardless of config — avoids a dead option.
-        if (($config['superagent']['enabled'] ?? true) && SuperAgentDetector::isAvailable()) {
+        if (($config['superagent']['enabled'] ?? true) && $sdkAvailable()) {
             $this->register(new SuperAgentBackend($logger));
         }
         if ($config['claude_cli']['enabled'] ?? true) {

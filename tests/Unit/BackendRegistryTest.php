@@ -56,15 +56,27 @@ class BackendRegistryTest extends TestCase
 
     public function test_superagent_is_hidden_when_sdk_missing_even_with_config_enabled(): void
     {
-        if (SuperAgentDetector::isAvailable()) {
-            $this->markTestSkipped('SuperAgent SDK is installed in this test matrix; skipping negative-path assertion.');
-        }
-
-        $registry = new BackendRegistry(null, [
-            'superagent' => ['enabled' => true],
-        ]);
+        // Inject a "SDK missing" detector — composer requires the SDK as a
+        // hard dep so class_exists is always true in the test matrix, but
+        // the constructor still honours a callable that reports unavailable.
+        $registry = new BackendRegistry(
+            null,
+            ['superagent' => ['enabled' => true]],
+            fn() => false,
+        );
 
         $this->assertNotContains('superagent', $registry->names());
+    }
+
+    public function test_superagent_registered_when_sdk_available_and_enabled(): void
+    {
+        $registry = new BackendRegistry(
+            null,
+            ['superagent' => ['enabled' => true]],
+            fn() => true,
+        );
+
+        $this->assertContains('superagent', $registry->names());
     }
 
     public function test_get_returns_null_for_unknown_backend(): void

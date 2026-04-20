@@ -27,10 +27,33 @@ class GeminiModelResolver
         ['slug' => 'gemini-2.5-flash-lite', 'display_name' => 'Gemini 2.5 Flash Lite'],
     ];
 
+    /**
+     * Resolve a family alias or explicit ID to the concrete model ID.
+     *
+     * Resolution order:
+     *   1. Local ALIASES table (`pro` / `flash` / `flash-lite`).
+     *   2. SuperAgent ModelCatalog — picks up aliases like `gemini` /
+     *      `gemini-2` / `gemini-pro` that the bundled catalog ships and
+     *      that `superagent models update` can expand.
+     *   3. Pass through unchanged.
+     */
     public static function resolve(?string $model): ?string
     {
         if ($model === null || $model === '') return null;
-        return self::ALIASES[$model] ?? $model;
+        if (isset(self::ALIASES[$model])) {
+            return self::ALIASES[$model];
+        }
+        if (class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            try {
+                $resolved = \SuperAgent\Providers\ModelCatalog::resolveAlias($model);
+                if ($resolved !== null && str_starts_with($resolved, 'gemini')) {
+                    return $resolved;
+                }
+            } catch (\Throwable) {
+                // fall through
+            }
+        }
+        return $model;
     }
 
     public static function defaultFor(string $family = 'pro'): string

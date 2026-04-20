@@ -27,5 +27,17 @@ foreach ($autoloadCandidates as $candidate) {
 
 use SuperAICore\Console\Application;
 
+// Opt-in catalog refresh. No-op unless SUPERAGENT_MODELS_AUTO_UPDATE=1 AND
+// SUPERAGENT_MODELS_URL is set AND the user override is older than 7 days.
+// Network failures are swallowed inside SuperAgent so a dead remote never
+// blocks CLI startup.
+if (class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+    try {
+        \SuperAgent\Providers\ModelCatalog::maybeAutoUpdate();
+    } catch (\Throwable) {
+        // keep CLI startup resilient
+    }
+}
+
 $app = new Application();
 $app->run();

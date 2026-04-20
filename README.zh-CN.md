@@ -35,6 +35,8 @@
   - **SuperAgent SDK**：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`
 - 五个引擎在 Dispatcher 内部扇出成八个适配器（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— provider 为 `builtin` 时走 CLI 适配器，持有 API Key 时走 HTTP 适配器。这是实现细节，一般无需关心；如需低层直调，CLI 也能直接指定这些适配器名。
 - **EngineCatalog 单一数据源** —— 引擎的标签、图标、Dispatcher 后端、支持的 provider 类型、可用模型，以及声明式的 **`ProcessSpec`**（二进制名、版本/登录状态参数、prompt/output/model flag、默认 flag）都集中在一个 PHP 服务里。新增一个 CLI 引擎只需改 `EngineCatalog::seed()`，providers UI、进程扫描、开关矩阵、默认 CLI 命令形状全部自动跟进。同一份 catalog 也通过 `modelOptions($key)` / `modelAliases($key)`（0.5.9+）驱动宿主应用的模型下拉，宿主不再需要针对每个 backend 写 `switch` —— 新引擎的模型自动出现在所有 picker 里。宿主应用可通过 `super-ai-core.engines` 配置覆盖每个引擎字段（包括 `process_spec`）。
+- **动态模型目录**（0.6.0+）—— `CostCalculator`、`ClaudeModelResolver`、`GeminiModelResolver` 和 `EngineCatalog::seed()` 的 `available_models` 都会回退到 SuperAgent 的 `ModelCatalog`（内置 `resources/models.json` + 用户覆盖 `~/.superagent/models.json`）。跑 `superagent models update`（或新增的 `super-ai-core:models update`）即可刷新所有 Anthropic / OpenAI / Gemini / Bedrock / OpenRouter 模型的价格和 ID 列表，不需要 `composer update` 或 `vendor:publish`。宿主显式发布的 `model_pricing` 和 `available_models` 仍然优先生效。
+- **`/providers` 显示 Gemini OAuth 登录态**（0.6.0+）—— `CliStatusDetector::detectAuth('gemini')` 通过 SuperAgent 的 `GeminiCliCredentials` 读取 `~/.gemini/oauth_creds.json`，回退到 `GEMINI_API_KEY` / `GOOGLE_API_KEY`，在 provider 卡片上按 Claude Code / Codex 同样的方式显示 `{loggedIn, method, expires_at}`。
 - **CliProcessBuilderRegistry** —— 基于引擎的 `ProcessSpec` 组装 `argv`（`build($key, ['prompt' => …, 'model' => …])`）。默认 builder 覆盖全部内置引擎；宿主可 `register($key, $callable)` 无需 fork 就替换成自定义形状。另暴露 `versionCommand()` / `authStatusCommand()` 给状态探测。以单例注册。
 - **Provider / Service / Routing 模型** —— 将抽象能力（`summarize`、`translate`、`code_review` 等）映射到具体服务，再将服务绑定到 provider 凭证。
 - **MCP 服务器管理器** —— 在后台 UI 中安装、启用、配置 MCP 服务器。
@@ -129,6 +131,11 @@ Claude Code 的 skill（`.claude/skills/<name>/SKILL.md`）和 sub-agent（`.cla
 # 一键安装缺失的引擎 CLI（显式 —— 永不自动触发）
 ./vendor/bin/superaicore cli:status                           # 安装/版本/登录/提示一览
 ./vendor/bin/superaicore cli:install --all-missing            # npm/brew/script 安装，默认带确认
+
+# 查看或刷新模型目录（0.6.0+）
+./vendor/bin/superaicore super-ai-core:models status                     # 来源、用户覆盖 mtime、加载行数
+./vendor/bin/superaicore super-ai-core:models list --provider=anthropic  # 每百万 token 的价格 + 别名
+./vendor/bin/superaicore super-ai-core:models update                     # 拉取 $SUPERAGENT_MODELS_URL
 ```
 
 关键行为：

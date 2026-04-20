@@ -12,6 +12,7 @@ use SuperAICore\Console\Commands\CopilotSyncCommand;
 use SuperAICore\Console\Commands\CopilotSyncHooksCommand;
 use SuperAICore\Console\Commands\GeminiSyncCommand;
 use SuperAICore\Console\Commands\ListBackendsCommand;
+use SuperAICore\Console\Commands\ModelsCommand;
 use SuperAICore\Console\Commands\SkillListCommand;
 use SuperAICore\Console\Commands\SkillRunCommand;
 use Symfony\Component\Console\Application as SymfonyApplication;
@@ -39,5 +40,6 @@ class Application extends SymfonyApplication
         $this->add(new CopilotSyncHooksCommand());
         $this->add(new CliStatusCommand());
         $this->add(new CliInstallCommand());
+        $this->add(new ModelsCommand());
     }
 }

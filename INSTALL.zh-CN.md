@@ -101,6 +101,10 @@ GEMINI_CLI_BIN=gemini
 # 0.5.8+：cli:status 中 copilot 行的可选 liveness 探测，默认关闭
 # （每次状态轮询 spawn 一次 `copilot --help` 成本过高）。
 SUPERAICORE_COPILOT_PROBE=false
+# 0.6.0+：CLI 启动时可选的模型目录自动刷新。两个都要设置才会触发，
+# 且本地覆盖文件超过 7 天才会真正执行；网络错误会被吞掉。
+# SUPERAGENT_MODELS_URL=https://your-cdn/models.json
+# SUPERAGENT_MODELS_AUTO_UPDATE=1
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com
@@ -162,6 +166,18 @@ npm i -g @github/copilot   # 然后 `copilot login`（OAuth device flow）
 ```bash
 ./vendor/bin/superaicore cli:status                 # 看哪几个缺
 ./vendor/bin/superaicore cli:install --all-missing  # 一次装齐（带确认提示）
+```
+
+### 模型目录冒烟测试（0.6.0+）
+
+每当宿主 config 没有枚举某个模型，`CostCalculator` 与各引擎的 `ModelResolver` 会回退到 SuperAgent 的模型目录。不用改 `composer.json` 也不用 `config/super-ai-core.php`，直接查看已加载内容并刷新用户覆盖文件：
+
+```bash
+./vendor/bin/superaicore super-ai-core:models status                       # 内置 / 用户覆盖 / 远程 URL + 过期提示
+./vendor/bin/superaicore super-ai-core:models list --provider=anthropic    # 每百万 token 价格 + 别名
+./vendor/bin/superaicore super-ai-core:models update                       # 从 SUPERAGENT_MODELS_URL 拉到 ~/.superagent/models.json
+./vendor/bin/superaicore super-ai-core:models update --url https://…       # 本次运行临时指定 URL
+./vendor/bin/superaicore super-ai-core:models reset -y                     # 删除用户覆盖文件
 ```
 
 ## 6. 打开后台 UI

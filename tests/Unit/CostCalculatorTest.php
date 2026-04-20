@@ -91,4 +91,44 @@ class CostCalculatorTest extends TestCase
         $calc = new CostCalculator();
         $this->assertEqualsWithDelta(20.0, $calc->calculate('gpt-5', 1_000_000, 1_000_000), 0.0001);
     }
+
+    public function test_unknown_model_falls_through_to_superagent_model_catalog(): void
+    {
+        if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            $this->markTestSkipped('SuperAgent ModelCatalog not installed');
+        }
+
+        // Pick a bundled catalog row that neither the seeded config keys nor
+        // their prefixes match. `claude-3-haiku-20240307` is ideal:
+        //   - config has `claude-opus-*`, `claude-sonnet-*`, `claude-haiku-4-5*` — none match
+        //   - bundled catalog ships this row at input 0.25, output 1.25
+        //   - 1M + 1M → 0.25 + 1.25 = 1.50
+        $calc = new CostCalculator([
+            'sentinel-so-constructor-does-not-fall-back-to-config' => ['input' => 1.0, 'output' => 1.0],
+        ]);
+        $cost = $calc->calculate('claude-3-haiku-20240307', 1_000_000, 1_000_000);
+        $this->assertEqualsWithDelta(1.50, $cost, 0.01, 'ModelCatalog fallback should price claude-3-haiku-20240307');
+    }
+
+    public function test_config_pricing_wins_over_catalog_fallback(): void
+    {
+        // Even if the catalog would resolve this, an explicit config override
+        // is authoritative — no surprise swaps when a host publishes prices.
+        $calc = new CostCalculator([
+            'claude-3-haiku-20240307' => ['input' => 999.0, 'output' => 999.0],
+        ]);
+        $this->assertEqualsWithDelta(
+            1998.0,
+            $calc->calculate('claude-3-haiku-20240307', 1_000_000, 1_000_000),
+            0.0001
+        );
+    }
+
+    public function test_catalog_fallback_returns_zero_when_neither_source_knows_model(): void
+    {
+        $calc = new CostCalculator([
+            'sentinel-key' => ['input' => 1.0, 'output' => 1.0],
+        ]);
+        $this->assertSame(0.0, $calc->calculate('definitely-not-a-real-model-anywhere-xyz', 1_000_000, 1_000_000));
+    }
 }

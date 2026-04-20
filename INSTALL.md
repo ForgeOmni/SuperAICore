@@ -104,6 +104,11 @@ AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
 # Opt-in liveness probe for `cli:status` copilot row (0.5.8+). Off by
 # default — spawning `copilot --help` on every status poll is wasteful.
 SUPERAICORE_COPILOT_PROBE=false
+# Optional model-catalog auto-refresh at CLI startup (0.6.0+). Both must
+# be set for the refresh to fire; it only runs when the local override is
+# older than 7 days and network failures are swallowed.
+# SUPERAGENT_MODELS_URL=https://your-cdn/models.json
+# SUPERAGENT_MODELS_AUTO_UPDATE=1
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com
@@ -165,6 +170,18 @@ One-shot alternative (recommended) — let superaicore detect and install:
 ```bash
 ./vendor/bin/superaicore cli:status                 # see what's missing
 ./vendor/bin/superaicore cli:install --all-missing  # install everything (confirmation by default)
+```
+
+### Model catalog smoke test (0.6.0+)
+
+`CostCalculator` and the per-engine `ModelResolver`s fall through to the SuperAgent model catalog whenever the host config doesn't enumerate a model. Inspect what's loaded and refresh the user override without touching `composer.json` or `config/super-ai-core.php`:
+
+```bash
+./vendor/bin/superaicore super-ai-core:models status                       # bundled / user-override / remote URL + staleness
+./vendor/bin/superaicore super-ai-core:models list --provider=anthropic    # per-1M token pricing + aliases
+./vendor/bin/superaicore super-ai-core:models update                       # fetch SUPERAGENT_MODELS_URL → ~/.superagent/models.json
+./vendor/bin/superaicore super-ai-core:models update --url https://…       # ad-hoc URL for this one run
+./vendor/bin/superaicore super-ai-core:models reset -y                     # delete the user override
 ```
 
 ## 6. Open the admin UI

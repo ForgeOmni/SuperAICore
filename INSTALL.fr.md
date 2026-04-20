@@ -102,6 +102,12 @@ GEMINI_CLI_BIN=gemini
 # (0.5.8+). Désactivée par défaut — un `copilot --help` à chaque sondage
 # de statut serait du gaspillage.
 SUPERAICORE_COPILOT_PROBE=false
+# Rafraîchissement automatique optionnel du catalogue de modèles au
+# démarrage de la CLI (0.6.0+). Les deux variables doivent être définies ;
+# ne s'exécute que si l'override local a plus de 7 jours, les erreurs
+# réseau sont silencieusement ignorées.
+# SUPERAGENT_MODELS_URL=https://your-cdn/models.json
+# SUPERAGENT_MODELS_AUTO_UPDATE=1
 ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com
@@ -159,6 +165,18 @@ Raccourci en une commande (recommandé) — laissez superaicore détecter et ins
 ```bash
 ./vendor/bin/superaicore cli:status                 # voir ce qui manque
 ./vendor/bin/superaicore cli:install --all-missing  # tout installer (confirmation par défaut)
+```
+
+### Test rapide du catalogue de modèles (0.6.0+)
+
+`CostCalculator` et les `ModelResolver` de chaque moteur se rabattent sur le catalogue SuperAgent chaque fois que la config hôte n'énumère pas un modèle. Inspectez ce qui est chargé et rafraîchissez l'override utilisateur sans toucher à `composer.json` ni à `config/super-ai-core.php` :
+
+```bash
+./vendor/bin/superaicore super-ai-core:models status                       # embarqué / override utilisateur / URL distante + obsolescence
+./vendor/bin/superaicore super-ai-core:models list --provider=anthropic    # prix par 1M tokens + alias
+./vendor/bin/superaicore super-ai-core:models update                       # récupère SUPERAGENT_MODELS_URL → ~/.superagent/models.json
+./vendor/bin/superaicore super-ai-core:models update --url https://…       # URL ad hoc pour cette exécution
+./vendor/bin/superaicore super-ai-core:models reset -y                     # supprimer l'override utilisateur
 ```
 
 ## 6. Ouvrir l'interface d'administration
