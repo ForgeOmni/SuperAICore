@@ -304,7 +304,46 @@ Quand SuperAICore ajoute plus tard un nouveau type en amont (par ex. `TYPE_ANTHR
 
 Les apps hôtes qui dupliquaient avant la matrice des types de provider dans leurs propres contrôleurs/runners (le `IntegrationController::PROVIDER_TYPES` + `ClaudeRunner::providerEnvVars()` de SuperTeam avant 0.6.2) peuvent les **remplacer par une délégation d'une ligne vers `ProviderTypeRegistry` + `ProviderEnvBuilder`**. Voir la section « Host-app migration » de [CHANGELOG.md](CHANGELOG.md) pour les snippets avant/après.
 
-## 10. Mise à jour
+## 10. Enregistrement automatique d'usage depuis les runners (0.6.5+)
+
+Si votre hôte a une classe qui utilise le trait `Runner\Concerns\MonitoredProcess` pour lancer des sous-processus CLI (le `ClaudeRunner` de SuperTeam est l'exemple canonique), vous pouvez basculer n'importe quelle spawn-path vers l'enregistrement automatique dans `ai_usage_logs` en remplaçant `runMonitored()` par `runMonitoredAndRecord()`. La nouvelle variante bufférise stdout, le parse avec `CliOutputParser` à la sortie, et appelle `UsageRecorder::record()` avec les compteurs de tokens récupérés — un seul appel remplace les 20–40 lignes de glue parser + enregistreur que la plupart des runners hôtes finissent par écrire par backend.
+
+```php
+use Symfony\Component\Process\Process;
+
+class MyRunner {
+    use \SuperAICore\Runner\Concerns\MonitoredProcess;
+
+    public function run(Task $task): int
+    {
+        $process = Process::fromShellCommandline(
+            'claude -p "…" --output-format=stream-json --verbose'
+        );
+
+        // runMonitored() — spawn + enregistrement dans le moniteur. À utiliser
+        //   pour les runs dont vous ne voulez pas toucher le format de sortie.
+        // runMonitoredAndRecord() — idem, PLUS enregistrement d'usage à la sortie.
+        return $this->runMonitoredAndRecord(
+            process:         $process,
+            backend:         'claude_cli',
+            commandSummary:  'claude -p "review" --output-format=stream-json',
+            externalLabel:   "task:{$task->id}",
+            engine:          'claude',          // pilote la sélection CliOutputParser
+            context:         [
+                'task_type'  => 'tasks.run',
+                'capability' => 'agent_spawn',
+                'user_id'    => $task->user_id,
+                'provider_id'=> $task->provider_id,
+                'metadata'   => ['task_id' => $task->id],
+            ],
+        );
+    }
+}
+```
+
+Le code de sortie du CLI est toujours renvoyé tel quel. Si `CliOutputParser` ne reconnaît pas le format du flux (fréquent pour les sorties texte brut Codex / Copilot), aucune ligne n'est écrite et une note `debug` est émise — c'est opt-in précisément pour que l'adoption ne casse jamais silencieusement un runner dont le format n'est pas encore du stream-json.
+
+## 11. Mise à jour
 
 ```bash
 composer update forgeomni/superaicore

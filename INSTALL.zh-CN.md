@@ -297,7 +297,45 @@ return [
 
 宿主应用过去复制过 SuperAICore provider-type 矩阵的（SuperTeam 0.6.2 之前在 `IntegrationController::PROVIDER_TYPES` + `ClaudeRunner::providerEnvVars()` 里维护过），现在可以把那些拷贝**替换为对 `ProviderTypeRegistry` + `ProviderEnvBuilder` 的一行代理**。[CHANGELOG.md](CHANGELOG.md) 的 "Host-app migration" 一节有 before/after 的代码片段。
 
-## 10. 升级
+## 10. 从 runner 类自动记录 usage（0.6.5+）
+
+如果宿主有用 `Runner\Concerns\MonitoredProcess` trait spawn CLI 子进程的类（SuperTeam 的 `ClaudeRunner` 就是典型例子），任何一条 spawn 路径都可以把 `runMonitored()` 换成 `runMonitoredAndRecord()` 来自动写 `ai_usage_logs`。新方法会 buffer stdout、退出时用 `CliOutputParser` 解析、然后调 `UsageRecorder::record()` —— 一次方法调用替掉宿主 runner 每个 backend 通常要写的 20–40 行 parser + recorder 胶水。
+
+```php
+use Symfony\Component\Process\Process;
+
+class MyRunner {
+    use \SuperAICore\Runner\Concerns\MonitoredProcess;
+
+    public function run(Task $task): int
+    {
+        $process = Process::fromShellCommandline(
+            'claude -p "…" --output-format=stream-json --verbose'
+        );
+
+        // runMonitored() —— spawn + 注册到进程监控。旧行为,不碰输出格式。
+        // runMonitoredAndRecord() —— 同上,外加退出时自动记一条 usage。
+        return $this->runMonitoredAndRecord(
+            process:         $process,
+            backend:         'claude_cli',
+            commandSummary:  'claude -p "review" --output-format=stream-json',
+            externalLabel:   "task:{$task->id}",
+            engine:          'claude',          // 驱动 CliOutputParser 选择
+            context:         [
+                'task_type'  => 'tasks.run',
+                'capability' => 'agent_spawn',
+                'user_id'    => $task->user_id,
+                'provider_id'=> $task->provider_id,
+                'metadata'   => ['task_id' => $task->id],
+            ],
+        );
+    }
+}
+```
+
+CLI 的 exit code 始终原样返回。如果 `CliOutputParser` 没能匹配当前流的格式(Codex / Copilot 的纯文本输出就会这样),不写任何行、打一条 `debug` 级 log —— 这是 opt-in 设计,就是为了避免静默改变 runner 的既有输出形态。
+
+## 11. 升级
 
 ```bash
 composer update forgeomni/superaicore

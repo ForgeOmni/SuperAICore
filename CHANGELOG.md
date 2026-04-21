@@ -4,9 +4,9 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.3] — 2026-04-21
+## [0.6.5] — 2026-04-21
 
-Small patch tightening the 0.6.2 accounting story. Fixes a Kiro auth-detection bug that reported `not-logged-in` on machines with a valid `~/.kiro/` session, teaches `shadowCalculate()` about Anthropic's cache-token price tiers so heavy-cache Claude calls don't overstate shadow cost by ~10×, prefers the CLI's own `total_cost_usd` over the pricing catalog when the envelope carries it, and tidies the Recent-calls dashboard (Provider / Service column + capability column + filter-state persistence).
+Small patch tightening the 0.6.2 accounting story. Fixes a Kiro auth-detection bug that reported `not-logged-in` on machines with a valid `~/.kiro/` session, teaches `shadowCalculate()` about Anthropic's cache-token price tiers so heavy-cache Claude calls don't overstate shadow cost by ~10×, prefers the CLI's own `total_cost_usd` over the pricing catalog when the envelope carries it, and tidies the Recent-calls dashboard (Provider / Service column + capability column + filter-state persistence). Also adds an opt-in `MonitoredProcess::runMonitoredAndRecord()` helper so host runners can drop one line after a CLI exits and get a fully-populated `ai_usage_logs` row for free.
 
 No breaking changes.
 
@@ -28,6 +28,27 @@ No breaking changes.
 **Usage dashboard: Provider / Service + Capability columns**
 - Recent-calls table on `/super-ai-core/usage` now surfaces the friendly Provider name (or Service name when it's a service-routed call), plus a dedicated `capability` column. Previously operators had to cross-reference `provider_id` / `service_id` against DB rows to answer "which API key ran this?".
 - Filter-state persistence: the `Hide 0-token rows` and `Hide test_connection` toggles were default-on but silently reverted to default on every form submit that un-ticked them (HTML checkboxes don't post when unchecked). A hidden `filters_applied=1` marker now rides along with the form, so an un-ticked box stays un-ticked across reloads.
+
+**`Runner\Concerns\MonitoredProcess::runMonitoredAndRecord()` — opt-in usage recording for runner classes**
+- Variant of the existing `runMonitored()` that buffers stdout in memory, parses it with `CliOutputParser` on exit, and writes an `ai_usage_logs` row through `UsageRecorder`. Host runners (anything using the `MonitoredProcess` trait) can drop one call at the bottom of their spawn path and stop hand-rolling parser + recorder glue:
+  ```php
+  $exitCode = $this->runMonitoredAndRecord(
+      process:         $process,
+      backend:         'claude_cli',
+      commandSummary:  'claude -p "…" --output-format=stream-json',
+      externalLabel:   "task:{$task->id}",
+      engine:          'claude',  // drives CliOutputParser selection
+      context:         [
+          'task_type'  => 'ppt.strategist',
+          'capability' => 'agent_spawn',
+          'user_id'    => auth()->id(),
+          'provider_id'=> $providerId,
+          'metadata'   => ['ppt_job_id' => 42],
+      ],
+  );
+  ```
+- `runMonitored()` (plain-text variant) is untouched — opt-in by design so adopting recording doesn't silently alter the output format a host runner already depends on.
+- Parser failures never propagate: if `CliOutputParser` can't match the engine's output shape (common for plain-text Codex / Copilot runs), no row is written and a `debug`-level log note is emitted instead of throwing. The CLI's actual exit code is always returned untouched.
 
 ### Changed
 
