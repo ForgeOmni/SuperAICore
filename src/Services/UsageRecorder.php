@@ -53,12 +53,15 @@ class UsageRecorder
      *   capability?: ?string,
      *   input_tokens?: int,
      *   output_tokens?: int,
+     *   cache_read_tokens?: int,   Anthropic prompt-cache reads (~10% of input)
+     *   cache_write_tokens?: int,  Anthropic prompt-cache writes (~125% of input)
      *   duration_ms?: ?int,
      *   provider_id?: ?int,
      *   service_id?: ?int,
      *   user_id?: ?int,
      *   metadata?: ?array,
-     *   cost_usd?: ?float,        override — skip calculator
+     *   cost_usd?: ?float,        override — skip calculator (authoritative
+     *                              when the CLI reported total_cost_usd)
      *   shadow_cost_usd?: ?float, override — skip calculator
      * } $data
      */
@@ -72,22 +75,38 @@ class UsageRecorder
 
         $inputTokens = (int) ($data['input_tokens'] ?? 0);
         $outputTokens = (int) ($data['output_tokens'] ?? 0);
+        $cacheReadTokens  = (int) ($data['cache_read_tokens']  ?? 0);
+        $cacheWriteTokens = (int) ($data['cache_write_tokens'] ?? 0);
 
         $cost = $data['cost_usd'] ?? null;
         $shadow = $data['shadow_cost_usd'] ?? null;
         $billingModel = null;
+        $costSource = $cost !== null ? 'caller' : null;
 
         if ($this->costs) {
             if ($cost === null) {
-                $cost = $this->costs->calculate($model, $inputTokens, $outputTokens, $backend);
+                $cost = $this->costs->calculate(
+                    $model, $inputTokens, $outputTokens, $backend,
+                    $cacheReadTokens, $cacheWriteTokens
+                );
+                $costSource = 'calculator';
             }
             $billingModel = $this->costs->billingModel($model, $backend);
             if ($shadow === null) {
                 $shadow = $billingModel === CostCalculator::BILLING_SUBSCRIPTION
-                    ? $this->costs->shadowCalculate($model, $inputTokens, $outputTokens)
+                    ? $this->costs->shadowCalculate($model, $inputTokens, $outputTokens, $cacheReadTokens, $cacheWriteTokens)
                     : $cost;
             }
         }
+
+        // Preserve any caller-supplied metadata + tag with cache / cost-source
+        // info so the dashboard can explain "why does this row's cost differ
+        // from my CostCalculator output".
+        $metadata = $data['metadata'] ?? [];
+        if (!is_array($metadata)) $metadata = ['value' => $metadata];
+        if ($cacheReadTokens)  $metadata['cache_read_tokens']  = $cacheReadTokens;
+        if ($cacheWriteTokens) $metadata['cache_write_tokens'] = $cacheWriteTokens;
+        if ($costSource)       $metadata['cost_source']        = $costSource;
 
         return $this->usage->record([
             'backend'         => $backend,
@@ -103,7 +122,7 @@ class UsageRecorder
             'billing_model'   => $billingModel,
             'duration_ms'     => $data['duration_ms'] ?? null,
             'user_id'         => $data['user_id'] ?? null,
-            'metadata'        => $data['metadata'] ?? null,
+            'metadata'        => $metadata ?: null,
         ]);
     }
 }

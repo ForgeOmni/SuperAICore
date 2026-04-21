@@ -4,6 +4,38 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-04-21
+
+Small patch tightening the 0.6.2 accounting story. Fixes a Kiro auth-detection bug that reported `not-logged-in` on machines with a valid `~/.kiro/` session, teaches `shadowCalculate()` about Anthropic's cache-token price tiers so heavy-cache Claude calls don't overstate shadow cost by ~10×, prefers the CLI's own `total_cost_usd` over the pricing catalog when the envelope carries it, and tidies the Recent-calls dashboard (Provider / Service column + capability column + filter-state persistence).
+
+No breaking changes.
+
+### Fixed
+
+**Kiro auth: generic detector probed the wrong directory**
+- `Services\CliStatusDetector::detectGenericCliAuth()` built the config-dir check from the literal binary name (`~/.kiro-cli/`), but Kiro — like most CLIs — writes its session into `~/.<engine>/` (`~/.kiro/`). Users who had already run `kiro-cli login` saw "not logged in" on `/super-ai-core/providers` anyway. The detector now strips a `-cli` / `_cli` suffix from the binary and probes both the stripped form and the literal, so `kiro-cli` → `~/.kiro/` resolves correctly without breaking engines whose config-dir matches their binary name verbatim. Also adds a `config_dir` field to the auth payload so UI can show *which* directory it found.
+
+### Added
+
+**Cache-aware shadow cost (cache_read 0.1×, cache_write 1.25×)**
+- `Services\CostCalculator::shadowCalculate()` now accepts optional `$cacheReadTokens` / `$cacheWriteTokens` parameters and prices them separately from base input. Uses the catalog's explicit `cache_read_input` / `cache_creation_input` rates when present, otherwise applies the standard Anthropic multipliers against the `input` rate (cache reads ≈ 10% of input price, cache writes ≈ 125%). A PPT Strategist run with 500k cache_read + 70k cache_write tokens now reports a shadow cost that matches the Anthropic invoice for the same workload instead of inflating it ~10× by rolling all cache traffic into input.
+- `Services\Dispatcher::dispatch()` forwards the cache token counts from `result.usage.cache_read_input_tokens` / `result.usage.cache_creation_input_tokens` (Anthropic wire format) straight into `shadowCalculate()`.
+- `Services\UsageRecorder::record()` accepts `cache_read_tokens` / `cache_write_tokens` in the input payload, feeds them to the calculator, and tucks them into `metadata.cache_read_tokens` / `cache_write_tokens` for debugging. Host-side callers (SuperTeam's `ClaudeStreamUsageParser`, `ExecuteTask::recordTaskUsage`, `AiServiceDispatcher::recordUsage`) stop pre-summing cache tokens into `input_tokens` and pass them through these fields instead.
+
+**Dispatcher prefers CLI-reported `total_cost_usd`**
+- When the backend's `usage` envelope includes `total_cost_usd` (Claude CLI does, per its `result` event), Dispatcher now uses that figure as the billed cost instead of re-deriving from tokens × rate. Matters because Claude CLI is the only signal that knows whether a given session is billed against a subscription or an API key — the catalog can't infer that from the model id alone. For backends that don't report a billed cost (HTTP APIs mostly), the calculator-derived value still wins. Metadata now records `cost_source: 'cli_envelope' | 'calculator'` so operators can spot which rows came from which path.
+
+**Usage dashboard: Provider / Service + Capability columns**
+- Recent-calls table on `/super-ai-core/usage` now surfaces the friendly Provider name (or Service name when it's a service-routed call), plus a dedicated `capability` column. Previously operators had to cross-reference `provider_id` / `service_id` against DB rows to answer "which API key ran this?".
+- Filter-state persistence: the `Hide 0-token rows` and `Hide test_connection` toggles were default-on but silently reverted to default on every form submit that un-ticked them (HTML checkboxes don't post when unchecked). A hidden `filters_applied=1` marker now rides along with the form, so an un-ticked box stays un-ticked across reloads.
+
+### Changed
+
+**Usage metadata: cost source + cache token counts**
+- Every row written via `Dispatcher` or `UsageRecorder` now carries `metadata.cost_source` (`'cli_envelope'` / `'calculator'` / `'caller'`) and — when applicable — `metadata.cache_read_tokens` / `cache_write_tokens`. The dashboard doesn't surface these yet but they're available for drill-downs and invoice reconciliation.
+
+---
+
 ## [0.6.2] — 2026-04-21
 
 Patch release closing the "most dashboard rows are 0/0/0" gap on `/super-ai-core/usage` and `/super-ai-core/costs`. Previously every execution that the host app routed through its own runners (`App\Services\ClaudeRunner`, etc.) silently bypassed `ai_usage_logs`, and the few rows that did land there came from the `/providers` "Test connection" button with subscription-billed CLIs that returned `{input_tokens:0, output_tokens:0}` — making the dashboard look empty even during heavy use. This release adds a shadow-cost accounting path so subscription engines surface meaningful USD numbers, a clean `UsageRecorder` API so host runners can drop a one-liner at their call sites, and default dashboard filters that hide the noise.

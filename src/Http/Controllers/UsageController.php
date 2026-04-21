@@ -3,6 +3,8 @@
 namespace SuperAICore\Http\Controllers;
 
 use Carbon\Carbon;
+use SuperAICore\Models\AiProvider;
+use SuperAICore\Models\AiService;
 use SuperAICore\Models\AiUsageLog;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -16,8 +18,16 @@ class UsageController extends Controller
     {
         $filters = $request->only(['model', 'task_type', 'user_id', 'backend']);
         $days = (int) $request->input('days', 30);
-        $hideEmpty = (bool) $request->boolean('hide_empty', true);    // default on — hide 0-token noise
-        $hideTests = (bool) $request->boolean('hide_tests', true);    // default on — hide test_connection
+
+        // Filter-toggle persistence: HTML checkboxes don't submit when
+        // unchecked, so we smuggle an explicit `filters_applied=1` marker
+        // alongside them. When that marker is set, the absence of a box
+        // means "user turned it off"; when it's absent we fall back to the
+        // default-on behaviour so a first-visit `/usage` still hides noise.
+        $filtersApplied = $request->boolean('filters_applied');
+        $hideEmpty = $filtersApplied ? $request->boolean('hide_empty') : true;
+        $hideTests = $filtersApplied ? $request->boolean('hide_tests') : true;
+
         $from = Carbon::now()->subDays($days)->startOfDay();
 
         $q = AiUsageLog::where('created_at', '>=', $from);
@@ -72,10 +82,22 @@ class UsageController extends Controller
         $allTaskTypes = AiUsageLog::distinct()->pluck('task_type');
         $allBackends = AiUsageLog::distinct()->pluck('backend');
 
+        // Provider / service labels — one query per batch so the Recent
+        // calls table can render the friendly name alongside the raw id.
+        $providerIds = $logs->pluck('provider_id')->filter()->unique()->values();
+        $serviceIds  = $logs->pluck('service_id')->filter()->unique()->values();
+        $providers = $providerIds->isNotEmpty()
+            ? AiProvider::whereIn('id', $providerIds)->pluck('name', 'id')
+            : collect();
+        $services = $serviceIds->isNotEmpty()
+            ? AiService::whereIn('id', $serviceIds)->pluck('name', 'id')
+            : collect();
+
         return view('super-ai-core::usage.index', compact(
             'logs', 'summary', 'byModel', 'byBackend', 'byTaskType',
             'filters', 'days', 'hideEmpty', 'hideTests',
-            'allModels', 'allTaskTypes', 'allBackends'
+            'allModels', 'allTaskTypes', 'allBackends',
+            'providers', 'services'
         ));
     }
 }

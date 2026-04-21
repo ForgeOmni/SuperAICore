@@ -78,13 +78,30 @@ class Dispatcher
         // pricing entries (e.g. copilot:claude-sonnet-4-5) and emit $0 for
         // subscription-billed engines so dashboard totals stay correct.
         $modelId = $result['model'] ?? 'unknown';
-        $inputTokens = $result['usage']['input_tokens'] ?? 0;
-        $outputTokens = $result['usage']['output_tokens'] ?? 0;
+        $usage = $result['usage'] ?? [];
+        $inputTokens  = (int) ($usage['input_tokens']  ?? 0);
+        $outputTokens = (int) ($usage['output_tokens'] ?? 0);
+        $cacheReadTokens  = (int) ($usage['cache_read_input_tokens']     ?? 0);
+        $cacheWriteTokens = (int) ($usage['cache_creation_input_tokens'] ?? 0);
 
-        $cost = $this->costs->calculate($modelId, $inputTokens, $outputTokens, $backend->name());
         $billingModel = $this->costs->billingModel($modelId, $backend->name());
+
+        // Prefer the CLI's own `total_cost_usd` when provided — Claude CLI
+        // emits this on its result event and it's authoritative because the
+        // CLI knows whether the session is on a subscription or an API key
+        // (our catalog can't). Falls back to the calculator for backends
+        // that don't report a billed cost.
+        if (isset($usage['total_cost_usd']) && $usage['total_cost_usd'] !== null) {
+            $cost = (float) $usage['total_cost_usd'];
+        } else {
+            $cost = $this->costs->calculate(
+                $modelId, $inputTokens, $outputTokens, $backend->name(),
+                $cacheReadTokens, $cacheWriteTokens
+            );
+        }
+
         $shadowCost = $billingModel === CostCalculator::BILLING_SUBSCRIPTION
-            ? $this->costs->shadowCalculate($modelId, $inputTokens, $outputTokens)
+            ? $this->costs->shadowCalculate($modelId, $inputTokens, $outputTokens, $cacheReadTokens, $cacheWriteTokens)
             : $cost;
 
         $result['cost_usd'] = $cost;
@@ -109,7 +126,12 @@ class Dispatcher
                 'billing_model' => $billingModel,
                 'duration_ms' => $durationMs,
                 'user_id' => $options['user_id'] ?? null,
-                'metadata' => $options['metadata'] ?? null,
+                'metadata' => array_filter([
+                    'origin_metadata'      => $options['metadata'] ?? null,
+                    'cache_read_tokens'    => $cacheReadTokens ?: null,
+                    'cache_write_tokens'   => $cacheWriteTokens ?: null,
+                    'cost_source'          => isset($usage['total_cost_usd']) ? 'cli_envelope' : 'calculator',
+                ]) ?: null,
             ]);
         }
 

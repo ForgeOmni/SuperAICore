@@ -4,6 +4,7 @@
 <h4><i class="bi bi-bar-chart me-1"></i>{{ __('super-ai-core::messages.usage') }} <small class="text-muted">(last {{ $days }} days)</small></h4>
 
 <form method="GET" class="row g-2 align-items-end mb-3 small">
+    <input type="hidden" name="filters_applied" value="1">
     <div class="col-auto">
         <label class="form-label mb-0">Days</label>
         <input type="number" name="days" class="form-control form-control-sm" style="width: 90px" value="{{ $days }}" min="1" max="365">
@@ -169,8 +170,10 @@
                 <tr>
                     <th>When</th>
                     <th>Task type</th>
+                    <th>Capability</th>
                     <th>Backend</th>
                     <th>Model</th>
+                    <th>Provider / Service</th>
                     <th>Billing</th>
                     <th class="text-end">Input</th>
                     <th class="text-end">Output</th>
@@ -184,8 +187,22 @@
                 <tr>
                     <td class="text-muted" style="white-space: nowrap">{{ $row->created_at?->diffForHumans() }}</td>
                     <td><code>{{ $row->task_type ?? '—' }}</code></td>
+                    <td class="text-muted small">{{ $row->capability ?? '—' }}</td>
                     <td>{{ $row->backend }}</td>
                     <td class="font-monospace">{{ $row->model }}</td>
+                    <td class="small">
+                        @if ($row->provider_id)
+                            <span class="badge bg-secondary-subtle text-secondary" title="provider #{{ $row->provider_id }}">
+                                {{ ($providers[$row->provider_id] ?? ('#' . $row->provider_id)) }}
+                            </span>
+                        @elseif ($row->service_id)
+                            <span class="badge bg-light text-dark" title="service #{{ $row->service_id }}">
+                                svc: {{ ($services[$row->service_id] ?? ('#' . $row->service_id)) }}
+                            </span>
+                        @else
+                            <span class="text-muted">builtin</span>
+                        @endif
+                    </td>
                     <td>
                         @if ($row->billing_model === 'subscription')
                             <span class="badge bg-info-subtle text-info">sub</span>

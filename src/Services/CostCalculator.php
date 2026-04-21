@@ -25,9 +25,21 @@ class CostCalculator
      * *backend*. If that engine is subscription-billed we still return 0
      * regardless of the prefix-matched rate, matching billingModel()'s
      * answer so a row's real cost never disagrees with its billing_model.
+     *
+     * Cache tokens: Anthropic prompt caching bills at different rates than
+     * regular input (cache reads ~10%, cache writes ~125% of input price).
+     * When $cacheReadTokens / $cacheWriteTokens are supplied, they're
+     * priced separately — otherwise the call is equivalent to the 4-arg
+     * form used before 0.6.3.
      */
-    public function calculate(string $model, int $inputTokens, int $outputTokens, ?string $backend = null): float
-    {
+    public function calculate(
+        string $model,
+        int $inputTokens,
+        int $outputTokens,
+        ?string $backend = null,
+        int $cacheReadTokens = 0,
+        int $cacheWriteTokens = 0
+    ): float {
         if ($this->engineBillingModel($backend) === self::BILLING_SUBSCRIPTION) {
             return 0.0;
         }
@@ -39,9 +51,17 @@ class CostCalculator
             return 0.0;
         }
 
-        $input  = ($inputTokens  / 1_000_000) * (float) ($rate['input']  ?? 0);
-        $output = ($outputTokens / 1_000_000) * (float) ($rate['output'] ?? 0);
-        return round($input + $output, 6);
+        $inputRate  = (float) ($rate['input']  ?? 0);
+        $outputRate = (float) ($rate['output'] ?? 0);
+        $cacheReadRate  = (float) ($rate['cache_read_input']     ?? $inputRate * 0.1);
+        $cacheWriteRate = (float) ($rate['cache_creation_input'] ?? $inputRate * 1.25);
+
+        $total = ($inputTokens       / 1_000_000) * $inputRate
+               + ($outputTokens      / 1_000_000) * $outputRate
+               + ($cacheReadTokens   / 1_000_000) * $cacheReadRate
+               + ($cacheWriteTokens  / 1_000_000) * $cacheWriteRate;
+
+        return round($total, 6);
     }
 
     /**
@@ -74,17 +94,44 @@ class CostCalculator
      * subscription), fall through to the SuperAgent ModelCatalog, and
      * compute a per-token estimate. Returns 0 when the rate is unknown
      * or when no tokens are supplied.
+     *
+     * Anthropic prompt caching has different rates from regular input:
+     * cache reads are ~10% of input price, cache writes are ~125% of
+     * input price. Passing $cacheReadTokens / $cacheWriteTokens lets the
+     * calculator honour those multipliers instead of rolling all cache
+     * traffic into input (which would overstate shadow cost by ~10× for
+     * heavy-cache Claude calls — e.g. PPT Strategist runs).
+     *
+     * When the rate entry exposes explicit `cache_read_input` /
+     * `cache_creation_input` per-million rates we use those; otherwise
+     * fall back to standard multipliers against the `input` rate.
      */
-    public function shadowCalculate(string $model, int $inputTokens, int $outputTokens): float
-    {
-        if ($inputTokens <= 0 && $outputTokens <= 0) return 0.0;
+    public function shadowCalculate(
+        string $model,
+        int $inputTokens,
+        int $outputTokens,
+        int $cacheReadTokens = 0,
+        int $cacheWriteTokens = 0
+    ): float {
+        if ($inputTokens <= 0 && $outputTokens <= 0
+            && $cacheReadTokens <= 0 && $cacheWriteTokens <= 0) {
+            return 0.0;
+        }
 
         $rate = $this->resolveUsagePricedRate($model);
         if (!$rate) return 0.0;
 
-        $input  = ($inputTokens  / 1_000_000) * (float) ($rate['input']  ?? 0);
-        $output = ($outputTokens / 1_000_000) * (float) ($rate['output'] ?? 0);
-        return round($input + $output, 6);
+        $inputRate  = (float) ($rate['input']  ?? 0);
+        $outputRate = (float) ($rate['output'] ?? 0);
+        $cacheReadRate  = (float) ($rate['cache_read_input']     ?? $inputRate * 0.1);
+        $cacheWriteRate = (float) ($rate['cache_creation_input'] ?? $inputRate * 1.25);
+
+        $total = ($inputTokens       / 1_000_000) * $inputRate
+               + ($outputTokens      / 1_000_000) * $outputRate
+               + ($cacheReadTokens   / 1_000_000) * $cacheReadRate
+               + ($cacheWriteTokens  / 1_000_000) * $cacheWriteRate;
+
+        return round($total, 6);
     }
 
     /**

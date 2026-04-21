@@ -282,12 +282,30 @@ class CliStatusDetector
             }
         }
 
-        // Convention: `<binary> login` writes into `~/.<binary>/`. Both Kiro
-        // (`~/.kiro/`) and future CLI engines following this pattern pick
-        // up a meaningful status readout here without any extra code.
+        // Convention: `<binary> login` writes into `~/.<engine>/`. The
+        // engine key is the binary minus any `-cli` / `_cli` suffix (so
+        // `kiro-cli` → `~/.kiro/`, `claude` → `~/.claude/`). We probe both
+        // the stripped form and the literal binary so odd-binaries-with-
+        // their-own-dir still resolve.
         $home = self::resolvedHome();
-        $configDir = $home ? rtrim($home, '/') . '/.' . ltrim($binary, '.') : '';
-        $hasConfigDir = $configDir && is_dir($configDir);
+        $hasConfigDir = false;
+        $foundDir = null;
+        if ($home) {
+            $homeTrim = rtrim($home, '/');
+            $candidates = array_unique([
+                preg_replace('/[-_]cli$/', '', ltrim($binary, '.')),
+                ltrim($binary, '.'),
+            ]);
+            foreach ($candidates as $name) {
+                if ($name === '') continue;
+                $dir = $homeTrim . '/.' . $name;
+                if (is_dir($dir)) {
+                    $hasConfigDir = true;
+                    $foundDir = $dir;
+                    break;
+                }
+            }
+        }
 
         return [
             'loggedIn'   => $envKeyHit !== null || $hasConfigDir,
@@ -297,6 +315,7 @@ class CliStatusDetector
             'method'     => $envKeyHit !== null
                 ? 'api-key'
                 : ($hasConfigDir ? 'oauth' : null),
+            'config_dir' => $foundDir,
             'expires_at' => null,
         ];
     }
