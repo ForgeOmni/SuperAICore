@@ -231,7 +231,39 @@ $result = $dispatcher->dispatch([
 ]);
 ```
 
-## 8. Upgrading
+## 8. Host-side usage tracking with `UsageRecorder` (0.6.2+)
+
+If your host app spawns CLIs through its own runner (e.g. `App\Services\ClaudeRunner`, stage jobs, an `ExecuteTask` pipeline) instead of going through `Dispatcher::dispatch()`, those executions won't reach `ai_usage_logs` on their own — the Dispatcher is the only writer. Drop a single `UsageRecorder::record()` call at each CLI completion path to get proper rows, with `cost_usd`, `shadow_cost_usd`, and `billing_model` auto-filled from the catalog:
+
+```php
+use SuperAICore\Services\UsageRecorder;
+
+// Tokens you already extracted from the CLI's stream-json / stdout:
+app(UsageRecorder::class)->record([
+    'task_type'     => 'ppt.strategist',      // whatever groups your runs
+    'capability'    => 'agent_spawn',
+    'backend'       => 'claude_cli',
+    'model'         => 'claude-sonnet-4-5-20241022',
+    'input_tokens'  => 12345,
+    'output_tokens' => 6789,
+    'duration_ms'   => 45000,
+    'user_id'       => auth()->id(),
+    'metadata'      => ['ppt_job_id' => 42],
+]);
+```
+
+If you only have the raw captured CLI stdout and haven't parsed tokens yourself, `CliOutputParser` handles the common shapes:
+
+```php
+use SuperAICore\Services\CliOutputParser;
+
+$env = CliOutputParser::parseClaude($stdout);    // or parseCodex / parseCopilot / parseGemini
+// $env = ['text' => '…', 'model' => '…', 'input_tokens' => 12345, 'output_tokens' => 6789, …] or null
+```
+
+`UsageRecorder` is a singleton; it no-ops when `AI_CORE_USAGE_TRACKING=false`.
+
+## 9. Upgrading
 
 ```bash
 composer update forgeomni/superaicore
@@ -240,6 +272,12 @@ php artisan migrate
 ```
 
 Review [CHANGELOG.md](CHANGELOG.md) for breaking changes before `--force` publishing config.
+
+**0.6.2 migration** — adds two nullable columns to `ai_usage_logs`: `shadow_cost_usd decimal(12,6)` and `billing_model varchar(20)`. Safe, non-destructive. Existing rows get `NULL` (rendered as `—` on the dashboard); new writes are backfilled automatically by the Dispatcher. Host apps that want to clean up pre-0.6.1 `task_type=NULL` test rows can:
+
+```sql
+DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND output_tokens = 0;
+```
 
 ## Troubleshooting
 

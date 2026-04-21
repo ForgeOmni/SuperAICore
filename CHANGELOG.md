@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 Patch release closing the "most dashboard rows are 0/0/0" gap on `/super-ai-core/usage` and `/super-ai-core/costs`. Previously every execution that the host app routed through its own runners (`App\Services\ClaudeRunner`, etc.) silently bypassed `ai_usage_logs`, and the few rows that did land there came from the `/providers` "Test connection" button with subscription-billed CLIs that returned `{input_tokens:0, output_tokens:0}` — making the dashboard look empty even during heavy use. This release adds a shadow-cost accounting path so subscription engines surface meaningful USD numbers, a clean `UsageRecorder` API so host runners can drop a one-liner at their call sites, and default dashboard filters that hide the noise.
 
+Also fixes two bugs in the 0.6.1 Kiro integration: the `--model` flag was being dropped (so every call silently went through Kiro's `auto` router regardless of what the user selected) and the seeded model IDs used Claude-CLI dash separators (`claude-sonnet-4-6`) instead of Kiro's dot separators (`claude-sonnet-4.6`), which `kiro-cli` quietly rejects. The picker is now populated **live** from `kiro-cli chat --list-models` and surfaces the 7 non-Anthropic models Kiro supports (DeepSeek / MiniMax / GLM / Qwen) plus the `auto` router.
+
 No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work; new columns on `ai_usage_logs` are nullable and backfill automatically on new writes.
 
 ### Added
@@ -44,6 +46,12 @@ No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work
 - `/super-ai-core/usage` — new "By Task Type" card, "Shadow cost" column on every breakdown table, a per-row billing-model badge (usage / sub), and two toggles above the filters: **Hide 0-token rows** (default on) and **Hide test_connection** (default on). Noise from the `/providers` test button is now filtered by default.
 - `/super-ai-core/costs` — "Subscription engines" panel now shows an estimated shadow-cost total alongside call count and token totals, so operators can compare a Copilot session against a pay-as-you-go spend on the same scale. `test_connection` rows are excluded from all roll-ups.
 
+**`Services\KiroModelResolver` — live model catalog from `kiro-cli`**
+- Kiro is the only CLI in the matrix that exposes its authoritative model list programmatically (`kiro-cli chat --list-models --format json-pretty`), so this resolver does NOT carry a hardcoded catalog. Three-layer resolution: in-process memo → `~/.cache/superaicore/kiro-models.json` (24h TTL) → live CLI probe → 12-row static fallback (only when the binary is missing).
+- `catalog()` / `families()` / `defaultFor($family)` / `resolve($id)` shape mirrors `ClaudeModelResolver` / `CopilotModelResolver` so any picker iterating a resolver uniformly keeps working.
+- `parseListModels($json)` is exposed for testing; the rest is static. `refresh()` bypasses the TTL for on-demand updates.
+- Surfaces the **full** Kiro roster in the picker — previously 0.6.1 showed only 4 Anthropic IDs, now users see all 12: `auto`, `claude-{opus,sonnet}-4.{5,6}`, `claude-sonnet-4`, `claude-haiku-4.5`, `deepseek-3.2`, `minimax-m2.5`, `minimax-m2.1`, `glm-5`, `qwen3-coder-next`. New Kiro models appear in the dropdown as soon as the CLI knows about them — no `composer update` required.
+
 ### Changed
 
 **Test-connection buttons now tag themselves**
@@ -52,16 +60,112 @@ No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work
 **Billing model stamped at write time, not recomputed on read**
 - `CostDashboardController` now prefers the row-stamped `billing_model` (set by the Dispatcher at record time) and falls back to `CostCalculator::billingModel()` only for pre-0.6.1 rows. This keeps historical accuracy when the catalog changes.
 
+**Kiro model picker / pricing seed switched to Kiro's dot-separated slug vocabulary**
+- `EngineCatalog::seed('kiro').available_models` — 4 dash-format entries (`claude-sonnet-4-6`, …) replaced with 12 dot-format entries matching what `kiro-cli chat --list-models` actually returns.
+- `EngineCatalog::seed('kiro').default_model` — `claude-sonnet-4-6` → `claude-sonnet-4.6`.
+- `EngineCatalog::resolverOptions('kiro')` — was reusing `ClaudeModelResolver` (wrong vocab, limited scope); now reads `KiroModelResolver::catalog()` + `::families()`.
+- `EngineCatalog::expandFromCatalog()` — dropped the `'kiro' => 'anthropic'` / `'kiro' => 'claude-'` branches. SuperAgent `ModelCatalog` speaks dash-format Anthropic IDs, which don't match Kiro's dot-format at all, so that expansion only ever added noise.
+- `config/super-ai-core.php` pricing rows — the five `kiro:claude-*-4-X` dash-slug keys (which never matched a real CLI call because Kiro never accepted dash-format) are replaced with twelve correct dot-slug keys, each annotated with Kiro's own credit `rate_multiplier` for operator reference.
+
+### Fixed
+
+**Kiro CLI silently ignored the `--model` selection (0.6.1 regression)**
+- `Backends\KiroCliBackend::generate()` was reading `$options['model']` into a local variable but never passing it to the spawned `kiro-cli` process — every call went through Kiro's `auto` router regardless of what the user picked on `/providers` or supplied to `$dispatcher->dispatch(['model' => …])`. Now the argv includes `--model <id>` when a model is supplied, with `KiroModelResolver::resolve()` translating Claude-style dash IDs (e.g. `claude-sonnet-4-6`) into the dot-format Kiro requires (`claude-sonnet-4.6`) before handing off.
+- Docstring also corrected — 0.6.1's comment claimed "Model selection is NOT a CLI flag in headless mode", which contradicted Kiro 2.x's actual `kiro-cli chat --help` output.
+
 ### Migration notes
 
 1. Run `php artisan migrate` on every host (adds two nullable columns — safe, non-destructive).
 2. Existing rows get `NULL` for both new columns; the dashboards render `—` for them. Subscription rows previously written with `cost_usd=0` will only surface shadow cost going forward; backfill is not attempted.
 3. Host apps that already wire their own runners and want real-execution tracking: call `app(UsageRecorder::class)->record()` from each CLI completion path. See the snippet above. No API breakage for hosts that do nothing.
+4. Hosts that published `config/super-ai-core.php` and hand-edited the `kiro:*` pricing rows: the published file still carries the dash-slug keys from 0.6.1. Re-publish with `php artisan vendor:publish --tag=super-ai-core-config --force` (or hand-migrate: rename `kiro:claude-sonnet-4-6` → `kiro:claude-sonnet-4.6`, add the 7 new rows). The old dash-slug rows were never matched by any real CLI call and can be deleted safely.
+5. If `kiro-cli` is installed on hosts but the Kiro dropdown looks stale, force a catalog refresh with `php -r 'SuperAICore\Services\KiroModelResolver::refresh();'` (or just delete `~/.cache/superaicore/kiro-models.json` — the next request will reprobe).
 
 ### Known gaps (follow-up)
 
 - `Runner\ClaudeAgentRunner`, `CodexAgentRunner`, `GeminiAgentRunner`, `CopilotAgentRunner` still emit plain-text streams and do not auto-record usage — adopting stream-json output would change the user-visible output format, so opt-in wiring is deferred to 0.7. Hosts that want tracking today should adopt `UsageRecorder` at their own CLI call sites.
 - No backfill of the handful of "Test connection" rows with `task_type=NULL` from before 0.6.1 — they'll disappear as soon as the "Hide 0-token rows" default filter is applied, but you can also clear them manually: `DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens=0 AND output_tokens=0;`
+- Claude / Codex / Gemini / Copilot CLIs do **not** expose a list-models subcommand (only Kiro does), so their pickers stay on the SuperAgent `ModelCatalog` fallback — already dynamic via `superaicore super-ai-core:models update`, but not live-probed on every invocation the way Kiro's is. Adding provider-API probing (Anthropic `/v1/models`, OpenAI `/v1/models`, Google `v1/models:list`) is deferred to 0.7.
+
+### Tests
+
+- 10 new tests, 41 new assertions. Full suite: **258 tests / 750 assertions / 0 failures / 0 skipped** (was 248 / 709 at 0.6.1). Live-probe smoke verified against `kiro-cli` 2.x on macOS: all 12 models round-trip, cache file written to `~/.cache/superaicore/kiro-models.json`, dash→dot resolver translations line up with Kiro's router accept list.
+
+---
+
+## [0.6.1] — 2026-04-20
+
+Adds **AWS Kiro CLI** (`kiro-cli` ≥ 2.0) as the sixth execution engine. Kiro joins the matrix with the richest out-of-the-box feature set of any CLI backend — native **agents**, **skills**, **MCP**, **subagent DAG orchestration**, **and** two auth channels (local `kiro-cli login` and `KIRO_API_KEY` headless mode). Subagents are native (no `SpawnPlan` emulation needed), skills read the Claude `SKILL.md` format verbatim, and MCP config lives at `~/.kiro/settings/mcp.json` with the same `mcpServers` schema plus Kiro-specific extensions (`disabled`, `autoApprove`, `disabledTools`, remote `url`/`headers`).
+
+Subscription engine (Kiro Pro / Pro+ / Power credit plans), so costs route into the dashboard's subscription bucket the same way Copilot does — per-token USD stays at 0 and the CLI backend surfaces per-call `credits` + `duration_s` under `usage` for hosts that want to render credit dashboards.
+
+All additive — no breaking changes. Existing installs that don't have `kiro-cli` on `$PATH` see it report as unavailable in `cli:status` / `list-backends` and continue to use the other five engines unchanged.
+
+### Added
+
+**Kiro CLI execution engine**
+- `Backends\KiroCliBackend` — spawns `kiro-cli chat --no-interactive --trust-all-tools <prompt>`, parses the plain-text response body, and extracts the trailing `▸ Credits: X • Time: Y` summary line into `usage.credits` / `usage.duration_s`. Supports both auth channels: `type=builtin` leaves env untouched so the host's `kiro-cli login` keychain state carries the request, `type=kiro-api` injects the stored key as `KIRO_API_KEY` which makes `kiro-cli` skip its browser login flow.
+- `Capabilities\KiroCapabilities` — `supportsSubAgents()=true` (Kiro's native DAG planner runs the orchestration; no `SpawnPlan` emulation needed), MCP path `~/.kiro/settings/mcp.json`, tool-name map for the lowercase Kiro vocabulary (`Read`→`read`, `Grep`→`grep`, `Bash`→`bash`, …). `renderMcpConfig()` writes the same `mcpServers` key Claude uses **plus** preserves `disabled` / `autoApprove` / `disabledTools` on entries the user added, and supports remote servers via `url` / `headers`.
+- `Runner\KiroAgentRunner` — `kiro-cli chat --no-interactive --trust-all-tools --agent <name> <task>`. Auto-syncs the agent JSON before spawn.
+- `Runner\KiroSkillRunner` — sends the SKILL.md body verbatim to `kiro-cli chat --no-interactive`. Kiro reads Claude's skill frontmatter shape natively, so no translator preamble is injected.
+- `Sync\KiroAgentWriter` — translates `.claude/agents/*.md` → `~/.kiro/agents/<name>.json`. Field mapping: body→`prompt`, `model`→`model` (Anthropic slugs pass through unchanged), `allowed-tools` → lowercased `tools` + `allowedTools`. Reuses `AbstractManifestWriter` so user-edited JSONs are preserved (STATUS_USER_EDITED) and removed source agents are cleaned up (STATUS_REMOVED).
+- `Console\Commands\KiroSyncCommand` — `kiro:sync [--dry-run] [--kiro-home <dir>]` prints the +/- change table and writes `~/.kiro/agents/<name>.json` files. Mostly a manual preview — `agent:run --backend=kiro` auto-syncs the targeted agent.
+- Registered in `EngineCatalog::seed()` with `billing_model=subscription`, `cli_binary=kiro-cli`, `dispatcher_backends=['kiro_cli']`, and a `ProcessSpec` that pins the `chat --no-interactive --trust-all-tools` prefix so the default `CliProcessBuilderRegistry` builder produces the right argv. Wired into `BackendRegistry`, `CapabilityRegistry`, `BackendState::DISPATCHER_TO_ENGINE`, `McpManager::syncAllBackends()`, and the `AgentRunCommand` / `SkillRunCommand` runner factories.
+
+**Kiro provider type (`kiro-api`)**
+- `Models\AiProvider::TYPE_KIRO_API` + `BACKEND_KIRO` constants; `BACKEND_TYPES[kiro] = [builtin, kiro-api]`. `requiresApiKey()` treats `kiro-api` like `openai` / `anthropic` so the provider form prompts for a key. `TYPE_BUILTIN` remains the "host has already run `kiro-cli login`" path with no env injection.
+
+**Kiro model picker flows through ModelCatalog**
+- `EngineCatalog::expandFromCatalog()` maps `kiro → anthropic` with a `claude-` prefix filter, so the same SuperAgent `ModelCatalog` refresh that updates Claude / Codex / Gemini also surfaces new Anthropic model IDs in the Kiro dropdown.
+- `EngineCatalog::resolverOptions('kiro')` reuses `ClaudeModelResolver::families()` + `::catalog()` for identical slugs (family aliases `sonnet` / `opus` / `haiku` ship alongside full IDs) and appends Kiro's routing primitive `auto` ("Auto (Kiro router picks the cheapest model)").
+
+**MCP sync reaches the sixth engine**
+- `McpManager::syncAllBackends()` picks up `kiro` automatically through the `EngineCatalog::keys()` → `supportsMcp()` filter; the hardcoded fallback list (used only when the container isn't booted) adds `kiro` for parity.
+
+**Pricing entries**
+- `config/super-ai-core.php` — five `kiro:<model>` subscription rows (`claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-opus-4-6`, `claude-haiku-4-5`, `auto`) with `input=0 / output=0 / billing_model=subscription`. Core cost totals stay at $0 per-call; host apps that want a credit dashboard read `usage.credits` off the dispatcher response.
+
+### Changed
+
+- `AgentRunCommand` / `SkillRunCommand` — `--backend` option docstring now lists `claude|codex|gemini|copilot|kiro|superagent`. Runner factory gains a `kiro` branch for both commands.
+- `BackendRegistry` — new `kiro_cli` config section (binary / timeout / trust-all-tools); defaults to enabled so fresh installs without `kiro-cli` on `$PATH` see `isAvailable()=false` and skip the engine.
+- `Console\Application` registers `kiro:sync` alongside `gemini:sync` / `copilot:sync` / `copilot:sync-hooks`.
+
+### Tests
+
+- 5 new tests: 4 × `KiroCliBackend::parseOutput()` (UTF-8 `▸` bullet, ASCII `>` fallback, missing summary line, empty input), 1 × `EngineCatalog::modelOptions('kiro')` (Claude resolver reuse + `auto` pseudo-model).
+- Harness updates: `BackendRegistryTest` config fixtures include `kiro_cli` in both the "register all" and "disable all except anthropic_api" scenarios.
+- Full suite: **248 tests / 709 assertions / 0 failures / 0 skipped** (was 243 / 690 at 0.6.0).
+
+### Environment reference
+
+```env
+# Kiro CLI backend (0.6.1+) — disable if you don't want superaicore to
+# probe for the binary at all. All defaults are safe; leaving untouched is
+# fine when kiro-cli isn't installed.
+AI_CORE_KIRO_CLI_ENABLED=true
+KIRO_CLI_BIN=kiro-cli
+# Kiro's --no-interactive mode refuses to run tools without prior per-tool
+# approval unless this is on. Flip false only for workflows that
+# pre-populate approvals via `--trust-tools=<categories>`.
+AI_CORE_KIRO_TRUST_ALL_TOOLS=true
+
+# Kiro API-key auth (headless, Pro / Pro+ / Power subscribers). Setting
+# KIRO_API_KEY makes kiro-cli skip its browser login flow. Stored per
+# provider in the DB via type=kiro-api; this env var is only needed when
+# the CLI is invoked outside superaicore's dispatcher.
+# KIRO_API_KEY=ksk_...
+```
+
+```bash
+# Drive Kiro from the CLI
+./vendor/bin/superaicore call "Hello" --backend=kiro_cli
+./vendor/bin/superaicore agent:run reviewer "audit this diff" --backend=kiro
+./vendor/bin/superaicore skill:run simplify --backend=kiro --exec=native
+
+# Preview agent JSON that would land in ~/.kiro/agents/
+./vendor/bin/superaicore kiro:sync --dry-run
+```
 
 ---
 

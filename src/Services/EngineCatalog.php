@@ -273,23 +273,22 @@ class EngineCatalog
                 return $out;
 
             case 'kiro':
-                // Kiro routes Anthropic-family IDs — same slugs Claude uses
-                // (claude-sonnet-4-6, claude-opus-4-6, …), so ClaudeModelResolver
-                // is authoritative. Adding a new Anthropic model to the SDK's
-                // ModelCatalog automatically surfaces it in the Kiro picker too.
-                if (!class_exists(ClaudeModelResolver::class)) return null;
+                // Kiro is the only CLI engine whose model list is pulled
+                // LIVE from the binary itself — `kiro-cli chat --list-models
+                // --format json-pretty`. KiroModelResolver memoizes the
+                // probe to `~/.cache/superaicore/kiro-models.json` (24h
+                // TTL). Uses dot-versioned IDs (`claude-sonnet-4.6`) unlike
+                // Claude Code CLI's dashes. Covers Anthropic + DeepSeek +
+                // MiniMax + GLM + Qwen + the `auto` routing primitive.
+                if (!class_exists(KiroModelResolver::class)) return null;
                 $out = [];
-                foreach (ClaudeModelResolver::families() as $family) {
-                    $full = ClaudeModelResolver::defaultFor($family);
+                foreach (KiroModelResolver::families() as $family => $_latest) {
+                    $full = KiroModelResolver::defaultFor($family);
                     $out[$family] = ucfirst($family) . ($full ? " ({$full})" : '');
                 }
-                foreach (ClaudeModelResolver::catalog() as $m) {
+                foreach (KiroModelResolver::catalog() as $m) {
                     $out[$m['slug']] = $m['display_name'];
                 }
-                // Kiro-specific "Auto" pseudo-model — lets the router pick
-                // the cheapest Anthropic model for the task. Not in the
-                // Claude catalog because it's a Kiro routing primitive.
-                $out['auto'] = 'Auto (Kiro router picks the cheapest model)';
                 return $out;
         }
         return null;
@@ -386,16 +385,29 @@ class EngineCatalog
                 'dispatcher_backends' => ['kiro_cli'],
                 'is_cli'              => true,
                 'cli_binary'          => 'kiro-cli',
-                // Kiro routes models server-side; the string in agent JSON's
-                // `model` field is authoritative. Headless CLI has no `--model`
-                // flag, so the runner rewrites the agent file per invocation.
-                'default_model'       => 'claude-sonnet-4-6',
+                // Kiro routes server-side; `kiro-cli chat --model <id>`
+                // passes the slug through to its router. IDs use DOT
+                // separators (not Claude CLI's dashes) — KiroModelResolver
+                // hydrates the authoritative list from the CLI itself.
+                // This seed is only used as a fallback projection when
+                // KiroModelResolver can't probe (kiro-cli absent, filesystem
+                // read-only, etc.); keep it in sync with the STATIC_FALLBACK
+                // in KiroModelResolver so both stay consistent.
+                'default_model'       => 'claude-sonnet-4.6',
                 'billing_model'       => 'subscription',
                 'available_models'    => [
-                    'claude-sonnet-4-6',
-                    'claude-sonnet-4-5',
-                    'claude-opus-4-6',
-                    'claude-haiku-4-5',
+                    'auto',
+                    'claude-opus-4.6',
+                    'claude-sonnet-4.6',
+                    'claude-opus-4.5',
+                    'claude-sonnet-4.5',
+                    'claude-sonnet-4',
+                    'claude-haiku-4.5',
+                    'deepseek-3.2',
+                    'minimax-m2.5',
+                    'minimax-m2.1',
+                    'glm-5',
+                    'qwen3-coder-next',
                 ],
                 // `kiro-cli chat` emits plain text (the --format flag exists
                 // only on doctor / settings / whoami / diagnostic commands).
@@ -482,7 +494,8 @@ class EngineCatalog
      * - claude  → catalog provider `anthropic` (only ids starting with `claude-`)
      * - gemini  → catalog provider `gemini`    (only ids starting with `gemini`)
      * - codex   → catalog provider `openai`    (only ids starting with `gpt-`)
-     * - copilot → no-op (dot-IDs; Copilot's catalog is authoritative elsewhere)
+     * - copilot → no-op (dot-IDs; CopilotModelResolver is authoritative)
+     * - kiro    → no-op (KiroModelResolver probes `kiro-cli --list-models` live)
      * - other   → seed unchanged
      *
      * Seed entries keep their original order at the front so family aliases
@@ -498,7 +511,6 @@ class EngineCatalog
             'claude' => 'anthropic',
             'gemini' => 'gemini',
             'codex'  => 'openai',
-            'kiro'   => 'anthropic', // Kiro's available slugs share Claude's vocabulary
             default  => null,
         };
         if ($catalogProvider === null) {
@@ -518,7 +530,6 @@ class EngineCatalog
             'claude' => 'claude-',
             'gemini' => 'gemini',
             'codex'  => 'gpt-',
-            'kiro'   => 'claude-',
             default  => '',
         };
 

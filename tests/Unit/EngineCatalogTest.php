@@ -135,19 +135,35 @@ final class EngineCatalogTest extends TestCase
         $this->assertNotEmpty($hasFamily, 'Expected at least one family alias key in copilot options');
     }
 
-    public function test_model_options_kiro_reuses_claude_resolver(): void
+    public function test_model_options_kiro_pulls_from_kiro_model_resolver(): void
     {
         $catalog = new EngineCatalog([]);
         $opts = $catalog->modelOptions('kiro');
 
-        // Kiro's available slugs are Anthropic's — we reuse ClaudeModelResolver
-        // so new models surface automatically in the picker.
+        // KiroModelResolver populates the picker — live from
+        // `kiro-cli chat --list-models` if available, otherwise from the
+        // static fallback. Either source must surface:
+        //   - the inherit-default placeholder
+        //   - the Anthropic family aliases (sonnet/opus/haiku)
+        //   - the routing primitive (auto)
+        //   - at least one non-Anthropic model, proving the dropdown is
+        //     NOT just a reskinned ClaudeModelResolver
+        //   - dot-versioned slugs (Kiro's convention), not dashes
         $this->assertSame('(inherit default)', $opts['']);
         $this->assertArrayHasKey('sonnet', $opts);
-        $this->assertArrayHasKey('claude-sonnet-4-6', $opts);
-        // Kiro-only routing primitive.
         $this->assertArrayHasKey('auto', $opts);
-        $this->assertStringContainsString('Kiro router', $opts['auto']);
+        $this->assertArrayHasKey('claude-sonnet-4.6', $opts);
+        $this->assertArrayNotHasKey('claude-sonnet-4-6', $opts, 'Dash-format Claude slug must NOT appear in Kiro picker');
+
+        $nonAnthropic = array_filter(
+            array_keys($opts),
+            fn ($k) => $k !== '' && !str_contains($k, 'claude') && $k !== 'auto'
+                && !in_array($k, ['sonnet', 'opus', 'haiku'], true),
+        );
+        $this->assertNotEmpty(
+            $nonAnthropic,
+            'Kiro picker must include non-Claude models (deepseek / minimax / glm / qwen / …)'
+        );
     }
 
     public function test_model_options_host_registered_engine_uses_available_models(): void

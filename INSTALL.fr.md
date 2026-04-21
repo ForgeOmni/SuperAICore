@@ -236,7 +236,39 @@ $result = $dispatcher->dispatch([
 ]);
 ```
 
-## 8. Mise à jour
+## 8. Suivi d'usage côté hôte avec `UsageRecorder` (0.6.2+)
+
+Si votre application hôte lance les CLIs via son propre runner (par ex. `App\Services\ClaudeRunner`, des jobs d'étape, un pipeline `ExecuteTask`) au lieu de passer par `Dispatcher::dispatch()`, ces exécutions n'écrivent rien dans `ai_usage_logs` — le Dispatcher est l'unique rédacteur. Glissez un seul appel `UsageRecorder::record()` à chaque fin d'exécution CLI pour obtenir des lignes propres, avec `cost_usd`, `shadow_cost_usd` et `billing_model` auto-remplis depuis le catalogue :
+
+```php
+use SuperAICore\Services\UsageRecorder;
+
+// Tokens déjà extraits du stream-json / stdout du CLI :
+app(UsageRecorder::class)->record([
+    'task_type'     => 'ppt.strategist',      // la clé d'agrégation de votre choix
+    'capability'    => 'agent_spawn',
+    'backend'       => 'claude_cli',
+    'model'         => 'claude-sonnet-4-5-20241022',
+    'input_tokens'  => 12345,
+    'output_tokens' => 6789,
+    'duration_ms'   => 45000,
+    'user_id'       => auth()->id(),
+    'metadata'      => ['ppt_job_id' => 42],
+]);
+```
+
+Si vous n'avez que le stdout CLI brut et pas encore parsé les tokens, `CliOutputParser` couvre les formes courantes :
+
+```php
+use SuperAICore\Services\CliOutputParser;
+
+$env = CliOutputParser::parseClaude($stdout);    // ou parseCodex / parseCopilot / parseGemini
+// $env = ['text' => '…', 'model' => '…', 'input_tokens' => 12345, 'output_tokens' => 6789, …] ou null
+```
+
+`UsageRecorder` est enregistré en singleton ; no-op quand `AI_CORE_USAGE_TRACKING=false`.
+
+## 9. Mise à jour
 
 ```bash
 composer update forgeomni/superaicore
@@ -245,6 +277,12 @@ php artisan migrate
 ```
 
 Consultez [CHANGELOG.md](CHANGELOG.md) avant un `--force` sur la config.
+
+**Migration 0.6.2** — ajoute deux colonnes nullable à `ai_usage_logs` : `shadow_cost_usd decimal(12,6)` et `billing_model varchar(20)`. Sûre, non destructive. Les lignes existantes reçoivent `NULL` (affiché `—` sur le tableau de bord) ; les nouvelles écritures sont remplies automatiquement par le Dispatcher. Pour nettoyer les lignes de test pré-0.6.1 avec `task_type=NULL` :
+
+```sql
+DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND output_tokens = 0;
+```
 
 ## Dépannage
 

@@ -41,8 +41,9 @@
 - **CliProcessBuilderRegistry** —— 基于引擎的 `ProcessSpec` 组装 `argv`（`build($key, ['prompt' => …, 'model' => …])`）。默认 builder 覆盖全部内置引擎；宿主可 `register($key, $callable)` 无需 fork 就替换成自定义形状。另暴露 `versionCommand()` / `authStatusCommand()` 给状态探测。以单例注册。
 - **Provider / Service / Routing 模型** —— 将抽象能力（`summarize`、`translate`、`code_review` 等）映射到具体服务，再将服务绑定到 provider 凭证。
 - **MCP 服务器管理器** —— 在后台 UI 中安装、启用、配置 MCP 服务器。
-- **使用量追踪** —— 每次调用将 prompt / response tokens、耗时、成本写入 `ai_usage_logs` 表。
-- **成本分析** —— 按模型价格表汇总 USD 费用，并提供带图表的仪表盘。
+- **使用量追踪** —— 每次调用将 prompt / response tokens、耗时、成本写入 `ai_usage_logs` 表。0.6.2+ 起每行还带 `shadow_cost_usd` 与 `billing_model`，让订阅型引擎（Copilot、Kiro、Claude Code builtin）在仪表盘上呈现有意义的"如果按 token 计费"USD 估值，而不是一排 $0。
+- **`UsageRecorder` —— 宿主侧 runner 的回写入口**（0.6.2+）—— 对 `UsageTracker` + `CostCalculator` 的薄封装；宿主自己 spawn CLI（例如 `App\Services\ClaudeRunner`、PPT 阶段任务、`ExecuteTask`）的场景下，每轮结束调用一次就能写入一条 `ai_usage_logs`，`cost_usd` / `shadow_cost_usd` / `billing_model` 全部按 catalog 自动补齐。搭配工具：`CliOutputParser::parseClaude()` / `::parseCodex()` / `::parseCopilot()` / `::parseGemini()` 可以从已捕获的 stdout 中抽出 `{text, model, input_tokens, output_tokens, …}`，不必构造完整后端对象。
+- **成本分析** —— 按模型价格表汇总 USD 费用，并提供带图表的仪表盘。0.6.2+ 新增 "By Task Type" 卡片、每行 `usage`/`sub` 计费模式徽章，以及每张分组表里的 shadow cost 列。仪表盘默认隐藏 0-token 行与 `test_connection` 行；`/providers` 的 "Test" 按钮现在会自我标记为 `task_type=test_connection`，不再污染主视图。
 - **进程监控** —— 查看正在运行的 AI 进程、跟踪日志、终止僵尸进程。
 - **三语 UI** —— 英文、简体中文、法文，可在运行时切换。
 - **宿主友好** —— 支持关闭路由/视图、替换 Blade 布局，或在父应用中复用返回链接与语言切换器。

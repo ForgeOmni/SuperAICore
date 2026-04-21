@@ -229,7 +229,39 @@ $result = $dispatcher->dispatch([
 ]);
 ```
 
-## 8. 升级
+## 8. 宿主侧使用量追踪 —— `UsageRecorder`（0.6.2+）
+
+如果宿主应用不是走 `Dispatcher::dispatch()`，而是自己 spawn CLI（例如 `App\Services\ClaudeRunner`、阶段任务、`ExecuteTask` 流水线），这些执行不会自动写 `ai_usage_logs` —— Dispatcher 是唯一写入者。在每个 CLI 完成路径上调用一次 `UsageRecorder::record()`，即可写入一条正规记录，`cost_usd` / `shadow_cost_usd` / `billing_model` 全部按 catalog 自动补齐：
+
+```php
+use SuperAICore\Services\UsageRecorder;
+
+// 已从 CLI 的 stream-json / stdout 中解析出的 tokens：
+app(UsageRecorder::class)->record([
+    'task_type'     => 'ppt.strategist',      // 任意能聚合的分组键
+    'capability'    => 'agent_spawn',
+    'backend'       => 'claude_cli',
+    'model'         => 'claude-sonnet-4-5-20241022',
+    'input_tokens'  => 12345,
+    'output_tokens' => 6789,
+    'duration_ms'   => 45000,
+    'user_id'       => auth()->id(),
+    'metadata'      => ['ppt_job_id' => 42],
+]);
+```
+
+如果手头只有原始 CLI stdout、还没自己抽 token，`CliOutputParser` 覆盖了常见格式：
+
+```php
+use SuperAICore\Services\CliOutputParser;
+
+$env = CliOutputParser::parseClaude($stdout);    // 或 parseCodex / parseCopilot / parseGemini
+// $env = ['text' => '…', 'model' => '…', 'input_tokens' => 12345, 'output_tokens' => 6789, …]；不匹配返回 null
+```
+
+`UsageRecorder` 以单例注册；当 `AI_CORE_USAGE_TRACKING=false` 时自动 no-op。
+
+## 9. 升级
 
 ```bash
 composer update forgeomni/superaicore
@@ -238,6 +270,12 @@ php artisan migrate
 ```
 
 在使用 `--force` 覆盖配置前，请查看 [CHANGELOG.md](CHANGELOG.md) 中的破坏性变更。
+
+**0.6.2 迁移** —— 给 `ai_usage_logs` 加两列（均可空）：`shadow_cost_usd decimal(12,6)` 与 `billing_model varchar(20)`。安全、非破坏性。历史行值为 `NULL`（仪表盘显示 `—`）；新写入由 Dispatcher 自动填充。如需清掉 0.6.1 之前残留的 `task_type=NULL` 测试行：
+
+```sql
+DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND output_tokens = 0;
+```
 
 ## 常见问题
 

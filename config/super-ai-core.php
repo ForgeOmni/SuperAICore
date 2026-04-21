@@ -205,11 +205,21 @@ return [
         // under "Subscription engines". KiroCliBackend surfaces the per-call
         // credit count under `usage.credits` for hosts that want a custom
         // dashboard card (e.g. "2.8 credits / 43s this month") — core cost
-        // totals stay at $0 to avoid cross-engine double counting.
-        'kiro:claude-sonnet-4-6'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'kiro:claude-sonnet-4-5'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'kiro:claude-opus-4-6'        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'kiro:claude-haiku-4-5'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'kiro:auto'                   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        // totals stay at $0 to avoid cross-engine double counting. IDs use
+        // DOT separators (matching `kiro-cli chat --list-models`); trailing
+        // comments show Kiro's own credit `rate_multiplier` so operators
+        // can see which models are more expensive per call.
+        'kiro:auto'                   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // router, 1.00×
+        'kiro:claude-opus-4.6'        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 2.20×
+        'kiro:claude-sonnet-4.6'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 1.30× (1M context)
+        'kiro:claude-opus-4.5'        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 2.20×
+        'kiro:claude-sonnet-4.5'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 1.30×
+        'kiro:claude-sonnet-4'        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 1.30×
+        'kiro:claude-haiku-4.5'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.40×
+        'kiro:deepseek-3.2'           => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.25× (preview)
+        'kiro:minimax-m2.5'           => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.25×
+        'kiro:minimax-m2.1'           => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.15× (preview)
+        'kiro:glm-5'                  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.50×
+        'kiro:qwen3-coder-next'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.05× (preview)
     ],
 ];

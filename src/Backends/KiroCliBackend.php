@@ -19,14 +19,17 @@ use Symfony\Component\Process\Process;
  *
  * Uses `chat --no-interactive --trust-all-tools` so the binary prints its
  * response to stdout without interactive slash commands. Output is plain
- * text (the `--format json` flag is only supported on `doctor / settings /
- * whoami / diagnostic`, NOT on `chat`), so we parse the tail summary line
+ * text (the `--format json` flag applies only to `--list-models` /
+ * `--list-sessions`, not to the chat body itself), so we parse the tail
+ * summary line
  *
  *   ▸ Credits: 0.39 • Time: 22s
  *
- * to capture usage. Model selection is NOT a CLI flag in headless mode —
- * the agent JSON's `model` field is authoritative; `generate()` without a
- * named agent lets Kiro's router pick based on the subscription tier.
+ * to capture usage. When a model is supplied, it is passed through via
+ * `--model <id>` — Kiro accepts any of the slugs returned by `kiro-cli
+ * chat --list-models` (claude-sonnet-4.6, deepseek-3.2, minimax-m2.5,
+ * glm-5, qwen3-coder-next, auto, …). Omitting --model lets Kiro's
+ * router pick based on the subscription tier.
  */
 class KiroCliBackend implements Backend
 {
@@ -66,11 +69,16 @@ class KiroCliBackend implements Backend
             $prompt = $this->messagesToPrompt($options['messages']);
         }
 
-        $model = $options['model'] ?? $providerConfig['model'] ?? null;
+        $rawModel = $options['model'] ?? $providerConfig['model'] ?? null;
+        $model = \SuperAICore\Services\KiroModelResolver::resolve($rawModel);
 
         $cmd = [$this->binary, 'chat', '--no-interactive'];
         if ($this->trustAllTools) {
             $cmd[] = '--trust-all-tools';
+        }
+        if ($model !== null && $model !== '') {
+            $cmd[] = '--model';
+            $cmd[] = $model;
         }
         // Positional prompt — Kiro's headless mode reads the last non-flag
         // argument as the user message.
