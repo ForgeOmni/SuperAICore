@@ -18,6 +18,8 @@ use Illuminate\Database\Eloquent\Model;
  * @property int $input_tokens
  * @property int $output_tokens
  * @property float $cost_usd
+ * @property float|null $shadow_cost_usd
+ * @property string|null $billing_model
  * @property int|null $duration_ms
  * @property int|null $user_id
  * @property array|null $metadata
@@ -31,8 +33,9 @@ class AiUsageLog extends Model
     protected $fillable = [
         'backend', 'provider_id', 'service_id', 'model',
         'task_type', 'capability',
-        'input_tokens', 'output_tokens', 'cost_usd', 'duration_ms',
-        'user_id', 'metadata',
+        'input_tokens', 'output_tokens',
+        'cost_usd', 'shadow_cost_usd', 'billing_model',
+        'duration_ms', 'user_id', 'metadata',
     ];
 
     protected $casts = [
@@ -40,6 +43,7 @@ class AiUsageLog extends Model
         'input_tokens' => 'integer',
         'output_tokens' => 'integer',
         'cost_usd' => 'decimal:6',
+        'shadow_cost_usd' => 'decimal:6',
         'duration_ms' => 'integer',
     ];
 

@@ -31,18 +31,23 @@ class CostDashboardController extends Controller
         $allRows = collect($usage->all())->map(function ($r) use ($costs) {
             $backend = $r['backend'] ?? 'unknown';
             $model   = $r['model']   ?? 'unknown';
+            // Prefer the row-stamped billing_model (honours any historical
+            // override when it was recorded) and fall back to the current
+            // catalog so pre-0.6.1 rows still classify.
+            $billing = $r['billing_model'] ?? $costs->billingModel($model, $backend);
             return (object) [
-                'cost_usd'      => (float) ($r['cost_usd'] ?? 0),
-                'input_tokens'  => (int) ($r['input_tokens'] ?? 0),
-                'output_tokens' => (int) ($r['output_tokens'] ?? 0),
-                'model'         => $model,
-                'backend'       => $backend,
-                'billing_model' => $costs->billingModel($model, $backend),
-                'task_type'     => $r['task_type'] ?? 'unknown',
-                'provider_id'   => $r['provider_id'] ?? null,
-                'created_at'    => isset($r['created_at']) ? (Carbon::make($r['created_at']) ?: null) : null,
+                'cost_usd'        => (float) ($r['cost_usd'] ?? 0),
+                'shadow_cost_usd' => (float) ($r['shadow_cost_usd'] ?? 0),
+                'input_tokens'    => (int) ($r['input_tokens'] ?? 0),
+                'output_tokens'   => (int) ($r['output_tokens'] ?? 0),
+                'model'           => $model,
+                'backend'         => $backend,
+                'billing_model'   => $billing,
+                'task_type'       => $r['task_type'] ?? 'unknown',
+                'provider_id'     => $r['provider_id'] ?? null,
+                'created_at'      => isset($r['created_at']) ? (Carbon::make($r['created_at']) ?: null) : null,
             ];
-        });
+        })->filter(fn ($r) => $r->task_type !== 'test_connection');
 
         $rows             = $allRows->where('billing_model', CostCalculator::BILLING_USAGE);
         $subscriptionRows = $allRows->where('billing_model', CostCalculator::BILLING_SUBSCRIPTION);
@@ -54,8 +59,12 @@ class CostDashboardController extends Controller
             'total_input_tokens' => (int) $rows->sum('input_tokens'),
             'total_output_tokens'=> (int) $rows->sum('output_tokens'),
             'total_tokens'       => (int) ($rows->sum('input_tokens') + $rows->sum('output_tokens')),
-            // Subscription panel surfaces call counts only — no $ rolled up.
-            'subscription_tasks' => $subscriptionRows->count(),
+            // Subscription panel surfaces call counts AND shadow USD so
+            // operators can compare subscription throughput against
+            // pay-as-you-go spend on the same scale.
+            'subscription_tasks'       => $subscriptionRows->count(),
+            'subscription_shadow_cost' => (float) $subscriptionRows->sum('shadow_cost_usd'),
+            'subscription_tokens'      => (int) ($subscriptionRows->sum('input_tokens') + $subscriptionRows->sum('output_tokens')),
         ];
 
         $thirtyDaysAgo = Carbon::now()->subDays(30)->startOfDay();
@@ -83,12 +92,14 @@ class CostDashboardController extends Controller
     protected function aggregate($group): array
     {
         $cost = (float) $group->sum('cost_usd');
+        $shadow = (float) $group->sum('shadow_cost_usd');
         $count = $group->count();
         $input = (int) $group->sum('input_tokens');
         $output = (int) $group->sum('output_tokens');
         return [
             'count' => $count,
             'cost' => $cost,
+            'shadow_cost' => $shadow,
             'avg_cost' => $count > 0 ? $cost / $count : 0,
             'input_tokens' => $input,
             'output_tokens' => $output,

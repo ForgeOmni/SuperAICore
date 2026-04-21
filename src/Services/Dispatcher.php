@@ -77,16 +77,20 @@ class Dispatcher
         // Compute cost. Backend name lets the calculator pick subscription
         // pricing entries (e.g. copilot:claude-sonnet-4-5) and emit $0 for
         // subscription-billed engines so dashboard totals stay correct.
-        $cost = $this->costs->calculate(
-            $result['model'] ?? 'unknown',
-            $result['usage']['input_tokens'] ?? 0,
-            $result['usage']['output_tokens'] ?? 0,
-            $backend->name(),
-        );
+        $modelId = $result['model'] ?? 'unknown';
+        $inputTokens = $result['usage']['input_tokens'] ?? 0;
+        $outputTokens = $result['usage']['output_tokens'] ?? 0;
+
+        $cost = $this->costs->calculate($modelId, $inputTokens, $outputTokens, $backend->name());
+        $billingModel = $this->costs->billingModel($modelId, $backend->name());
+        $shadowCost = $billingModel === CostCalculator::BILLING_SUBSCRIPTION
+            ? $this->costs->shadowCalculate($modelId, $inputTokens, $outputTokens)
+            : $cost;
 
         $result['cost_usd'] = $cost;
+        $result['shadow_cost_usd'] = $shadowCost;
         $result['backend'] = $backend->name();
-        $result['billing_model'] = $this->costs->billingModel($result['model'] ?? 'unknown', $backend->name());
+        $result['billing_model'] = $billingModel;
         $result['duration_ms'] = $durationMs;
 
         // Record usage
@@ -95,14 +99,17 @@ class Dispatcher
                 'backend' => $backend->name(),
                 'provider_id' => $providerId,
                 'service_id' => $serviceId,
-                'model' => $result['model'] ?? 'unknown',
+                'model' => $modelId,
                 'task_type' => $options['task_type'] ?? null,
                 'capability' => $options['capability'] ?? null,
-                'input_tokens' => $result['usage']['input_tokens'] ?? 0,
-                'output_tokens' => $result['usage']['output_tokens'] ?? 0,
+                'input_tokens' => $inputTokens,
+                'output_tokens' => $outputTokens,
                 'cost_usd' => $cost,
+                'shadow_cost_usd' => $shadowCost,
+                'billing_model' => $billingModel,
                 'duration_ms' => $durationMs,
                 'user_id' => $options['user_id'] ?? null,
+                'metadata' => $options['metadata'] ?? null,
             ]);
         }
 

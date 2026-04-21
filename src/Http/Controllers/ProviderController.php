@@ -133,6 +133,9 @@ class ProviderController extends Controller
                 'max_tokens' => 10,
                 'backend' => $backendName,
                 'provider_config' => ['type' => 'builtin'],
+                'task_type' => 'test_connection',
+                'capability' => 'builtin_cli',
+                'metadata' => ['origin' => 'provider.testBuiltin'],
             ]);
 
             if ($result && !empty($result['text'])) {
@@ -236,6 +239,9 @@ class ProviderController extends Controller
                 'prompt' => 'Reply with exactly: OK',
                 'max_tokens' => 10,
                 'provider_id' => $provider->id,
+                'task_type' => 'test_connection',
+                'capability' => 'provider_ping',
+                'metadata' => ['origin' => 'provider.test', 'provider_id' => $provider->id],
             ]);
 
             if ($result && !empty($result['text'])) {

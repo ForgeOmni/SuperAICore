@@ -149,6 +149,9 @@ class AiServiceController extends Controller
                     'api_key' => $service->decrypted_api_key,
                     'base_url' => $service->base_url,
                 ],
+                'task_type' => 'test_connection',
+                'capability' => 'service_ping',
+                'metadata' => ['origin' => 'ai_service.test', 'service_id' => $service->id],
             ]);
 
             if ($result && !empty($result['text'])) {

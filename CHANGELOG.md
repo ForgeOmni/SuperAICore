@@ -4,6 +4,67 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] — 2026-04-21
+
+Patch release closing the "most dashboard rows are 0/0/0" gap on `/super-ai-core/usage` and `/super-ai-core/costs`. Previously every execution that the host app routed through its own runners (`App\Services\ClaudeRunner`, etc.) silently bypassed `ai_usage_logs`, and the few rows that did land there came from the `/providers` "Test connection" button with subscription-billed CLIs that returned `{input_tokens:0, output_tokens:0}` — making the dashboard look empty even during heavy use. This release adds a shadow-cost accounting path so subscription engines surface meaningful USD numbers, a clean `UsageRecorder` API so host runners can drop a one-liner at their call sites, and default dashboard filters that hide the noise.
+
+No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work; new columns on `ai_usage_logs` are nullable and backfill automatically on new writes.
+
+### Added
+
+**Shadow cost (`shadow_cost_usd`, `billing_model` on `ai_usage_logs`)**
+- New migration `2026_04_21_000001_add_shadow_cost_to_ai_usage_logs.php` — adds `shadow_cost_usd decimal(12,6) nullable` and `billing_model varchar(20) nullable` after `cost_usd`. Run `php artisan migrate` on any host using the package.
+- `Services\CostCalculator::shadowCalculate(string $model, int $inputTokens, int $outputTokens): float` — computes pay-as-you-go USD for the same tokens regardless of billing model, so a Copilot / Claude-Code-builtin session appears on the Cost Analytics dashboard with a meaningful number instead of a $0 row. Falls through to the SuperAgent `ModelCatalog` for models the host config doesn't enumerate. Returns 0 when the model id is unknown or tokens are zero.
+- `Services\Dispatcher::dispatch()` — now stamps `cost_usd`, `shadow_cost_usd`, and `billing_model` onto both the returned result array and the `ai_usage_logs` row. Also forwards `metadata` from the options bag so callers can attach arbitrary context (job id, agent name, etc.) without a custom column.
+- `Models\AiUsageLog` — fillable + casts extended for the two new columns.
+
+**`Services\UsageRecorder` — façade for host-side runners**
+- Thin wrapper on top of `UsageTracker` + `CostCalculator` that auto-fills `cost_usd`, `shadow_cost_usd`, and `billing_model` from the pricing catalog. Host apps that spawn CLIs directly (e.g. `App\Services\ClaudeRunner`, the PPT stage jobs, `ExecuteTask`) can now drop a single call after each turn:
+
+  ```php
+  app(\SuperAICore\Services\UsageRecorder::class)->record([
+      'task_type'     => 'ppt.strategist',     // or 'tasks.run', 'ppt.executor', …
+      'capability'    => 'agent_spawn',
+      'backend'       => 'claude_cli',
+      'model'         => 'claude-sonnet-4-5-20241022',
+      'input_tokens'  => 12345,
+      'output_tokens' => 6789,
+      'duration_ms'   => 45000,
+      'user_id'       => auth()->id(),
+      'metadata'      => ['ppt_job_id' => 42],
+  ]);
+  ```
+
+  Registered as a singleton in `SuperAICoreServiceProvider::register()`. No-ops when `AI_CORE_USAGE_TRACKING=false` (via the underlying `UsageTracker`).
+
+**`Services\CliOutputParser` — reusable parsers for captured CLI output**
+- Static delegates over the backend classes' existing parsers: `::parseClaude()`, `::parseCodex()`, `::parseCopilot()`, `::parseGemini()`. Return the `{text, model, input_tokens, output_tokens, …}` envelope or null when the output doesn't match. Host apps that already capture CLI stdout can extract tokens without constructing a full backend object.
+
+**Dashboard improvements**
+- `/super-ai-core/usage` — new "By Task Type" card, "Shadow cost" column on every breakdown table, a per-row billing-model badge (usage / sub), and two toggles above the filters: **Hide 0-token rows** (default on) and **Hide test_connection** (default on). Noise from the `/providers` test button is now filtered by default.
+- `/super-ai-core/costs` — "Subscription engines" panel now shows an estimated shadow-cost total alongside call count and token totals, so operators can compare a Copilot session against a pay-as-you-go spend on the same scale. `test_connection` rows are excluded from all roll-ups.
+
+### Changed
+
+**Test-connection buttons now tag themselves**
+- `Http\Controllers\ProviderController::testBuiltin()`, `ProviderController::test()`, and `Http\Controllers\AiServiceController::testService()` now pass `task_type => 'test_connection'` plus a short `capability` and `metadata.origin` to the Dispatcher. Rows from the "Test" buttons are grouped and hidden from the dashboards by default instead of cluttering them.
+
+**Billing model stamped at write time, not recomputed on read**
+- `CostDashboardController` now prefers the row-stamped `billing_model` (set by the Dispatcher at record time) and falls back to `CostCalculator::billingModel()` only for pre-0.6.1 rows. This keeps historical accuracy when the catalog changes.
+
+### Migration notes
+
+1. Run `php artisan migrate` on every host (adds two nullable columns — safe, non-destructive).
+2. Existing rows get `NULL` for both new columns; the dashboards render `—` for them. Subscription rows previously written with `cost_usd=0` will only surface shadow cost going forward; backfill is not attempted.
+3. Host apps that already wire their own runners and want real-execution tracking: call `app(UsageRecorder::class)->record()` from each CLI completion path. See the snippet above. No API breakage for hosts that do nothing.
+
+### Known gaps (follow-up)
+
+- `Runner\ClaudeAgentRunner`, `CodexAgentRunner`, `GeminiAgentRunner`, `CopilotAgentRunner` still emit plain-text streams and do not auto-record usage — adopting stream-json output would change the user-visible output format, so opt-in wiring is deferred to 0.7. Hosts that want tracking today should adopt `UsageRecorder` at their own CLI call sites.
+- No backfill of the handful of "Test connection" rows with `task_type=NULL` from before 0.6.1 — they'll disappear as soon as the "Hide 0-token rows" default filter is applied, but you can also clear them manually: `DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens=0 AND output_tokens=0;`
+
+---
+
 ## [0.6.0] — 2026-04-19
 
 Minor-version bump because the **SuperAgent `ModelCatalog` (0.8.7)** now flows into every place SuperAICore used to hand-maintain model metadata: `CostCalculator` pricing, `ModelResolver` alias lookup, `EngineCatalog::modelOptions()` dropdown bodies, and the new `super-ai-core:models` CLI. Host apps running `superagent models update` immediately see updated pricing and new model rows without a `composer update` or `vendor:publish`. Also: Gemini CLI OAuth state lands on the `/providers` card, the model-picker placeholder is translated for en/zh-CN/fr, and `CliStatusDetector` picks up host-registered CLI engines automatically.

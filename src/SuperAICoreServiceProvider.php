@@ -18,6 +18,7 @@ use SuperAICore\Services\Dispatcher;
 use SuperAICore\Services\EngineCatalog;
 use SuperAICore\Services\ProcessSourceRegistry;
 use SuperAICore\Services\ProviderResolver;
+use SuperAICore\Services\UsageRecorder;
 use SuperAICore\Services\UsageTracker;
 use SuperAICore\Sources\AiProcessSource;
 use Illuminate\Support\Facades\Route;
@@ -55,6 +56,13 @@ class SuperAICoreServiceProvider extends ServiceProvider
 
         $this->app->singleton(UsageTracker::class, function ($app) {
             return new UsageTracker($app->make(UsageRepository::class));
+        });
+
+        $this->app->singleton(UsageRecorder::class, function ($app) {
+            return new UsageRecorder(
+                $app->make(UsageTracker::class),
+                $app->make(CostCalculator::class),
+            );
         });
 
         $this->app->singleton(ProviderResolver::class, function ($app) {
