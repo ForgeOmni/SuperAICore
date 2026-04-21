@@ -15,6 +15,7 @@
   - `codex` CLI 在 `$PATH` 中 —— Codex CLI 后端
   - `gemini` CLI 在 `$PATH` 中 —— Gemini CLI 后端
   - `copilot` CLI 在 `$PATH` 中（再跑 `copilot login`）—— GitHub Copilot CLI 后端
+  - `kiro-cli` 在 `$PATH` 中（再跑 `kiro-cli login`；或设置 `KIRO_API_KEY` 走 headless，需 Pro / Pro+ / Power）—— Kiro CLI 后端（0.6.1+）
   - Anthropic API Key —— `anthropic_api`
   - OpenAI API Key —— `openai_api`
   - Google AI Studio Key —— `gemini_api`
@@ -91,6 +92,8 @@ SUPER_AI_CORE_LOCALE_COOKIE=locale
 AI_CORE_CLAUDE_CLI_ENABLED=true
 AI_CORE_CODEX_CLI_ENABLED=true
 AI_CORE_GEMINI_CLI_ENABLED=true
+AI_CORE_COPILOT_CLI_ENABLED=true
+AI_CORE_KIRO_CLI_ENABLED=true
 AI_CORE_SUPERAGENT_ENABLED=true
 AI_CORE_ANTHROPIC_API_ENABLED=true
 AI_CORE_OPENAI_API_ENABLED=true
@@ -98,6 +101,17 @@ AI_CORE_GEMINI_API_ENABLED=true
 CLAUDE_CLI_BIN=claude
 CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
+COPILOT_CLI_BIN=copilot
+KIRO_CLI_BIN=kiro-cli
+AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
+# Kiro 的 --no-interactive 模式默认拒绝未预先授权的工具；除非使用
+# --trust-tools=<categories> 预置白名单，否则保持 true（0.6.1+）。
+AI_CORE_KIRO_TRUST_ALL_TOOLS=true
+# Kiro API key 鉴权（headless，需 Pro / Pro+ / Power 订阅）。设置该变量
+# 后 kiro-cli 会跳过浏览器登录流程。通常通过 provider type=kiro-api 存到 DB
+# 里使用，仅当直接调 kiro-cli（不经 superaicore dispatcher）时才需要导出
+# 这个 env（0.6.1+）。
+# KIRO_API_KEY=ksk_...
 # 0.5.8+：cli:status 中 copilot 行的可选 liveness 探测，默认关闭
 # （每次状态轮询 spawn 一次 `copilot --help` 成本过高）。
 SUPERAICORE_COPILOT_PROBE=false
@@ -150,15 +164,21 @@ AI_CORE_PROCESS_MONITOR=false
 # 把 Claude 风格 agent 翻译成 Copilot 的 .agent.md 格式
 # （`agent:run --backend=copilot` 会自动触发；这里是手动预览）
 ./vendor/bin/superaicore copilot:sync --dry-run
+
+# 同样的契约对 Kiro 也成立（0.6.1+）：agent 翻译成 ~/.kiro/agents/<name>.json
+# （`agent:run --backend=kiro` 会自动触发；这里是手动预览）
+./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
-不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`、`copilot`）—— 按需装：
+不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`、`copilot`、`kiro-cli`）—— 按需装：
 
 ```bash
 npm i -g @anthropic-ai/claude-code
 brew install codex        # 或 cargo install codex
 npm i -g @google/gemini-cli
 npm i -g @github/copilot   # 然后 `copilot login`（OAuth device flow）
+# kiro-cli —— 按 https://kiro.dev/cli/ 安装，然后 `kiro-cli login`
+# （或 export KIRO_API_KEY=ksk_... 走 Pro / Pro+ / Power 订阅的 headless 模式）
 ```
 
 一键替代（推荐）—— 让 superaicore 自己检测并安装：

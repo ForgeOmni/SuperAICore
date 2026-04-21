@@ -135,6 +135,21 @@ final class EngineCatalogTest extends TestCase
         $this->assertNotEmpty($hasFamily, 'Expected at least one family alias key in copilot options');
     }
 
+    public function test_model_options_kiro_reuses_claude_resolver(): void
+    {
+        $catalog = new EngineCatalog([]);
+        $opts = $catalog->modelOptions('kiro');
+
+        // Kiro's available slugs are Anthropic's — we reuse ClaudeModelResolver
+        // so new models surface automatically in the picker.
+        $this->assertSame('(inherit default)', $opts['']);
+        $this->assertArrayHasKey('sonnet', $opts);
+        $this->assertArrayHasKey('claude-sonnet-4-6', $opts);
+        // Kiro-only routing primitive.
+        $this->assertArrayHasKey('auto', $opts);
+        $this->assertStringContainsString('Kiro router', $opts['auto']);
+    }
+
     public function test_model_options_host_registered_engine_uses_available_models(): void
     {
         $catalog = new EngineCatalog([

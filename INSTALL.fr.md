@@ -15,6 +15,7 @@ Ce guide détaille l'installation complète de `forgeomni/superaicore` dans une 
   - `codex` CLI dans `$PATH` — pour le backend Codex CLI
   - `gemini` CLI dans `$PATH` — pour le backend Gemini CLI
   - `copilot` CLI dans `$PATH` (puis `copilot login`) — pour le backend GitHub Copilot CLI
+  - `kiro-cli` dans `$PATH` (puis `kiro-cli login` ; ou définir `KIRO_API_KEY` pour le mode headless Pro / Pro+ / Power) — pour le backend Kiro CLI (0.6.1+)
   - Clé API Anthropic — pour `anthropic_api`
   - Clé API OpenAI — pour `openai_api`
   - Clé Google AI Studio — pour `gemini_api`
@@ -91,6 +92,8 @@ SUPER_AI_CORE_LOCALE_COOKIE=locale
 AI_CORE_CLAUDE_CLI_ENABLED=true
 AI_CORE_CODEX_CLI_ENABLED=true
 AI_CORE_GEMINI_CLI_ENABLED=true
+AI_CORE_COPILOT_CLI_ENABLED=true
+AI_CORE_KIRO_CLI_ENABLED=true
 AI_CORE_SUPERAGENT_ENABLED=true
 AI_CORE_ANTHROPIC_API_ENABLED=true
 AI_CORE_OPENAI_API_ENABLED=true
@@ -98,6 +101,19 @@ AI_CORE_GEMINI_API_ENABLED=true
 CLAUDE_CLI_BIN=claude
 CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
+COPILOT_CLI_BIN=copilot
+KIRO_CLI_BIN=kiro-cli
+AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
+# Le mode --no-interactive de Kiro refuse d'exécuter des outils sans
+# approbation préalable ; à moins d'utiliser --trust-tools=<catégories>,
+# laisser à true (0.6.1+).
+AI_CORE_KIRO_TRUST_ALL_TOOLS=true
+# Auth par clé API Kiro (mode headless, réservé aux abonnés Pro / Pro+ /
+# Power). Définir cette variable fait sauter le flux de login navigateur.
+# Stockée normalement par provider en base via type=kiro-api ; à exporter
+# uniquement quand kiro-cli est invoqué hors du dispatcher superaicore
+# (0.6.1+).
+# KIRO_API_KEY=ksk_...
 # Sonde de liveness optionnelle pour la ligne copilot de `cli:status`
 # (0.5.8+). Désactivée par défaut — un `copilot --help` à chaque sondage
 # de statut serait du gaspillage.
@@ -149,15 +165,27 @@ Si des skills ou sous-agents Claude Code sont déjà installés (sous `./.claude
 # Générer les commandes personnalisées Gemini pour chaque skill/agent
 # (écrit dans ~/.gemini/commands/skill/*.toml et agent/*.toml)
 ./vendor/bin/superaicore gemini:sync --dry-run
+
+# Traduire les sous-agents Claude vers le format `.agent.md` de Copilot.
+# Déclenché automatiquement par `agent:run --backend=copilot` ; ce flag
+# sert d'aperçu manuel.
+./vendor/bin/superaicore copilot:sync --dry-run
+
+# Même contrat pour Kiro (0.6.1+) : agents traduits en
+# ~/.kiro/agents/<nom>.json. Déclenché automatiquement par
+# `agent:run --backend=kiro` ; ce flag sert d'aperçu manuel.
+./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
-Aucune configuration requise. Sans `--dry-run`, la commande passe la main aux CLI backends (`claude`, `codex`, `gemini`, `copilot`) — installez ceux que vous comptez utiliser :
+Aucune configuration requise. Sans `--dry-run`, la commande passe la main aux CLI backends (`claude`, `codex`, `gemini`, `copilot`, `kiro-cli`) — installez ceux que vous comptez utiliser :
 
 ```bash
 npm i -g @anthropic-ai/claude-code
 brew install codex        # ou : cargo install codex
 npm i -g @google/gemini-cli
 npm i -g @github/copilot   # puis `copilot login` (OAuth device flow)
+# kiro-cli — télécharger depuis https://kiro.dev/cli/ puis `kiro-cli login`
+# (ou export KIRO_API_KEY=ksk_... pour le mode headless Pro / Pro+ / Power)
 ```
 
 Raccourci en une commande (recommandé) — laissez superaicore détecter et installer :

@@ -6,6 +6,7 @@ use SuperAICore\Capabilities\ClaudeCapabilities;
 use SuperAICore\Capabilities\CodexCapabilities;
 use SuperAICore\Capabilities\CopilotCapabilities;
 use SuperAICore\Capabilities\GeminiCapabilities;
+use SuperAICore\Capabilities\KiroCapabilities;
 use SuperAICore\Capabilities\SuperAgentCapabilities;
 use SuperAICore\Contracts\BackendCapabilities;
 use SuperAICore\Models\AiProvider;
@@ -28,6 +29,7 @@ class CapabilityRegistry
         $this->register(new CodexCapabilities());
         $this->register(new GeminiCapabilities());
         $this->register(new CopilotCapabilities());
+        $this->register(new KiroCapabilities());
         $this->register(new SuperAgentCapabilities());
     }
 

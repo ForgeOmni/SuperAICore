@@ -1,0 +1,189 @@
+<?php
+
+namespace SuperAICore\Backends;
+
+use SuperAICore\Contracts\Backend;
+use SuperAICore\Models\AiProvider;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\Process\Process;
+
+/**
+ * Spawns AWS's `kiro-cli` (Kiro CLI 2.0+) in headless mode.
+ *
+ * Two auth channels are supported, matching AiProvider::BACKEND_TYPES[kiro]:
+ *   - `builtin`:  host has already run `kiro-cli login`; no env injection
+ *                 (keychain/token-store carries the session)
+ *   - `kiro-api`: DB-stored key is injected as KIRO_API_KEY — setting that
+ *                 env var makes kiro-cli skip its browser login flow entirely
+ *                 (Pro / Pro+ / Power subscribers only)
+ *
+ * Uses `chat --no-interactive --trust-all-tools` so the binary prints its
+ * response to stdout without interactive slash commands. Output is plain
+ * text (the `--format json` flag is only supported on `doctor / settings /
+ * whoami / diagnostic`, NOT on `chat`), so we parse the tail summary line
+ *
+ *   ▸ Credits: 0.39 • Time: 22s
+ *
+ * to capture usage. Model selection is NOT a CLI flag in headless mode —
+ * the agent JSON's `model` field is authoritative; `generate()` without a
+ * named agent lets Kiro's router pick based on the subscription tier.
+ */
+class KiroCliBackend implements Backend
+{
+    public function __construct(
+        protected string $binary = 'kiro-cli',
+        protected int $timeout = 300,
+        protected bool $trustAllTools = true,
+        protected ?LoggerInterface $logger = null,
+    ) {}
+
+    public function name(): string
+    {
+        return 'kiro_cli';
+    }
+
+    public function isAvailable(array $providerConfig = []): bool
+    {
+        $process = new Process(['which', $this->binary]);
+        $process->run();
+        if (!$process->isSuccessful()) return false;
+
+        // kiro-api type further requires KIRO_API_KEY at dispatch time —
+        // we can't verify the key itself without a live call, but we can
+        // short-circuit when the stored provider has no key.
+        $type = $providerConfig['type'] ?? 'builtin';
+        if ($type === AiProvider::TYPE_KIRO_API && empty($providerConfig['api_key'])) {
+            return false;
+        }
+        return true;
+    }
+
+    public function generate(array $options): ?array
+    {
+        $providerConfig = $options['provider_config'] ?? [];
+        $prompt = $options['prompt'] ?? '';
+        if ($prompt === '' && !empty($options['messages'])) {
+            $prompt = $this->messagesToPrompt($options['messages']);
+        }
+
+        $model = $options['model'] ?? $providerConfig['model'] ?? null;
+
+        $cmd = [$this->binary, 'chat', '--no-interactive'];
+        if ($this->trustAllTools) {
+            $cmd[] = '--trust-all-tools';
+        }
+        // Positional prompt — Kiro's headless mode reads the last non-flag
+        // argument as the user message.
+        $cmd[] = $prompt;
+
+        try {
+            $env = $this->buildEnv($providerConfig);
+            $process = new Process($cmd, null, $env);
+            $process->setTimeout($this->timeout);
+            $process->run();
+
+            if (!$process->isSuccessful()) {
+                if ($this->logger) $this->logger->warning('KiroCliBackend failed: ' . $process->getErrorOutput());
+                return null;
+            }
+
+            $parsed = $this->parseOutput($process->getOutput());
+            if (!$parsed || $parsed['text'] === '') return null;
+
+            return [
+                'text'  => $parsed['text'],
+                'model' => $model ?? 'kiro-default',
+                'usage' => [
+                    // Kiro is a subscription engine billed in credits, not
+                    // tokens. We surface credits under its own key so the
+                    // cost calculator's subscription path doesn't multiply
+                    // it by a token rate, and leave token fields at 0.
+                    'input_tokens'  => 0,
+                    'output_tokens' => 0,
+                    'credits'       => $parsed['credits'],
+                    'duration_s'    => $parsed['duration_s'],
+                ],
+                'stop_reason' => 'end_turn',
+            ];
+        } catch (\Throwable $e) {
+            if ($this->logger) $this->logger->warning("KiroCliBackend error: {$e->getMessage()}");
+            return null;
+        }
+    }
+
+    /**
+     * Parse kiro-cli's plain-text headless output.
+     *
+     * Shape (as of Kiro CLI 2.x, verified in docs/changelog 2026-04):
+     *
+     *   <response body — may span many lines, may include tool-event banners
+     *   like "✓ Successfully read directory" interleaved>
+     *
+     *   ▸ Credits: 0.39 • Time: 22s
+     *
+     * We strip the trailing summary line from the response body and return
+     * the parsed credits + duration. Tool-event banner lines starting with
+     * `✓ ` or `✗ ` are considered informational and are LEFT in the body —
+     * host apps that want to suppress them can post-process.
+     *
+     * Public for testing.
+     *
+     * @return array{text:string, credits:float, duration_s:int}|null
+     */
+    public function parseOutput(string $output): ?array
+    {
+        $trimmed = trim($output);
+        if ($trimmed === '') return null;
+
+        $credits = 0.0;
+        $duration = 0;
+        $body = $trimmed;
+
+        // The marker glyph varies across Kiro CLI builds — ▸ (U+25B8) on
+        // current versions, sometimes a plain `>` when stdout is piped or
+        // the terminal is ASCII. Separator between Credits and Time is
+        // either `•` (U+2022) or `·` (U+00B7). Matched loosely so that
+        // older builds and unusual terminals still produce usage data.
+        if (preg_match(
+            '/(?:^|\n)\s*(?:\x{25B8}|>)?\s*Credits:\s*([0-9]+(?:\.[0-9]+)?)\s*(?:\x{00B7}|\x{2022}|\|)\s*Time:\s*([0-9]+)\s*s\s*$/u',
+            $trimmed,
+            $m,
+            PREG_OFFSET_CAPTURE
+        )) {
+            $credits  = (float) $m[1][0];
+            $duration = (int)   $m[2][0];
+            $body     = rtrim(substr($trimmed, 0, $m[0][1]));
+        }
+
+        return [
+            'text'       => $body,
+            'credits'    => $credits,
+            'duration_s' => $duration,
+        ];
+    }
+
+    /**
+     * Inject KIRO_API_KEY only for the kiro-api provider type. builtin
+     * leaves env untouched so `kiro-cli login` state carries the request.
+     */
+    protected function buildEnv(array $providerConfig): array
+    {
+        $env = [];
+        $type = $providerConfig['type'] ?? 'builtin';
+        if ($type === AiProvider::TYPE_KIRO_API && !empty($providerConfig['api_key'])) {
+            $env['KIRO_API_KEY'] = $providerConfig['api_key'];
+        }
+        return $env;
+    }
+
+    protected function messagesToPrompt(array $messages): string
+    {
+        $parts = [];
+        foreach ($messages as $m) {
+            $role = strtoupper($m['role'] ?? 'user');
+            $content = is_string($m['content'] ?? '') ? $m['content'] : json_encode($m['content']);
+            $parts[] = "{$role}: {$content}";
+        }
+        return implode("\n\n", $parts);
+    }
+}

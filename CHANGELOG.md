@@ -4,7 +4,7 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1] — 2026-04-21
+## [0.6.2] — 2026-04-21
 
 Patch release closing the "most dashboard rows are 0/0/0" gap on `/super-ai-core/usage` and `/super-ai-core/costs`. Previously every execution that the host app routed through its own runners (`App\Services\ClaudeRunner`, etc.) silently bypassed `ai_usage_logs`, and the few rows that did land there came from the `/providers` "Test connection" button with subscription-billed CLIs that returned `{input_tokens:0, output_tokens:0}` — making the dashboard look empty even during heavy use. This release adds a shadow-cost accounting path so subscription engines surface meaningful USD numbers, a clean `UsageRecorder` API so host runners can drop a one-liner at their call sites, and default dashboard filters that hide the noise.
 
@@ -64,6 +64,144 @@ No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work
 - No backfill of the handful of "Test connection" rows with `task_type=NULL` from before 0.6.1 — they'll disappear as soon as the "Hide 0-token rows" default filter is applied, but you can also clear them manually: `DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens=0 AND output_tokens=0;`
 
 ---
+
+## [0.6.0] — 2026-04-19
+
+Minor-version bump because the **SuperAgent `ModelCatalog` (0.8.7)** now flows into every place SuperAICore used to hand-maintain model metadata: `CostCalculator` pricing, `ModelResolver` alias lookup, `EngineCatalog::modelOptions()` dropdown bodies, and the new `super-ai-core:models` CLI. Host apps running `superagent models update` immediately see updated pricing and new model rows without a `composer update` or `vendor:publish`. Also: Gemini CLI OAuth state lands on the `/providers` card, the model-picker placeholder is translated for en/zh-CN/fr, and `CliStatusDetector` picks up host-registered CLI engines automatically.
+
+All additive — no breaking changes. Host apps that already publish `model_pricing` or `super-ai-core.engines.<key>.available_models` keep their authoritative values; the catalog fallback only fires when the host hasn't opined.
+
+### Added
+
+**SuperAgent `ModelCatalog` integrated as a pricing fallback**
+- `Services\CostCalculator::resolveRate()` — new 4th step after config lookup + longest-prefix match falls through to `\SuperAgent\Providers\ModelCatalog::pricing($model)`. The bundled SuperAgent catalog covers every current Anthropic / OpenAI / Gemini / OpenRouter / Bedrock row, including entries SuperAICore's `model_pricing` config didn't enumerate (`claude-opus-4-6-20250514`, `claude-sonnet-4-7`, `gpt-5-nano`, `gemini-1.5-*`, etc.). Config still wins when set — defence-in-depth for hosts that publish their own rates.
+- `Services\ClaudeModelResolver::resolve()` / `Services\GeminiModelResolver::resolve()` — after the local `FAMILIES` / `ALIASES` table misses, consult `ModelCatalog::resolveAlias()` with a provider-prefix guard (`claude-` / `gemini`) so Gemini's resolver can never return a Claude id and vice versa. Adds aliases like `gemini` → `gemini-2.0-flash`, `claude-opus` → latest Opus without editing the resolver.
+- `Services\EngineCatalog` — seed's `available_models` is now unioned with `ModelCatalog::modelsFor(<provider>)` entries for claude / gemini / codex. Seed order is preserved; catalog-only ids get appended. Copilot stays on its dot-ID list; hosts that publish `super-ai-core.engines.<key>.available_models` override the union entirely.
+
+**`super-ai-core:models` CLI (`Console\Commands\ModelsCommand.php`)**
+- `list [--provider <p>]` — prints the merged (bundled + user override) catalog with per-1M pricing and aliases.
+- `update [--url <u>]` — fetches the remote catalog to `~/.superagent/models.json` atomically. Honours `SUPERAGENT_MODELS_URL` by default.
+- `status` — shows source provenance + override mtime + staleness + total rows loaded.
+- `reset [-y]` — deletes the user override with a confirmation prompt (skip via `-y`).
+- Exposed via the standalone `bin/superaicore` entry point. Registered in `Console\Application` alongside `cli:status` / `cli:install`.
+
+**Opt-in catalog auto-refresh at CLI startup**
+- `bin/superaicore` — invokes `ModelCatalog::maybeAutoUpdate()` before constructing the application. No-op unless `SUPERAGENT_MODELS_AUTO_UPDATE=1` AND `SUPERAGENT_MODELS_URL` is set AND the user override is older than 7 days. Network failures are swallowed so a dead remote never blocks the CLI.
+
+**Gemini CLI OAuth detection**
+- `Services\CliStatusDetector::detectAuth('gemini', ...)` — new branch reads `~/.gemini/oauth_creds.json` / `credentials.json` / `settings.json` via `\SuperAgent\Auth\GeminiCliCredentials`, falls back to `GEMINI_API_KEY` / `GOOGLE_API_KEY` env vars, and reports `{loggedIn, status, method, expires_at}` the same shape the claude/codex branches return. The `/providers` Gemini card now shows "logged in (oauth)" instead of "?" when the user ran `gemini login`.
+
+### Changed
+
+**Model-picker placeholder is translated**
+- `Services\EngineCatalog::modelOptions()` — signature changed from `string $placeholder = '— 继承默认 —'` to `?string $placeholder = null`. When null (default) the method pulls `trans('super-ai-core::messages.inherit_default')`, falling back to the English literal `(inherit default)` when no Laravel translator is registered (e.g. plain PHPUnit). en/zh-CN/fr message files already carried the key; the hardcoded CN literal was the only blocker for EN/FR UIs.
+
+**`CliStatusDetector` picks up host-registered CLI engines**
+- `all()` iterates `EngineCatalog::keys()` instead of a hardcoded list, so any engine a host app registered via `super-ai-core.engines` config with `is_cli: true` + `cli_binary: <name>` surfaces in `cli:status` and the `/providers` cards. Built-in engines still hit `detectBinary()` directly for a fast path; catalog engines are resolved through the registered descriptor.
+- `detect(<backend>)` accepts any backend key that the catalog knows; unknown backends fall through to a `['installed' => false]` stub instead of silently being dropped.
+
+**`BackendRegistry` constructor accepts a testable SDK-availability callable**
+- New optional third param `?callable $superagentAvailable = null` lets tests inject `fn() => false` to exercise the "SuperAgent SDK absent" branch without having to uninstall the package. Defaults to `[SuperAgentDetector::class, 'isAvailable']` so production callers see no behaviour change.
+
+### Fixed
+
+**Previously-unreachable SDK-missing test now runs**
+- `tests\Unit\BackendRegistryTest::test_superagent_is_hidden_when_sdk_missing_even_with_config_enabled` used to call `markTestSkipped()` on every run because `composer.json` requires `forgeomni/superagent` as a hard dep — `class_exists(\SuperAgent\Agent::class)` is always true. The test now uses the injectable availability callable, asserts the negative path, and a matching `test_superagent_registered_when_sdk_available_and_enabled` covers the positive path. Skip count drops from 1 to 0.
+
+### Tests
+- 18 new tests: 3 × `CostCalculator` (catalog fallback, config-wins, no-match-returns-zero), 2 × `GeminiModelResolver` (catalog alias resolution, cross-provider isolation), 4 × `ModelsCommand` (list / filter / status / unknown-action), 3 × `CliStatusDetectorGeminiAuth` (oauth file / env key / not-logged-in), 5 × `EngineCatalog` (placeholder fallback, explicit placeholder, claude + gemini catalog expansion, host override wins, copilot untainted), 1 × `BackendRegistry` (SDK-present positive path). The pre-existing `test_superagent_is_hidden_when_sdk_missing...` case now actually executes.
+- Full suite: **243 tests / 690 assertions / 0 failures / 0 skipped** (was 225 / 634 / 1 skipped at 0.5.9).
+
+### Environment reference
+
+```env
+# Opt-in catalog auto-refresh at CLI startup (both must be set)
+SUPERAGENT_MODELS_URL=https://your-cdn/models.json
+SUPERAGENT_MODELS_AUTO_UPDATE=1
+```
+
+```bash
+# Inspect or refresh the model catalog
+./vendor/bin/superaicore super-ai-core:models status
+./vendor/bin/superaicore super-ai-core:models list --provider=anthropic
+./vendor/bin/superaicore super-ai-core:models update                 # from $SUPERAGENT_MODELS_URL
+./vendor/bin/superaicore super-ai-core:models update --url https://…
+./vendor/bin/superaicore super-ai-core:models reset                  # delete user override
+```
+t## [0.6.1] — 2026-04-20
+
+Adds **AWS Kiro CLI** (`kiro-cli` ≥ 2.0) as the sixth execution engine. Kiro joins the matrix with the richest out-of-the-box feature set of any CLI backend — native **agents**, **skills**, **MCP**, **subagent DAG orchestration**, **and** two auth channels (local `kiro-cli login` and `KIRO_API_KEY` headless mode). Subagents are native (no `SpawnPlan` emulation needed), skills read the Claude `SKILL.md` format verbatim, and MCP config lives at `~/.kiro/settings/mcp.json` with the same `mcpServers` schema plus Kiro-specific extensions (`disabled`, `autoApprove`, `disabledTools`, remote `url`/`headers`).
+
+Subscription engine (Kiro Pro / Pro+ / Power credit plans), so costs route into the dashboard's subscription bucket the same way Copilot does — per-token USD stays at 0 and the CLI backend surfaces per-call `credits` + `duration_s` under `usage` for hosts that want to render credit dashboards.
+
+All additive — no breaking changes. Existing installs that don't have `kiro-cli` on `$PATH` see it report as unavailable in `cli:status` / `list-backends` and continue to use the other five engines unchanged.
+
+### Added
+
+**Kiro CLI execution engine**
+- `Backends\KiroCliBackend` — spawns `kiro-cli chat --no-interactive --trust-all-tools <prompt>`, parses the plain-text response body, and extracts the trailing `▸ Credits: X • Time: Y` summary line into `usage.credits` / `usage.duration_s`. Supports both auth channels: `type=builtin` leaves env untouched so the host's `kiro-cli login` keychain state carries the request, `type=kiro-api` injects the stored key as `KIRO_API_KEY` which makes `kiro-cli` skip its browser login flow.
+- `Capabilities\KiroCapabilities` — `supportsSubAgents()=true` (Kiro's native DAG planner runs the orchestration; no `SpawnPlan` emulation needed), MCP path `~/.kiro/settings/mcp.json`, tool-name map for the lowercase Kiro vocabulary (`Read`→`read`, `Grep`→`grep`, `Bash`→`bash`, …). `renderMcpConfig()` writes the same `mcpServers` key Claude uses **plus** preserves `disabled` / `autoApprove` / `disabledTools` on entries the user added, and supports remote servers via `url` / `headers`.
+- `Runner\KiroAgentRunner` — `kiro-cli chat --no-interactive --trust-all-tools --agent <name> <task>`. Auto-syncs the agent JSON before spawn.
+- `Runner\KiroSkillRunner` — sends the SKILL.md body verbatim to `kiro-cli chat --no-interactive`. Kiro reads Claude's skill frontmatter shape natively, so no translator preamble is injected.
+- `Sync\KiroAgentWriter` — translates `.claude/agents/*.md` → `~/.kiro/agents/<name>.json`. Field mapping: body→`prompt`, `model`→`model` (Anthropic slugs pass through unchanged), `allowed-tools` → lowercased `tools` + `allowedTools`. Reuses `AbstractManifestWriter` so user-edited JSONs are preserved (STATUS_USER_EDITED) and removed source agents are cleaned up (STATUS_REMOVED).
+- `Console\Commands\KiroSyncCommand` — `kiro:sync [--dry-run] [--kiro-home <dir>]` prints the +/- change table and writes `~/.kiro/agents/<name>.json` files. Mostly a manual preview — `agent:run --backend=kiro` auto-syncs the targeted agent.
+- Registered in `EngineCatalog::seed()` with `billing_model=subscription`, `cli_binary=kiro-cli`, `dispatcher_backends=['kiro_cli']`, and a `ProcessSpec` that pins the `chat --no-interactive --trust-all-tools` prefix so the default `CliProcessBuilderRegistry` builder produces the right argv. Wired into `BackendRegistry`, `CapabilityRegistry`, `BackendState::DISPATCHER_TO_ENGINE`, `McpManager::syncAllBackends()`, and the `AgentRunCommand` / `SkillRunCommand` runner factories.
+
+**Kiro provider type (`kiro-api`)**
+- `Models\AiProvider::TYPE_KIRO_API` + `BACKEND_KIRO` constants; `BACKEND_TYPES[kiro] = [builtin, kiro-api]`. `requiresApiKey()` treats `kiro-api` like `openai` / `anthropic` so the provider form prompts for a key. `TYPE_BUILTIN` remains the "host has already run `kiro-cli login`" path with no env injection.
+
+**Kiro model picker flows through ModelCatalog**
+- `EngineCatalog::expandFromCatalog()` maps `kiro → anthropic` with a `claude-` prefix filter, so the same SuperAgent `ModelCatalog` refresh that updates Claude / Codex / Gemini also surfaces new Anthropic model IDs in the Kiro dropdown.
+- `EngineCatalog::resolverOptions('kiro')` reuses `ClaudeModelResolver::families()` + `::catalog()` for identical slugs (family aliases `sonnet` / `opus` / `haiku` ship alongside full IDs) and appends Kiro's routing primitive `auto` ("Auto (Kiro router picks the cheapest model)").
+
+**MCP sync reaches the sixth engine**
+- `McpManager::syncAllBackends()` picks up `kiro` automatically through the `EngineCatalog::keys()` → `supportsMcp()` filter; the hardcoded fallback list (used only when the container isn't booted) adds `kiro` for parity.
+
+**Pricing entries**
+- `config/super-ai-core.php` — five `kiro:<model>` subscription rows (`claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-opus-4-6`, `claude-haiku-4-5`, `auto`) with `input=0 / output=0 / billing_model=subscription`. Core cost totals stay at $0 per-call; host apps that want a credit dashboard read `usage.credits` off the dispatcher response.
+
+### Changed
+
+- `AgentRunCommand` / `SkillRunCommand` — `--backend` option docstring now lists `claude|codex|gemini|copilot|kiro|superagent`. Runner factory gains a `kiro` branch for both commands.
+- `BackendRegistry` — new `kiro_cli` config section (binary / timeout / trust-all-tools); defaults to enabled so fresh installs without `kiro-cli` on `$PATH` see `isAvailable()=false` and skip the engine.
+- `Console\Application` registers `kiro:sync` alongside `gemini:sync` / `copilot:sync` / `copilot:sync-hooks`.
+
+### Tests
+
+- 5 new tests: 4 × `KiroCliBackend::parseOutput()` (UTF-8 `▸` bullet, ASCII `>` fallback, missing summary line, empty input), 1 × `EngineCatalog::modelOptions('kiro')` (Claude resolver reuse + `auto` pseudo-model).
+- Harness updates: `BackendRegistryTest` config fixtures include `kiro_cli` in both the "register all" and "disable all except anthropic_api" scenarios.
+- Full suite: **248 tests / 709 assertions / 0 failures / 0 skipped** (was 243 / 690 at 0.6.0).
+
+### Environment reference
+
+```env
+# Kiro CLI backend (0.6.1+) — disable if you don't want superaicore to
+# probe for the binary at all. All defaults are safe; leaving untouched is
+# fine when kiro-cli isn't installed.
+AI_CORE_KIRO_CLI_ENABLED=true
+KIRO_CLI_BIN=kiro-cli
+# Kiro's --no-interactive mode refuses to run tools without prior per-tool
+# approval unless this is on. Flip false only for workflows that
+# pre-populate approvals via `--trust-tools=<categories>`.
+AI_CORE_KIRO_TRUST_ALL_TOOLS=true
+
+# Kiro API-key auth (headless, Pro / Pro+ / Power subscribers). Setting
+# KIRO_API_KEY makes kiro-cli skip its browser login flow. Stored per
+# provider in the DB via type=kiro-api; this env var is only needed when
+# the CLI is invoked outside superaicore's dispatcher.
+# KIRO_API_KEY=ksk_...
+```
+
+```bash
+# Drive Kiro from the CLI
+./vendor/bin/superaicore call "Hello" --backend=kiro_cli
+./vendor/bin/superaicore agent:run reviewer "audit this diff" --backend=kiro
+./vendor/bin/superaicore skill:run simplify --backend=kiro --exec=native
+
+# Preview agent JSON that would land in ~/.kiro/agents/
+./vendor/bin/superaicore kiro:sync --dry-run
+```
+
 
 ## [0.6.0] — 2026-04-19
 

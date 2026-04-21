@@ -11,6 +11,7 @@ use SuperAICore\Console\Commands\CopilotFleetCommand;
 use SuperAICore\Console\Commands\CopilotSyncCommand;
 use SuperAICore\Console\Commands\CopilotSyncHooksCommand;
 use SuperAICore\Console\Commands\GeminiSyncCommand;
+use SuperAICore\Console\Commands\KiroSyncCommand;
 use SuperAICore\Console\Commands\ListBackendsCommand;
 use SuperAICore\Console\Commands\ModelsCommand;
 use SuperAICore\Console\Commands\SkillListCommand;
@@ -38,6 +39,7 @@ class Application extends SymfonyApplication
         $this->add(new CopilotSyncCommand());
         $this->add(new CopilotFleetCommand());
         $this->add(new CopilotSyncHooksCommand());
+        $this->add(new KiroSyncCommand());
         $this->add(new CliStatusCommand());
         $this->add(new CliInstallCommand());
         $this->add(new ModelsCommand());

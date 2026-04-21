@@ -33,6 +33,7 @@ class BackendState
         'gemini_cli'    => 'gemini',
         'gemini_api'    => 'gemini',
         'copilot_cli'   => 'copilot',
+        'kiro_cli'      => 'kiro',
         'superagent'    => 'superagent',
     ];
 
