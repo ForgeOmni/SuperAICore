@@ -43,6 +43,7 @@
 - **MCP 服务器管理器** —— 在后台 UI 中安装、启用、配置 MCP 服务器。
 - **使用量追踪** —— 每次调用将 prompt / response tokens、耗时、成本写入 `ai_usage_logs` 表。0.6.2+ 起每行还带 `shadow_cost_usd` 与 `billing_model`，让订阅型引擎（Copilot、Kiro、Claude Code builtin）在仪表盘上呈现有意义的"如果按 token 计费"USD 估值，而不是一排 $0。
 - **`UsageRecorder` —— 宿主侧 runner 的回写入口**（0.6.2+）—— 对 `UsageTracker` + `CostCalculator` 的薄封装；宿主自己 spawn CLI（例如 `App\Services\ClaudeRunner`、PPT 阶段任务、`ExecuteTask`）的场景下，每轮结束调用一次就能写入一条 `ai_usage_logs`，`cost_usd` / `shadow_cost_usd` / `billing_model` 全部按 catalog 自动补齐。搭配工具：`CliOutputParser::parseClaude()` / `::parseCodex()` / `::parseCopilot()` / `::parseGemini()` 可以从已捕获的 stdout 中抽出 `{text, model, input_tokens, output_tokens, …}`，不必构造完整后端对象。
+- **`ProviderTypeRegistry` + `ProviderEnvBuilder` —— API type 的唯一数据源**（0.6.2+）—— 每种 provider type（Anthropic / OpenAI / Google / Kiro / …）的 label、图标、表单字段、env 键名、base_url env、允许的 backend、`extra_config → env` 映射全部收口到一个内置 registry。`ProviderEnvBuilder::buildEnv($provider)` 替代了宿主（SuperTeam 等）过去自己维护的 7-case env switch。宿主通过 `config/super-ai-core.php` 的 `provider_types` 覆盖键扩展 —— **以后 SuperAICore 新增 API type，宿主只要 `composer update` 就会看到新卡,完全零代码改动**。`CliStatusDetector::detectAuth()` 同步加了泛化 fallback，新 CLI 引擎落地那天就能在 `/providers` 上显示登录状态。
 - **成本分析** —— 按模型价格表汇总 USD 费用，并提供带图表的仪表盘。0.6.2+ 新增 "By Task Type" 卡片、每行 `usage`/`sub` 计费模式徽章，以及每张分组表里的 shadow cost 列。仪表盘默认隐藏 0-token 行与 `test_connection` 行；`/providers` 的 "Test" 按钮现在会自我标记为 `task_type=test_connection`，不再污染主视图。
 - **进程监控** —— 查看正在运行的 AI 进程、跟踪日志、终止僵尸进程。
 - **三语 UI** —— 英文、简体中文、法文，可在运行时切换。

@@ -244,7 +244,61 @@ class CliStatusDetector
 
             return $result;
         }
-        return null;
+
+        // Generic fallback for any CLI engine registered through
+        // EngineCatalog but without a hardcoded branch above (0.6.2+).
+        // Walks the provider-type registry to see if any configured type
+        // targeting this engine has its env var set; failing that, checks
+        // for a `~/.<binary>/` config directory. Keeps new CLI engines
+        // from showing an empty auth cell on `/providers` just because
+        // nobody remembered to add a branch here.
+        return static::detectGenericCliAuth($binary, $env);
+    }
+
+    /**
+     * Best-effort auth readout for a CLI engine we don't have a bespoke
+     * branch for. Conservative by design — we never return `loggedIn:true`
+     * on spec, only when we can point at concrete evidence (env var
+     * present, or a config dir the CLI is known to create on first login).
+     *
+     * @param array<string,string> $env
+     * @return array{loggedIn:bool,status:?string,method:?string,expires_at:?int}
+     */
+    protected static function detectGenericCliAuth(string $binary, array $env): array
+    {
+        $envKeyHit = null;
+        if (function_exists('app') && class_exists(\SuperAICore\Services\ProviderTypeRegistry::class)) {
+            try {
+                $registry = app(\SuperAICore\Services\ProviderTypeRegistry::class);
+                foreach ($registry->all() as $descriptor) {
+                    if ($descriptor->envKey === null) continue;
+                    if (!empty($env[$descriptor->envKey])) {
+                        $envKeyHit = $descriptor->envKey;
+                        break;
+                    }
+                }
+            } catch (\Throwable) {
+                // fall through
+            }
+        }
+
+        // Convention: `<binary> login` writes into `~/.<binary>/`. Both Kiro
+        // (`~/.kiro/`) and future CLI engines following this pattern pick
+        // up a meaningful status readout here without any extra code.
+        $home = self::resolvedHome();
+        $configDir = $home ? rtrim($home, '/') . '/.' . ltrim($binary, '.') : '';
+        $hasConfigDir = $configDir && is_dir($configDir);
+
+        return [
+            'loggedIn'   => $envKeyHit !== null || $hasConfigDir,
+            'status'     => $envKeyHit !== null
+                ? 'env-key'
+                : ($hasConfigDir ? 'config-present' : 'not-logged-in'),
+            'method'     => $envKeyHit !== null
+                ? 'api-key'
+                : ($hasConfigDir ? 'oauth' : null),
+            'expires_at' => null,
+        ];
     }
 
     /**

@@ -105,8 +105,27 @@ class AiProvider extends Model
         ],
     ];
 
+    /**
+     * Types that can be routed through $backend.
+     *
+     * Since 0.6.2 this delegates to `ProviderTypeRegistry` when the
+     * container is booted — so host-config-added types surface here too.
+     * Falls back to the static BACKEND_TYPES matrix when the registry
+     * isn't available (early boot, CLI without a fully-hydrated app).
+     *
+     * @return string[]
+     */
     public static function typesForBackend(string $backend): array
     {
+        if (function_exists('app')) {
+            try {
+                $registry = app(\SuperAICore\Services\ProviderTypeRegistry::class);
+                $types = array_keys($registry->forBackend($backend));
+                if ($types !== []) return $types;
+            } catch (\Throwable) {
+                // fall through to static
+            }
+        }
         return self::BACKEND_TYPES[$backend] ?? [];
     }
 
@@ -197,8 +216,20 @@ class AiProvider extends Model
         $this->update(['is_active' => false]);
     }
 
+    /**
+     * 0.6.2+ delegates to ProviderTypeRegistry so host-added types work too.
+     * The hardcoded fallback stays accurate for the 9 bundled types.
+     */
     public function requiresApiKey(): bool
     {
+        if (function_exists('app')) {
+            try {
+                return app(\SuperAICore\Services\ProviderTypeRegistry::class)
+                    ->requiresApiKey($this->type);
+            } catch (\Throwable) {
+                // fall through
+            }
+        }
         return in_array($this->type, [
             self::TYPE_ANTHROPIC,
             self::TYPE_ANTHROPIC_PROXY,
@@ -210,6 +241,14 @@ class AiProvider extends Model
 
     public function requiresBaseUrl(): bool
     {
+        if (function_exists('app')) {
+            try {
+                return app(\SuperAICore\Services\ProviderTypeRegistry::class)
+                    ->requiresBaseUrl($this->type);
+            } catch (\Throwable) {
+                // fall through
+            }
+        }
         return in_array($this->type, [self::TYPE_ANTHROPIC_PROXY, self::TYPE_OPENAI_COMPATIBLE]);
     }
 

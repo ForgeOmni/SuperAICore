@@ -171,11 +171,22 @@ class KiroCliBackend implements Backend
     }
 
     /**
-     * Inject KIRO_API_KEY only for the kiro-api provider type. builtin
-     * leaves env untouched so `kiro-cli login` state carries the request.
+     * Delegate env injection to ProviderEnvBuilder — the registry decides
+     * which env var(s) each type flows. For `builtin`, envKey is null so
+     * we return an empty map (CLI's own session carries the request).
+     * Falls back to the old hardcoded KIRO_API_KEY injection when the
+     * container isn't booted (unit-test path).
      */
     protected function buildEnv(array $providerConfig): array
     {
+        if (function_exists('app')) {
+            try {
+                return app(\SuperAICore\Services\ProviderEnvBuilder::class)
+                    ->buildEnvFromConfig($providerConfig);
+            } catch (\Throwable) {
+                // fall through to legacy path
+            }
+        }
         $env = [];
         $type = $providerConfig['type'] ?? 'builtin';
         if ($type === AiProvider::TYPE_KIRO_API && !empty($providerConfig['api_key'])) {

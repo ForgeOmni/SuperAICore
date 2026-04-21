@@ -261,7 +261,43 @@ $env = CliOutputParser::parseClaude($stdout);    // 或 parseCodex / parseCopilo
 
 `UsageRecorder` 以单例注册；当 `AI_CORE_USAGE_TRACKING=false` 时自动 no-op。
 
-## 9. 升级
+## 9. 通过 `provider_types` config 扩展 provider type（0.6.2+）
+
+SuperAICore 内置 9 种 provider type（`anthropic` / `anthropic-proxy` / `bedrock` / `vertex` / `google-ai` / `openai` / `openai-compatible` / `kiro-api` / `builtin`）—— 每种都在 `Services\ProviderTypeRegistry::bundled()` 里带有 label、图标、表单字段、env 键名、base-url env、允许的 backend、`extra_config → env` 映射。宿主应用可以重命名已有 type（例如把 `label_key` 指到宿主自己的 lang 命名空间），也可以加全新的 type，一段 config 搞定,不用 fork:
+
+```php
+// config/super-ai-core.php
+return [
+    // …其他键…
+
+    'provider_types' => [
+        // 重命名已有 type,其余字段继承默认值
+        \SuperAICore\Models\AiProvider::TYPE_ANTHROPIC => [
+            'label_key' => 'integrations.ai_provider_anthropic',
+            'icon'      => 'bi-key',
+        ],
+
+        // 新增一个 bundle 里没有的 type。字段形状照着
+        // ProviderTypeDescriptor::fromArray() 即可。registry 会自动
+        // 驱动 /providers UI、env builder、AiProvider::requiresApiKey()
+        // 以及各 backend 的 buildEnv() 调用,无需别处再改。
+        'xai-api' => [
+            'label_key'        => 'integrations.ai_provider_xai',
+            'icon'             => 'bi-x-lg',
+            'fields'           => ['api_key'],
+            'default_backend'  => \SuperAICore\Models\AiProvider::BACKEND_SUPERAGENT,
+            'allowed_backends' => [\SuperAICore\Models\AiProvider::BACKEND_SUPERAGENT],
+            'env_key'          => 'XAI_API_KEY',
+        ],
+    ],
+];
+```
+
+以后 SuperAICore 上游再加新 type(例如 `TYPE_ANTHROPIC_VERTEX_V2`),宿主只要跑一次 `composer update` 就会看到 —— **完全零代码改动**。Registry 在容器里注册为 `app(\SuperAICore\Services\ProviderTypeRegistry::class)`,常用三个入口:`get($type)` / `all()` / `forBackend($backend)`。
+
+宿主应用过去复制过 SuperAICore provider-type 矩阵的（SuperTeam 0.6.2 之前在 `IntegrationController::PROVIDER_TYPES` + `ClaudeRunner::providerEnvVars()` 里维护过），现在可以把那些拷贝**替换为对 `ProviderTypeRegistry` + `ProviderEnvBuilder` 的一行代理**。[CHANGELOG.md](CHANGELOG.md) 的 "Host-app migration" 一节有 before/after 的代码片段。
+
+## 10. 升级
 
 ```bash
 composer update forgeomni/superaicore

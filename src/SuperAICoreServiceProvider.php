@@ -65,6 +65,19 @@ class SuperAICoreServiceProvider extends ServiceProvider
             );
         });
 
+        // Provider-type registry + env builder (0.6.2+). The registry seeds
+        // from bundled defaults and merges `super-ai-core.provider_types`
+        // overrides on top so hosts can relabel or extend without a fork.
+        $this->app->singleton(\SuperAICore\Services\ProviderTypeRegistry::class, function ($app) {
+            $overrides = (array) config('super-ai-core.provider_types', []);
+            return new \SuperAICore\Services\ProviderTypeRegistry($overrides);
+        });
+        $this->app->singleton(\SuperAICore\Services\ProviderEnvBuilder::class, function ($app) {
+            return new \SuperAICore\Services\ProviderEnvBuilder(
+                $app->make(\SuperAICore\Services\ProviderTypeRegistry::class),
+            );
+        });
+
         $this->app->singleton(ProviderResolver::class, function ($app) {
             return new ProviderResolver($app->make(ProviderRepository::class));
         });

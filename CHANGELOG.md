@@ -10,6 +10,8 @@ Patch release closing the "most dashboard rows are 0/0/0" gap on `/super-ai-core
 
 Also fixes two bugs in the 0.6.1 Kiro integration: the `--model` flag was being dropped (so every call silently went through Kiro's `auto` router regardless of what the user selected) and the seeded model IDs used Claude-CLI dash separators (`claude-sonnet-4-6`) instead of Kiro's dot separators (`claude-sonnet-4.6`), which `kiro-cli` quietly rejects. The picker is now populated **live** from `kiro-cli chat --list-models` and surfaces the 7 non-Anthropic models Kiro supports (DeepSeek / MiniMax / GLM / Qwen) plus the `auto` router.
 
+**Architectural change:** `Services\ProviderTypeRegistry` becomes the single source of truth for provider-type metadata (label / icon / fields / env-var name / allowed backends / needs_api_key). Host apps (notably SuperTeam) previously maintained a parallel `PROVIDER_TYPES` matrix and duplicated the env-injection switch in their own runners — those duplicates can now be replaced by single-line registry lookups. When SuperAICore adds a new API type in the future, host apps pick it up automatically without any code change, only a `composer update`.
+
 No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work; new columns on `ai_usage_logs` are nullable and backfill automatically on new writes.
 
 ### Added
@@ -46,6 +48,19 @@ No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work
 - `/super-ai-core/usage` — new "By Task Type" card, "Shadow cost" column on every breakdown table, a per-row billing-model badge (usage / sub), and two toggles above the filters: **Hide 0-token rows** (default on) and **Hide test_connection** (default on). Noise from the `/providers` test button is now filtered by default.
 - `/super-ai-core/costs` — "Subscription engines" panel now shows an estimated shadow-cost total alongside call count and token totals, so operators can compare a Copilot session against a pay-as-you-go spend on the same scale. `test_connection` rows are excluded from all roll-ups.
 
+**`Services\ProviderTypeRegistry` + `Support\ProviderTypeDescriptor` — provider-type single source of truth**
+- Bundled descriptors for all 9 shipped types (`builtin` / `anthropic` / `anthropic-proxy` / `bedrock` / `vertex` / `google-ai` / `openai` / `openai-compatible` / `kiro-api`) each carrying: label_key, desc_key, icon, form fields[], default_backend, allowed_backends[], needs_api_key, needs_base_url, env_key, base_url_env, env_extras (extra_config → env var map for bedrock / vertex / google-ai), backend_env_flags (static flags like `CLAUDE_CODE_USE_BEDROCK=1` that fire only when routed through a specific backend).
+- API: `all()` / `get($type)` / `forBackend($backend)` / `requiresApiKey($type)` / `requiresBaseUrl($type)`. Registered as a singleton in `SuperAICoreServiceProvider::register()`.
+- Host-config overlay: new `super-ai-core.provider_types` config key accepts partial overrides (e.g. re-point a type's `label_key` to a host-owned lang namespace) OR brand-new types the bundle doesn't know about (e.g. a future `xai-api`). Merge order: config > bundled.
+- `AiProvider::typesForBackend()` / `requiresApiKey()` / `requiresBaseUrl()` now delegate to the registry when the container is booted. `BACKEND_TYPES` constant preserved as a fallback for pre-boot / CLI contexts.
+- `ProviderTypeDescriptor::toArray()` returns the exact legacy shape SuperTeam's Blade templates already iterate (`label_key`, `desc_key`, `icon`, `fields`, `backend`, `allowed_backends`), so host-side migration is a controller swap, not a view rewrite.
+
+**`Services\ProviderEnvBuilder` — centralized env injection**
+- Replaces the hardcoded env-var switch that every `*CliBackend::buildEnv()` and every host runner (e.g. SuperTeam's `ClaudeRunner::providerEnvVars()`) used to duplicate. Reads the descriptor's `envKey` / `baseUrlEnv` / `envExtras` / `backendEnvFlags` and produces the `{VAR => value}` map for `Process::setEnv()`.
+- `buildEnv(AiProvider $provider, ?string $apiKeyEnvKey = null)` — drives from a persisted provider row.
+- `buildEnvFromConfig(array $providerConfig)` — drives from the `provider_config` array Dispatcher-driven backends pass around. `KiroCliBackend::buildEnv()` is the first internal consumer (dropped the local `KIRO_API_KEY` literal).
+- Registered as a singleton in `SuperAICoreServiceProvider::register()`.
+
 **`Services\KiroModelResolver` — live model catalog from `kiro-cli`**
 - Kiro is the only CLI in the matrix that exposes its authoritative model list programmatically (`kiro-cli chat --list-models --format json-pretty`), so this resolver does NOT carry a hardcoded catalog. Three-layer resolution: in-process memo → `~/.cache/superaicore/kiro-models.json` (24h TTL) → live CLI probe → 12-row static fallback (only when the binary is missing).
 - `catalog()` / `families()` / `defaultFor($family)` / `resolve($id)` shape mirrors `ClaudeModelResolver` / `CopilotModelResolver` so any picker iterating a resolver uniformly keeps working.
@@ -66,6 +81,10 @@ No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work
 - `EngineCatalog::resolverOptions('kiro')` — was reusing `ClaudeModelResolver` (wrong vocab, limited scope); now reads `KiroModelResolver::catalog()` + `::families()`.
 - `EngineCatalog::expandFromCatalog()` — dropped the `'kiro' => 'anthropic'` / `'kiro' => 'claude-'` branches. SuperAgent `ModelCatalog` speaks dash-format Anthropic IDs, which don't match Kiro's dot-format at all, so that expansion only ever added noise.
 - `config/super-ai-core.php` pricing rows — the five `kiro:claude-*-4-X` dash-slug keys (which never matched a real CLI call because Kiro never accepted dash-format) are replaced with twelve correct dot-slug keys, each annotated with Kiro's own credit `rate_multiplier` for operator reference.
+
+**`CliStatusDetector::detectAuth()` — generic fallback for catalog-registered CLI engines**
+- Adds a default branch that walks `ProviderTypeRegistry` looking for any configured type whose `env_key` is set in the child env, and checks for a `~/.<binary>/` config directory. Returns `{loggedIn, status, method, expires_at}` in the same shape as the Claude / Codex / Gemini / Copilot branches.
+- Closes the 0.6.1 cosmetic gap where the `/providers` Kiro card showed "installed ✓" but left the auth line blank. Also future-proofs any new CLI engine added via `EngineCatalog::seed()` or host config — the new card gets a sensible auth readout without a code change.
 
 ### Fixed
 
@@ -89,7 +108,43 @@ No breaking changes. Existing `$dispatcher->dispatch()` callers continue to work
 
 ### Tests
 
-- 10 new tests, 41 new assertions. Full suite: **258 tests / 750 assertions / 0 failures / 0 skipped** (was 248 / 709 at 0.6.1). Live-probe smoke verified against `kiro-cli` 2.x on macOS: all 12 models round-trip, cache file written to `~/.cache/superaicore/kiro-models.json`, dash→dot resolver translations line up with Kiro's router accept list.
+- 28 new tests, 103 new assertions across the release:
+  - 10 for `KiroModelResolver` (JSON parse, dash→dot, family aliases, static fallback, malformed input)
+  - 8 for `ProviderTypeRegistry` (bundled 9 types present, forBackend filter, kiro-api shape, bedrock env-extras / backend flag, host-config rebrand, host-config added type, legacy toArray shape)
+  - 10 for `ProviderEnvBuilder` (each of the 9 bundled types produces expected env map, host-added type, missing api_key, unknown type)
+- Full suite: **276 tests / 812 assertions / 0 failures / 0 skipped** (was 248 / 709 at 0.6.1). Live-probe smoke verified against `kiro-cli` 2.x on macOS: all 12 models round-trip, cache file written to `~/.cache/superaicore/kiro-models.json`, dash→dot resolver translations line up with Kiro's router accept list.
+
+### Host-app migration (SuperTeam & similar)
+
+Host apps that previously duplicated a `PROVIDER_TYPES` matrix, a `providerEnvVars()` switch, or a hardcoded backend→label table can now replace those with single-line registry queries. After the migration, any future API type SuperAICore adds surfaces in the host UI via `composer update` with no code change. Typical replacements:
+
+```php
+// BEFORE (host-side duplicated matrix)
+const PROVIDER_TYPES = [
+    AiProvider::TYPE_ANTHROPIC => ['backend' => …, 'icon' => …, 'fields' => …],
+    AiProvider::TYPE_OPENAI    => ['backend' => …, 'icon' => …, 'fields' => …],
+    // … grew every time SuperAICore added a type
+];
+
+// AFTER
+$types = app(\SuperAICore\Services\ProviderTypeRegistry::class)->all();
+// optionally filter: ->forBackend($backend)
+// each entry is a ProviderTypeDescriptor; ->toArray() gives the legacy shape
+```
+
+```php
+// BEFORE (host-side env switch)
+switch ($provider->type) {
+    case AiProvider::TYPE_ANTHROPIC:  $env['ANTHROPIC_API_KEY'] = $apiKey; break;
+    case AiProvider::TYPE_BEDROCK:    $env['AWS_ACCESS_KEY_ID'] = …; …
+    // … 7 cases, missing TYPE_KIRO_API
+}
+
+// AFTER
+$env = app(\SuperAICore\Services\ProviderEnvBuilder::class)->buildEnv($provider);
+```
+
+Hosts can override individual descriptors via `config/super-ai-core.php`'s `provider_types` key — handy to point `label_key` at the host's own lang namespace without restating the rest of the descriptor.
 
 ---
 

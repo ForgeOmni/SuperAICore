@@ -263,7 +263,43 @@ $env = CliOutputParser::parseClaude($stdout);    // or parseCodex / parseCopilot
 
 `UsageRecorder` is a singleton; it no-ops when `AI_CORE_USAGE_TRACKING=false`.
 
-## 9. Upgrading
+## 9. Extending provider types with `provider_types` config (0.6.2+)
+
+SuperAICore ships 9 bundled provider types (`anthropic`, `anthropic-proxy`, `bedrock`, `vertex`, `google-ai`, `openai`, `openai-compatible`, `kiro-api`, `builtin`) — each described in `Services\ProviderTypeRegistry::bundled()` with label, icon, form fields, env-var name, base-url env, allowed backends, and an `extra_config → env` map. Host apps can rebrand a bundled type (e.g. point `label_key` at a host-owned lang namespace) or add an entirely new type via a single config block — no fork required:
+
+```php
+// config/super-ai-core.php
+return [
+    // …other keys…
+
+    'provider_types' => [
+        // Rebrand an existing type — the rest of the descriptor inherits.
+        \SuperAICore\Models\AiProvider::TYPE_ANTHROPIC => [
+            'label_key' => 'integrations.ai_provider_anthropic',
+            'icon'      => 'bi-key',
+        ],
+
+        // Declare a brand-new type not in the bundle. Shape mirrors
+        // ProviderTypeDescriptor::fromArray() — the registry feeds the
+        // /providers UI, the env builder, AiProvider::requiresApiKey(),
+        // and every backend's buildEnv() call automatically.
+        'xai-api' => [
+            'label_key'        => 'integrations.ai_provider_xai',
+            'icon'             => 'bi-x-lg',
+            'fields'           => ['api_key'],
+            'default_backend'  => \SuperAICore\Models\AiProvider::BACKEND_SUPERAGENT,
+            'allowed_backends' => [\SuperAICore\Models\AiProvider::BACKEND_SUPERAGENT],
+            'env_key'          => 'XAI_API_KEY',
+        ],
+    ],
+];
+```
+
+When SuperAICore later adds a new upstream type (e.g. `TYPE_ANTHROPIC_VERTEX_V2`), host apps pick it up with a `composer update` — no code change required. The registry is addressable at `app(\SuperAICore\Services\ProviderTypeRegistry::class)`; `get($type)` / `all()` / `forBackend($backend)` are the three entry points most host code needs.
+
+Host apps that previously mirrored SuperAICore's provider-type matrix in their own controllers/runners (SuperTeam's pre-0.6.2 `IntegrationController::PROVIDER_TYPES` + `ClaudeRunner::providerEnvVars()`) can now replace those with single-line delegations to `ProviderTypeRegistry` + `ProviderEnvBuilder`. See the "Host-app migration" section of [CHANGELOG.md](CHANGELOG.md) for before/after snippets.
+
+## 10. Upgrading
 
 ```bash
 composer update forgeomni/superaicore

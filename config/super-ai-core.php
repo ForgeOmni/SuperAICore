@@ -146,6 +146,24 @@ return [
     //   ],
     'engines' => [],
 
+    // ─── Provider-type registry overrides (0.6.2+) ───
+    // Partial overrides on top of the 9 bundled provider types (anthropic,
+    // anthropic-proxy, bedrock, vertex, google-ai, openai, openai-compatible,
+    // kiro-api, builtin). Host apps (e.g. SuperTeam) can:
+    //
+    //   - rebrand a type's label to their own lang namespace
+    //     ('label_key' => 'integrations.ai_provider_anthropic')
+    //   - add a brand-new type not in the bundle
+    //     ('xai-api' => ['env_key' => 'XAI_API_KEY', 'fields' => ['api_key'],
+    //                    'default_backend' => 'superagent',
+    //                    'allowed_backends' => ['superagent']])
+    //   - swap an env key (e.g. point Anthropic at a proxy-specific var)
+    //
+    // The controller / UI / ProviderEnvBuilder all read through the
+    // registry, so entries here flow everywhere without further edits.
+    // Each descriptor shape mirrors `ProviderTypeDescriptor::fromArray()`.
+    'provider_types' => [],
+
     // ─── Cost calculator unit prices ───
     // USD per 1M tokens. Each entry can include `billing_model` (default 'usage'):
     //   - 'usage'       — per-token billing; cost calculator multiplies tokens × rate
