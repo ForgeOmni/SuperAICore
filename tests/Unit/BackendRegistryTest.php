@@ -15,6 +15,7 @@ class BackendRegistryTest extends TestCase
             'codex_cli' => ['enabled' => true, 'binary' => 'codex', 'timeout' => 300],
             'gemini_cli' => ['enabled' => true, 'binary' => 'gemini', 'timeout' => 300],
             'copilot_cli' => ['enabled' => true, 'binary' => 'copilot', 'timeout' => 300, 'allow_all_tools' => true],
+            'kiro_cli' => ['enabled' => true, 'binary' => 'kiro-cli', 'timeout' => 300, 'trust_all_tools' => true],
             'gemini_api' => ['enabled' => true],
             'superagent' => ['enabled' => true],
             'anthropic_api' => ['enabled' => true],
@@ -28,6 +29,7 @@ class BackendRegistryTest extends TestCase
         $this->assertContains('codex_cli', $names);
         $this->assertContains('gemini_cli', $names);
         $this->assertContains('copilot_cli', $names);
+        $this->assertContains('kiro_cli', $names);
         $this->assertContains('gemini_api', $names);
 
         // SuperAgent registration depends on the SDK actually being present
@@ -45,6 +47,7 @@ class BackendRegistryTest extends TestCase
             'codex_cli' => ['enabled' => false],
             'gemini_cli' => ['enabled' => false],
             'copilot_cli' => ['enabled' => false],
+            'kiro_cli' => ['enabled' => false],
             'gemini_api' => ['enabled' => false],
             'superagent' => ['enabled' => false],
             'anthropic_api' => ['enabled' => true],

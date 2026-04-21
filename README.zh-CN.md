@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-用于统一调度五种 AI 执行引擎的 Laravel 包：**Claude Code CLI**、**Codex CLI**、**Gemini CLI**、**GitHub Copilot CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析，以及一套完整的后台管理 UI。
+用于统一调度六种 AI 执行引擎的 Laravel 包：**Claude Code CLI**、**Codex CLI**、**Gemini CLI**、**GitHub Copilot CLI**、**AWS Kiro CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析，以及一套完整的后台管理 UI。
 
 在干净的 Laravel 项目中可独立运行。UI 可选、可完全替换，既能嵌入宿主应用（例如 SuperTeam），也可以在仅使用服务层时关掉。
 
@@ -18,7 +18,7 @@
 - **SuperAgent** 是一个轻量级的 PHP 进程内 SDK，专注于驱动单个 LLM 的 tool-use 循环（一个 agent、一段会话）。
 - **SuperAICore** 是 Laravel 级的编排层 —— 负责挑选后端、解析 provider 凭证、按能力路由、记录用量、计算成本、管理 MCP 服务器，并提供后台 UI。
 
-**SuperAICore 并不依赖 SuperAgent 才能工作。** SuperAgent 只是众多后端之一。CLI 引擎（Claude / Codex / Gemini / Copilot）与 HTTP 后端（Anthropic / OpenAI / Google）都不需要它，且 `SuperAgentBackend` 在 SDK 缺失时会通过 `class_exists(Agent::class)` 检查优雅地报告为不可用。如果你不需要 SuperAgent，只需在 `.env` 中设置 `AI_CORE_SUPERAGENT_ENABLED=false`，Dispatcher 会自动回退到其余后端。
+**SuperAICore 并不依赖 SuperAgent 才能工作。** SuperAgent 只是众多后端之一。CLI 引擎（Claude / Codex / Gemini / Copilot / Kiro）与 HTTP 后端（Anthropic / OpenAI / Google）都不需要它，且 `SuperAgentBackend` 在 SDK 缺失时会通过 `class_exists(Agent::class)` 检查优雅地报告为不可用。如果你不需要 SuperAgent，只需在 `.env` 中设置 `AI_CORE_SUPERAGENT_ENABLED=false`，Dispatcher 会自动回退到其余后端。
 
 `composer.json` 中的 `forgeomni/superagent` 依赖只是为了开箱即用地启用 SuperAgent 后端；若你从不使用它，可以在宿主项目 `composer install` 之前从 `composer.json` 中移除该条目 —— SuperAICore 的其余代码都不会引用 SuperAgent 命名空间。
 
@@ -27,13 +27,14 @@
 - **Skill 与 sub-agent 运行器** —— 自动发现 Claude Code skill（`.claude/skills/<name>/SKILL.md`）和 sub-agent（`.claude/agents/<name>.md`），并将其暴露为 CLI 子命令（`skill:list`、`skill:run`、`agent:list`、`agent:run`）。默认跑在 Claude 上，可选在 Codex / Gemini / Copilot 上原生执行（带兼容性探测、工具名翻译、后端 preamble 注入），并支持"有副作用即硬锁定"的多后端回退链。`gemini:sync` 把每个 skill / agent 镜像成 Gemini 自定义命令；`copilot:sync` 把 agent 镜像成 `~/.copilot/agents/*.agent.md`（或在 `agent:run --backend=copilot` 时自动触发）；`copilot:sync-hooks` 把 Claude 风格的 hooks 合并到 Copilot 配置。
 - **一键 CLI 安装器** —— `cli:status` 列出每家 CLI 的安装/登录状态与安装提示；`cli:install [backend] [--all-missing]` 走规范的包管理器（`npm`/`brew`/`script`）安装缺失项，默认带确认提示。显式触发 —— 永不因为调度失败自动安装。
 - **Copilot 并行 fan-out** —— `copilot:fleet <task> --agents a,b,c` 将同一任务并发分发给 N 个 Copilot sub-agent，聚合每 agent 结果，每个子进程都注册到 Process Monitor。
-- **五个执行引擎** —— Claude Code CLI、Codex CLI、Gemini CLI、GitHub Copilot CLI、SuperAgent SDK，统一实现同一套 `Dispatcher` 契约。每个引擎只接受固定几类 provider：
+- **六个执行引擎** —— Claude Code CLI、Codex CLI、Gemini CLI、GitHub Copilot CLI、AWS Kiro CLI、SuperAgent SDK，统一实现同一套 `Dispatcher` 契约。每个引擎只接受固定几类 provider：
   - **Claude Code CLI**：`builtin`（本地登录）、`anthropic`、`anthropic-proxy`、`bedrock`、`vertex`
   - **Codex CLI**：`builtin`（ChatGPT 登录）、`openai`、`openai-compatible`
   - **Gemini CLI**：`builtin`（Google OAuth 登录）、`google-ai`、`vertex`
   - **GitHub Copilot CLI**：仅 `builtin`（`copilot` 二进制自行处理 OAuth / keychain / 刷新）。原生读取 `.claude/skills/`（零翻译直通）。**订阅计费** —— 仪表盘独立统计，不混入按 token 计费引擎。
+  - **AWS Kiro CLI**（0.6.1+）：`builtin`（本机 `kiro-cli login` 登录态）、`kiro-api`（DB 存的 key 注入成 `KIRO_API_KEY` 走 headless 模式）。CLI 后端里自带能力最全的一家——原生 agents、skills、MCP，以及**原生 subagent DAG 编排**（不走 `SpawnPlan` 模拟）。skill 直接复用 Claude 的 `SKILL.md` 格式。**按 credits 订阅计费**（Pro / Pro+ / Power 套餐）。
   - **SuperAgent SDK**：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`
-- 五个引擎在 Dispatcher 内部扇出成八个适配器（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— provider 为 `builtin` 时走 CLI 适配器，持有 API Key 时走 HTTP 适配器。这是实现细节，一般无需关心；如需低层直调，CLI 也能直接指定这些适配器名。
+- 六个引擎在 Dispatcher 内部扇出成九个适配器（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`kiro_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— provider 为 `builtin` / `kiro-api` 时走 CLI 适配器，持有 API Key 时走 HTTP 适配器。这是实现细节，一般无需关心；如需低层直调，CLI 也能直接指定这些适配器名。
 - **EngineCatalog 单一数据源** —— 引擎的标签、图标、Dispatcher 后端、支持的 provider 类型、可用模型，以及声明式的 **`ProcessSpec`**（二进制名、版本/登录状态参数、prompt/output/model flag、默认 flag）都集中在一个 PHP 服务里。新增一个 CLI 引擎只需改 `EngineCatalog::seed()`，providers UI、进程扫描、开关矩阵、默认 CLI 命令形状全部自动跟进。同一份 catalog 也通过 `modelOptions($key)` / `modelAliases($key)`（0.5.9+）驱动宿主应用的模型下拉，宿主不再需要针对每个 backend 写 `switch` —— 新引擎的模型自动出现在所有 picker 里。宿主应用可通过 `super-ai-core.engines` 配置覆盖每个引擎字段（包括 `process_spec`）。
 - **动态模型目录**（0.6.0+）—— `CostCalculator`、`ClaudeModelResolver`、`GeminiModelResolver` 和 `EngineCatalog::seed()` 的 `available_models` 都会回退到 SuperAgent 的 `ModelCatalog`（内置 `resources/models.json` + 用户覆盖 `~/.superagent/models.json`）。跑 `superagent models update`（或新增的 `super-ai-core:models update`）即可刷新所有 Anthropic / OpenAI / Gemini / Bedrock / OpenRouter 模型的价格和 ID 列表，不需要 `composer update` 或 `vendor:publish`。宿主显式发布的 `model_pricing` 和 `available_models` 仍然优先生效。
 - **`/providers` 显示 Gemini OAuth 登录态**（0.6.0+）—— `CliStatusDetector::detectAuth('gemini')` 通过 SuperAgent 的 `GeminiCliCredentials` 读取 `~/.gemini/oauth_creds.json`，回退到 `GEMINI_API_KEY` / `GOOGLE_API_KEY`，在 provider 卡片上按 Claude Code / Codex 同样的方式显示 `{loggedIn, method, expires_at}`。
@@ -58,6 +59,7 @@
 - `codex` CLI 在 `$PATH` 中 —— `brew install codex`
 - `gemini` CLI 在 `$PATH` 中 —— `npm i -g @google/gemini-cli`
 - `copilot` CLI 在 `$PATH` 中 —— `npm i -g @github/copilot`（然后运行 `copilot login`）
+- `kiro-cli` 在 `$PATH` 中（Kiro CLI 后端）—— 按 [kiro.dev](https://kiro.dev/cli/) 安装后运行 `kiro-cli login`；或设置 `KIRO_API_KEY` 走 headless（需 Pro / Pro+ / Power 订阅）
 - Anthropic / OpenAI / Google AI Studio API Key（HTTP 后端）
 
 不想记包名？跑 `./vendor/bin/superaicore cli:status` 看缺什么，再 `./vendor/bin/superaicore cli:install --all-missing` 一键装齐（默认带确认提示）。
@@ -79,11 +81,12 @@ php artisan migrate
 # 查看 Dispatcher 适配器及其可用状态
 ./vendor/bin/superaicore list-backends
 
-# 从 CLI 驱动五个引擎
+# 从 CLI 驱动六个引擎
 ./vendor/bin/superaicore call "你好" --backend=claude_cli                              # Claude Code CLI（本地登录）
 ./vendor/bin/superaicore call "你好" --backend=codex_cli                               # Codex CLI（ChatGPT 登录）
 ./vendor/bin/superaicore call "你好" --backend=gemini_cli                              # Gemini CLI（Google OAuth）
 ./vendor/bin/superaicore call "你好" --backend=copilot_cli                             # GitHub Copilot CLI（订阅）
+./vendor/bin/superaicore call "你好" --backend=kiro_cli                                # AWS Kiro CLI（订阅）
 ./vendor/bin/superaicore call "你好" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # 跳过 CLI 包装，直接打 HTTP API
@@ -127,6 +130,12 @@ Claude Code 的 skill（`.claude/skills/<name>/SKILL.md`）和 sub-agent（`.cla
 
 # 把 Claude 风格 hooks（.claude/settings.json:hooks）合并到 Copilot
 ./vendor/bin/superaicore copilot:sync-hooks                   # 写 ~/.copilot/config.json:hooks
+
+# AWS Kiro CLI（0.6.1+）：skill 零翻译直通（Kiro 原生读 .claude/skills/）；
+# agent 在 agent:run --backend=kiro 时自动翻译成 ~/.kiro/agents/<name>.json，
+# 然后交给 Kiro 原生 subagent DAG 编排执行。
+./vendor/bin/superaicore kiro:sync --dry-run                  # 预览 ~/.kiro/agents/*.json
+./vendor/bin/superaicore agent:run reviewer "审查" --backend=kiro
 
 # 一键安装缺失的引擎 CLI（显式 —— 永不自动触发）
 ./vendor/bin/superaicore cli:status                           # 安装/版本/登录/提示一览
@@ -180,10 +189,11 @@ echo $result['text'];
   Gemini CLI      ────────▶ builtin / vertex           ────▶ gemini_cli
                             google-ai                  ────▶ gemini_api
   Copilot CLI     ────────▶ builtin                    ────▶ copilot_cli
+  Kiro CLI        ────────▶ builtin / kiro-api         ────▶ kiro_cli
   SuperAgent SDK  ────────▶ anthropic(-proxy) /        ────▶ superagent
                             openai(-compatible)
 
-  Dispatcher ← BackendRegistry   （管理上述 8 个适配器）
+  Dispatcher ← BackendRegistry   （管理上述 9 个适配器）
              ← ProviderResolver  （从 ProviderRepository 读取当前 provider）
              ← RoutingRepository （task_type + capability → service）
              ← UsageTracker      （写入 UsageRepository）

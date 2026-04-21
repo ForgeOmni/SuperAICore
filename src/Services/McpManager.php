@@ -2984,9 +2984,9 @@ class McpManager
                         $catalog->keys(),
                         fn ($k) => $registry->for($k)->supportsMcp(),
                     ))
-                    : ['claude', 'codex', 'gemini', 'copilot'];
+                    : ['claude', 'codex', 'gemini', 'copilot', 'kiro'];
             } catch (\Throwable $e) {
-                $backends = ['claude', 'codex', 'gemini', 'copilot'];
+                $backends = ['claude', 'codex', 'gemini', 'copilot', 'kiro'];
             }
         }
         $home = getenv('HOME') ?: (PHP_OS_FAMILY === 'Windows' ? (getenv('USERPROFILE') ?: '') : '');

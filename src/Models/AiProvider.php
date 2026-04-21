@@ -33,7 +33,8 @@ class AiProvider extends Model
     const BACKEND_SUPERAGENT = 'superagent';
     const BACKEND_GEMINI     = 'gemini';
     const BACKEND_COPILOT    = 'copilot';
-    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT];
+    const BACKEND_KIRO       = 'kiro';
+    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT, self::BACKEND_KIRO];
 
     const TYPE_BUILTIN           = 'builtin';
     const TYPE_ANTHROPIC         = 'anthropic';
@@ -43,6 +44,10 @@ class AiProvider extends Model
     const TYPE_OPENAI            = 'openai';
     const TYPE_OPENAI_COMPATIBLE = 'openai-compatible';
     const TYPE_GOOGLE_AI         = 'google-ai';
+    // Kiro CLI's headless API-key channel. Stored key is injected as
+    // KIRO_API_KEY at spawn time; presence of the env var makes kiro-cli
+    // skip its browser-login flow. Requires a Kiro Pro / Pro+ / Power plan.
+    const TYPE_KIRO_API          = 'kiro-api';
 
     const TYPES = [
         self::TYPE_BUILTIN           => 'builtin',
@@ -53,6 +58,7 @@ class AiProvider extends Model
         self::TYPE_OPENAI            => 'openai',
         self::TYPE_OPENAI_COMPATIBLE => 'openai-compatible',
         self::TYPE_GOOGLE_AI         => 'google-ai',
+        self::TYPE_KIRO_API          => 'kiro-api',
     ];
 
     /**
@@ -92,6 +98,10 @@ class AiProvider extends Model
         ],
         self::BACKEND_COPILOT => [
             self::TYPE_BUILTIN,
+        ],
+        self::BACKEND_KIRO => [
+            self::TYPE_BUILTIN,    // kiro-cli login already completed on host
+            self::TYPE_KIRO_API,   // DB-stored KIRO_API_KEY injected at spawn
         ],
     ];
 
@@ -194,6 +204,7 @@ class AiProvider extends Model
             self::TYPE_ANTHROPIC_PROXY,
             self::TYPE_OPENAI,
             self::TYPE_OPENAI_COMPATIBLE,
+            self::TYPE_KIRO_API,
         ]);
     }
 

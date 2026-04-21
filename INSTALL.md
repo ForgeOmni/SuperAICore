@@ -15,6 +15,7 @@ This guide walks through a full install of `forgeomni/superaicore` into an exist
   - `codex` CLI on `$PATH` — for the Codex CLI backend
   - `gemini` CLI on `$PATH` — for the Gemini CLI backend
   - `copilot` CLI on `$PATH` (then `copilot login`) — for the GitHub Copilot CLI backend
+  - `kiro-cli` on `$PATH` (then `kiro-cli login`, or `KIRO_API_KEY` for headless Pro/Pro+/Power) — for the Kiro CLI backend (0.6.1+)
   - Anthropic API key — for `anthropic_api`
   - OpenAI API key — for `openai_api`
   - Google AI Studio key — for `gemini_api`
@@ -92,6 +93,7 @@ AI_CORE_CLAUDE_CLI_ENABLED=true
 AI_CORE_CODEX_CLI_ENABLED=true
 AI_CORE_GEMINI_CLI_ENABLED=true
 AI_CORE_COPILOT_CLI_ENABLED=true
+AI_CORE_KIRO_CLI_ENABLED=true
 AI_CORE_SUPERAGENT_ENABLED=true
 AI_CORE_ANTHROPIC_API_ENABLED=true
 AI_CORE_OPENAI_API_ENABLED=true
@@ -100,7 +102,17 @@ CLAUDE_CLI_BIN=claude
 CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
 COPILOT_CLI_BIN=copilot
+KIRO_CLI_BIN=kiro-cli
 AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
+# Kiro's --no-interactive mode refuses to run tools without prior per-tool
+# approval unless this is on. Flip false only for workflows that
+# pre-populate approvals via `--trust-tools=<categories>` (0.6.1+).
+AI_CORE_KIRO_TRUST_ALL_TOOLS=true
+# Kiro API-key auth (headless, Pro / Pro+ / Power subscribers). Setting
+# KIRO_API_KEY makes kiro-cli skip its browser login flow. Normally stored
+# per provider in the DB via type=kiro-api; set this env var only when
+# kiro-cli is invoked outside superaicore's dispatcher (0.6.1+).
+# KIRO_API_KEY=ksk_...
 # Opt-in liveness probe for `cli:status` copilot row (0.5.8+). Off by
 # default — spawning `copilot --help` on every status poll is wasteful.
 SUPERAICORE_COPILOT_PROBE=false
@@ -154,15 +166,21 @@ If you have any Claude Code skills or sub-agents installed (under `./.claude/ski
 # Translate Claude sub-agents into Copilot's `.agent.md` format.
 # Auto-runs on `agent:run --backend=copilot`; this flag is a manual preview.
 ./vendor/bin/superaicore copilot:sync --dry-run
+
+# Same contract for Kiro (0.6.1+): agents translated to ~/.kiro/agents/<name>.json.
+# Auto-runs on `agent:run --backend=kiro`; this flag is a manual preview.
+./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
-No config needed. Running without `--dry-run` shells out to the backend CLIs (`claude`, `codex`, `gemini`, `copilot`) — install whichever ones you intend to target:
+No config needed. Running without `--dry-run` shells out to the backend CLIs (`claude`, `codex`, `gemini`, `copilot`, `kiro-cli`) — install whichever ones you intend to target:
 
 ```bash
 npm i -g @anthropic-ai/claude-code
 brew install codex        # or: cargo install codex
 npm i -g @google/gemini-cli
 npm i -g @github/copilot   # then `copilot login` (OAuth device flow)
+# kiro-cli — download from https://kiro.dev/cli/ then `kiro-cli login`
+# (or export KIRO_API_KEY=ksk_... for headless Pro / Pro+ / Power subscribers)
 ```
 
 One-shot alternative (recommended) — let superaicore detect and install:

@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-Laravel package for unified AI execution across five execution engines: **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, **GitHub Copilot CLI**, and **SuperAgent SDK**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, and a complete admin UI.
+Laravel package for unified AI execution across six execution engines: **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, **GitHub Copilot CLI**, **AWS Kiro CLI**, and **SuperAgent SDK**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, and a complete admin UI.
 
 Works standalone in a fresh Laravel install. The UI is optional and fully overridable, so it can be embedded inside a host application (e.g. SuperTeam) or disabled entirely when only the services are needed.
 
@@ -18,7 +18,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
 - **SuperAgent** is a minimal in-process PHP SDK that drives a single LLM tool-use loop (one agent, one conversation).
 - **SuperAICore** is a Laravel-wide orchestration layer — it picks a backend, resolves provider credentials, routes by capability, tracks usage, calculates cost, manages MCP servers, and ships an admin UI.
 
-**SuperAICore does not require SuperAgent to function.** SuperAgent is one of several backends. The CLI engines (Claude / Codex / Gemini / Copilot) and the HTTP backends (Anthropic / OpenAI / Google) work without it, and the `SuperAgentBackend` gracefully reports itself as unavailable (`class_exists(Agent::class)` check) when the SDK is absent. If you don't need SuperAgent, set `AI_CORE_SUPERAGENT_ENABLED=false` in your `.env` and the Dispatcher falls back to the remaining backends.
+**SuperAICore does not require SuperAgent to function.** SuperAgent is one of several backends. The CLI engines (Claude / Codex / Gemini / Copilot / Kiro) and the HTTP backends (Anthropic / OpenAI / Google) work without it, and the `SuperAgentBackend` gracefully reports itself as unavailable (`class_exists(Agent::class)` check) when the SDK is absent. If you don't need SuperAgent, set `AI_CORE_SUPERAGENT_ENABLED=false` in your `.env` and the Dispatcher falls back to the remaining backends.
 
 The `forgeomni/superagent` entry in `composer.json` is there so the SuperAgent backend compiles out of the box. If you never use it, you can safely remove it from `composer.json` before `composer install` in your host app — nothing else in SuperAICore imports the SuperAgent namespace.
 
@@ -27,13 +27,14 @@ The `forgeomni/superagent` entry in `composer.json` is there so the SuperAgent b
 - **Skill & sub-agent runner** — discovers Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/agents/<name>.md`) and exposes them as CLI subcommands (`skill:list`, `skill:run`, `agent:list`, `agent:run`). Runs on Claude out of the box; optionally on Codex/Gemini/Copilot with compatibility probe, tool-name translation, backend preamble injection, and a side-effect-locking fallback chain. `gemini:sync` mirrors skills/agents into Gemini custom commands; `copilot:sync` mirrors agents into `~/.copilot/agents/*.agent.md` (or runs automatically before `agent:run --backend=copilot`); `copilot:sync-hooks` merges Claude-style hooks into Copilot's config.
 - **One-shot CLI installer** — `cli:status` shows which engine CLIs are installed / logged in + an install hint for anything missing; `cli:install [backend] [--all-missing]` shells out to the canonical package manager (`npm`/`brew`/`script`) with confirmation by default. Explicit by design — no CLI ever auto-installs as a dispatch side-effect.
 - **Parallel Copilot fan-out** — `copilot:fleet <task> --agents a,b,c` runs the same task across N Copilot sub-agents concurrently, aggregates per-agent results, and registers each child in the Process Monitor.
-- **Five execution engines** — Claude Code CLI, Codex CLI, Gemini CLI, GitHub Copilot CLI, and SuperAgent SDK — unified behind a single `Dispatcher` contract. Each engine accepts a fixed set of provider types:
+- **Six execution engines** — Claude Code CLI, Codex CLI, Gemini CLI, GitHub Copilot CLI, AWS Kiro CLI, and SuperAgent SDK — unified behind a single `Dispatcher` contract. Each engine accepts a fixed set of provider types:
   - **Claude Code CLI**: `builtin` (local login), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`
   - **Codex CLI**: `builtin` (ChatGPT login), `openai`, `openai-compatible`
   - **Gemini CLI**: `builtin` (Google OAuth login), `google-ai`, `vertex`
   - **GitHub Copilot CLI**: `builtin` only (the `copilot` binary owns OAuth/keychain/refresh). Reads `.claude/skills/` natively (zero-translation skill pass-through). **Subscription billed** — costs are tracked separately from per-token engines on the dashboard.
+  - **AWS Kiro CLI** (0.6.1+): `builtin` (local `kiro-cli login`), `kiro-api` (stored key injected as `KIRO_API_KEY` for headless mode). Ships the richest out-of-the-box CLI feature set — native agents, skills, MCP, and **subagent DAG orchestration** (no `SpawnPlan` emulation). Reads Claude's `SKILL.md` format verbatim. **Subscription billed** — credit-based Pro / Pro+ / Power plans.
   - **SuperAgent SDK**: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`
-- Engines fan out to internal Dispatcher adapters (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`) — CLI adapters when a provider uses `builtin`, HTTP adapters when it uses an API key. Operators rarely need to know this, but the adapters are addressable directly from the CLI if needed.
+- Engines fan out to internal Dispatcher adapters (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`) — CLI adapters when a provider uses `builtin` / `kiro-api`, HTTP adapters when it uses an API key. Operators rarely need to know this, but the adapters are addressable directly from the CLI if needed.
 - **EngineCatalog single source of truth** — engine labels, icons, dispatcher backends, supported provider types, available models, and the declarative **`ProcessSpec`** (binary, version/auth-status args, prompt/output/model flags, default flags) live in one PHP service. Adding a new CLI engine means editing `EngineCatalog::seed()` and the providers UI, process monitor scan, disable-toggle table, and default CLI command shape all update automatically. The same catalog also drives host-app model dropdowns via `modelOptions($key)` / `modelAliases($key)` (0.5.9+), so hosts stop hand-rolling per-backend switches — a new engine's models appear in every picker for free. Host apps can override per-engine fields (including `process_spec`) via `super-ai-core.engines` config.
 - **Dynamic model catalog** (0.6.0+) — `CostCalculator`, `ClaudeModelResolver`, `GeminiModelResolver`, and `EngineCatalog::seed()`'s `available_models` all fall through to SuperAgent's `ModelCatalog` (bundled `resources/models.json` + user override at `~/.superagent/models.json`). Running `superagent models update` (or the new `super-ai-core:models update`) refreshes pricing and model lists for every Anthropic / OpenAI / Gemini / Bedrock / OpenRouter row without a `composer update` or `vendor:publish`. Config-published prices and explicit `available_models` overrides stay authoritative.
 - **Gemini OAuth shown on `/providers`** (0.6.0+) — `CliStatusDetector::detectAuth('gemini')` reads `~/.gemini/oauth_creds.json` via SuperAgent's `GeminiCliCredentials`, falls back to `GEMINI_API_KEY` / `GOOGLE_API_KEY`, and reports `{loggedIn, method, expires_at}` on the provider card the same way Claude Code / Codex do.
@@ -58,6 +59,7 @@ Optional, only when the respective backend is enabled:
 - `codex` CLI on `$PATH` for the Codex CLI backend — `brew install codex`
 - `gemini` CLI on `$PATH` for the Gemini CLI backend — `npm i -g @google/gemini-cli`
 - `copilot` CLI on `$PATH` for the GitHub Copilot CLI backend — `npm i -g @github/copilot` (then run `copilot login`)
+- `kiro-cli` on `$PATH` for the Kiro CLI backend — [install from kiro.dev](https://kiro.dev/cli/) (then `kiro-cli login`, or set `KIRO_API_KEY` for headless Pro/Pro+/Power)
 - An Anthropic / OpenAI / Google AI Studio API key for the HTTP backends
 
 Don't want to remember the exact package names? Run `./vendor/bin/superaicore cli:status` to see what's missing and `./vendor/bin/superaicore cli:install --all-missing` to bootstrap everything in one go (confirmation prompt by default).
@@ -79,11 +81,12 @@ Full step-by-step guide: [INSTALL.md](INSTALL.md).
 # List Dispatcher adapters and their availability
 ./vendor/bin/superaicore list-backends
 
-# Drive the five engines from the CLI
+# Drive the six engines from the CLI
 ./vendor/bin/superaicore call "Hello" --backend=claude_cli                              # Claude Code CLI (local login)
 ./vendor/bin/superaicore call "Hello" --backend=codex_cli                               # Codex CLI (ChatGPT login)
 ./vendor/bin/superaicore call "Hello" --backend=gemini_cli                              # Gemini CLI (Google OAuth)
 ./vendor/bin/superaicore call "Hello" --backend=copilot_cli                             # GitHub Copilot CLI (subscription)
+./vendor/bin/superaicore call "Hello" --backend=kiro_cli                                # AWS Kiro CLI (subscription)
 ./vendor/bin/superaicore call "Hello" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # Skip the CLI wrapper and hit the HTTP APIs directly
@@ -128,6 +131,12 @@ Claude Code skills (`.claude/skills/<name>/SKILL.md`) and sub-agents (`.claude/a
 
 # Mirror your Claude-style hooks (.claude/settings.json:hooks) into Copilot
 ./vendor/bin/superaicore copilot:sync-hooks                   # writes ~/.copilot/config.json:hooks
+
+# AWS Kiro CLI (0.6.1+): skills are zero-translation pass-through (Kiro reads
+# .claude/skills/ natively); agents auto-translate to ~/.kiro/agents/<name>.json
+# on agent:run --backend=kiro, then run under Kiro's native subagent DAG.
+./vendor/bin/superaicore kiro:sync --dry-run                  # preview ~/.kiro/agents/*.json
+./vendor/bin/superaicore agent:run reviewer "audit" --backend=kiro
 
 # Bootstrap missing engine CLIs (explicit — never auto-installs)
 ./vendor/bin/superaicore cli:status                           # table of installed / version / auth / hint
@@ -180,10 +189,12 @@ echo $result['text'];
                             openai / openai-compat   ────▶ openai_api
   Gemini CLI      ────────▶ builtin / vertex         ────▶ gemini_cli
                             google-ai                ────▶ gemini_api
+  Copilot CLI     ────────▶ builtin                  ────▶ copilot_cli
+  Kiro CLI        ────────▶ builtin / kiro-api       ────▶ kiro_cli
   SuperAgent SDK  ────────▶ anthropic(-proxy) /      ────▶ superagent
                             openai(-compatible)
 
-  Dispatcher ← BackendRegistry   (owns the 7 adapters above)
+  Dispatcher ← BackendRegistry   (owns the 9 adapters above)
              ← ProviderResolver  (active provider from ProviderRepository)
              ← RoutingRepository (task_type + capability → service)
              ← UsageTracker      (writes to UsageRepository)

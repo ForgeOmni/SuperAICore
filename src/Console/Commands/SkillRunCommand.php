@@ -11,6 +11,7 @@ use SuperAICore\Runner\CompatibilityProbe;
 use SuperAICore\Runner\CopilotSkillRunner;
 use SuperAICore\Runner\FallbackChain;
 use SuperAICore\Runner\GeminiSkillRunner;
+use SuperAICore\Runner\KiroSkillRunner;
 use SuperAICore\Runner\SkillRunner;
 use SuperAICore\Services\CapabilityRegistry;
 use SuperAICore\Translator\SkillBodyTranslator;
@@ -41,7 +42,7 @@ final class SkillRunCommand extends Command
         $this
             ->addArgument('name', InputArgument::REQUIRED, 'Skill name')
             ->addArgument('args', InputArgument::IS_ARRAY | InputArgument::OPTIONAL, 'Free-form args appended to the skill prompt')
-            ->addOption('backend', 'b', InputOption::VALUE_REQUIRED, 'Target backend: claude|codex|gemini|copilot|superagent', 'claude')
+            ->addOption('backend', 'b', InputOption::VALUE_REQUIRED, 'Target backend: claude|codex|gemini|copilot|kiro|superagent', 'claude')
             ->addOption('exec', null, InputOption::VALUE_REQUIRED, 'Execution mode: claude|native|fallback', 'claude')
             ->addOption('fallback-chain', null, InputOption::VALUE_REQUIRED, 'Comma-separated backend chain for --exec=fallback (default: <backend>,claude)')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Print the resolved command without executing');
@@ -99,6 +100,7 @@ final class SkillRunCommand extends Command
                 'codex'   => new CodexSkillRunner(writer: $writer),
                 'gemini'  => new GeminiSkillRunner(writer: $writer),
                 'copilot' => new CopilotSkillRunner(writer: $writer),
+                'kiro'    => new KiroSkillRunner(writer: $writer),
                 default   => null,
             };
         };
@@ -186,6 +188,7 @@ final class SkillRunCommand extends Command
             'codex'   => new CodexSkillRunner(writer: $writer),
             'gemini'  => new GeminiSkillRunner(writer: $writer),
             'copilot' => new CopilotSkillRunner(writer: $writer),
+            'kiro'    => new KiroSkillRunner(writer: $writer),
             default   => null,
         };
     }

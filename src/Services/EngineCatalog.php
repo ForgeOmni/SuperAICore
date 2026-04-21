@@ -271,6 +271,26 @@ class EngineCatalog
                     $out[$m['slug']] = $m['display_name'];
                 }
                 return $out;
+
+            case 'kiro':
+                // Kiro routes Anthropic-family IDs — same slugs Claude uses
+                // (claude-sonnet-4-6, claude-opus-4-6, …), so ClaudeModelResolver
+                // is authoritative. Adding a new Anthropic model to the SDK's
+                // ModelCatalog automatically surfaces it in the Kiro picker too.
+                if (!class_exists(ClaudeModelResolver::class)) return null;
+                $out = [];
+                foreach (ClaudeModelResolver::families() as $family) {
+                    $full = ClaudeModelResolver::defaultFor($family);
+                    $out[$family] = ucfirst($family) . ($full ? " ({$full})" : '');
+                }
+                foreach (ClaudeModelResolver::catalog() as $m) {
+                    $out[$m['slug']] = $m['display_name'];
+                }
+                // Kiro-specific "Auto" pseudo-model — lets the router pick
+                // the cheapest Anthropic model for the task. Not in the
+                // Claude catalog because it's a Kiro routing primitive.
+                $out['auto'] = 'Auto (Kiro router picks the cheapest model)';
+                return $out;
         }
         return null;
     }
@@ -360,6 +380,38 @@ class EngineCatalog
                     modelFlag:        '--model',
                 ),
             ],
+            'kiro' => [
+                'label'               => 'Kiro',
+                'icon'                => 'magic',
+                'dispatcher_backends' => ['kiro_cli'],
+                'is_cli'              => true,
+                'cli_binary'          => 'kiro-cli',
+                // Kiro routes models server-side; the string in agent JSON's
+                // `model` field is authoritative. Headless CLI has no `--model`
+                // flag, so the runner rewrites the agent file per invocation.
+                'default_model'       => 'claude-sonnet-4-6',
+                'billing_model'       => 'subscription',
+                'available_models'    => [
+                    'claude-sonnet-4-6',
+                    'claude-sonnet-4-5',
+                    'claude-opus-4-6',
+                    'claude-haiku-4-5',
+                ],
+                // `kiro-cli chat` emits plain text (the --format flag exists
+                // only on doctor / settings / whoami / diagnostic commands).
+                // outputFormatFlag stays null so the default builder doesn't
+                // append one; KiroCliBackend extracts the trailing
+                // `▸ Credits: X • Time: Y` summary from stdout instead.
+                'process_spec' => new ProcessSpec(
+                    binary:           'kiro-cli',
+                    versionArgs:      ['--version'],
+                    authStatusArgs:   ['doctor'],
+                    promptFlag:       null,
+                    outputFormatFlag: null,
+                    modelFlag:        null,
+                    defaultFlags:     ['chat', '--no-interactive', '--trust-all-tools'],
+                ),
+            ],
             'copilot' => [
                 'label'               => 'GitHub Copilot',
                 'icon'                => 'github',
@@ -446,6 +498,7 @@ class EngineCatalog
             'claude' => 'anthropic',
             'gemini' => 'gemini',
             'codex'  => 'openai',
+            'kiro'   => 'anthropic', // Kiro's available slugs share Claude's vocabulary
             default  => null,
         };
         if ($catalogProvider === null) {
@@ -465,6 +518,7 @@ class EngineCatalog
             'claude' => 'claude-',
             'gemini' => 'gemini',
             'codex'  => 'gpt-',
+            'kiro'   => 'claude-',
             default  => '',
         };
 

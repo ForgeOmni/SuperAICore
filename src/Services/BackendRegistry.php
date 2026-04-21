@@ -8,6 +8,7 @@ use SuperAICore\Backends\CodexCliBackend;
 use SuperAICore\Backends\CopilotCliBackend;
 use SuperAICore\Backends\GeminiApiBackend;
 use SuperAICore\Backends\GeminiCliBackend;
+use SuperAICore\Backends\KiroCliBackend;
 use SuperAICore\Backends\OpenAiApiBackend;
 use SuperAICore\Backends\SuperAgentBackend;
 use SuperAICore\Contracts\Backend;
@@ -65,6 +66,14 @@ class BackendRegistry
                 $config['copilot_cli']['binary'] ?? 'copilot',
                 $config['copilot_cli']['timeout'] ?? 300,
                 $config['copilot_cli']['allow_all_tools'] ?? true,
+                $logger,
+            ));
+        }
+        if ($config['kiro_cli']['enabled'] ?? true) {
+            $this->register(new KiroCliBackend(
+                $config['kiro_cli']['binary'] ?? 'kiro-cli',
+                $config['kiro_cli']['timeout'] ?? 300,
+                $config['kiro_cli']['trust_all_tools'] ?? true,
                 $logger,
             ));
         }

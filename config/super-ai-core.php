@@ -79,6 +79,15 @@ return [
             // runs need this on. Flip to false to opt back into prompts.
             'allow_all_tools' => (bool) env('AI_CORE_COPILOT_ALLOW_ALL_TOOLS', true),
         ],
+        'kiro_cli' => [
+            'enabled' => env('AI_CORE_KIRO_CLI_ENABLED', true),
+            'binary' => env('KIRO_CLI_BIN', 'kiro-cli'),
+            'timeout' => 300,
+            // Kiro's --no-interactive mode refuses to run tools without prior
+            // per-tool approval unless this is on. Flip false only for workflows
+            // that pre-populate approvals via `--trust-tools=<categories>`.
+            'trust_all_tools' => (bool) env('AI_CORE_KIRO_TRUST_ALL_TOOLS', true),
+        ],
         'gemini_api' => [
             'enabled' => env('AI_CORE_GEMINI_API_ENABLED', true),
             'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com'),
@@ -188,5 +197,19 @@ return [
         'copilot:gpt-5-mini'          => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'copilot:gpt-4.1'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'copilot:gemini-3-pro-preview'=> ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+
+        // ─── AWS Kiro CLI (credit-based subscription) ───
+        // Kiro bills by per-response "credits" (plans: Free 50 / Pro 1k /
+        // Pro+ 2k / Power 10k per month; overage $0.04/credit). Credits are
+        // not tokens, so per-token USD is 0 and the dashboard groups these
+        // under "Subscription engines". KiroCliBackend surfaces the per-call
+        // credit count under `usage.credits` for hosts that want a custom
+        // dashboard card (e.g. "2.8 credits / 43s this month") — core cost
+        // totals stay at $0 to avoid cross-engine double counting.
+        'kiro:claude-sonnet-4-6'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'kiro:claude-sonnet-4-5'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'kiro:claude-opus-4-6'        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'kiro:claude-haiku-4-5'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'kiro:auto'                   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
     ],
 ];
