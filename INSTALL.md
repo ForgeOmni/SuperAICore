@@ -371,6 +371,24 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 `AiProcessSource::list()` is now explicitly **live-only** by contract — it returns ONLY currently-running OS processes. Hosts that previously relied on `list()` returning finished rows for a history view should query the `ai_processes` table directly (it remains the full audit log of every spawn).
 
+**0.6.8 — no migration.** Additive features only. Three things worth reviewing:
+
+1. **Adopting catalog-driven MCP sync** is opt-in. Drop a catalog at `.mcp-servers/mcp-catalog.json`, write `.claude/mcp-host.json` with the project / agent tier choices, then `php artisan claude:mcp-sync --dry-run` to preview. Hosts that don't run the command see zero change — no file is touched until you invoke it. See `docs/mcp-sync.md` for the shape.
+
+2. **Upgrading `SuperAgentBackend` callers.** Existing one-shot users keep working verbatim (`max_turns` still defaults to 1, envelope keys are additive). To actually use SuperAgent 0.8.8's new capabilities in the in-process path, pass:
+   ```php
+   $dispatcher->dispatch([
+       'prompt'          => '…',
+       'backend'         => 'superagent',
+       'max_turns'       => 10,              // run the real agentic loop
+       'max_cost_usd'    => 1.50,            // hard cap via Agent::withMaxBudget()
+       'mcp_config_file' => base_path('.mcp.json'),
+       'provider_config' => ['provider' => 'kimi', 'region' => 'cn'],  // region-aware
+   ]);
+   ```
+
+3. **Debug API providers with one command.** `bin/superaicore api:status` probes every provider whose API-key env var is set (5s cURL per); `--all` widens to every DEFAULT_PROVIDERS entry, `--json` emits structured output for dashboards. Distinguishes auth-rejected (HTTP 401/403), network timeout, and missing key each with a distinct `reason`.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

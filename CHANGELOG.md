@@ -4,6 +4,74 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] — 2026-04-22
+
+Fans MCP configuration out from one host-owned catalog, upgrades the in-process SuperAgent backend to actually use what the SDK ships in 0.8.8, and hardens the weak-model agent-spawn path so a Gemini Flash child that ignores its output contract gets flagged instead of silently polluting the consolidator's view. Three strands in one release:
+
+1. **Catalog-driven MCP sync.** A single `mcp-catalog.json` + `.claude/mcp-host.json` mapping now drives project `.mcp.json`, per-agent frontmatter `mcpServers:` blocks, and every installed CLI backend's user-scope config (Claude / Codex / Gemini / Copilot / Kiro). RUN 63 (2026-04-21) surfaced the motivating bug: hosts trimmed `.mcp.json` but forgot to push the change to Gemini's own config, so Gemini kept spawning 50+ servers that no longer existed and blew past its process cap. The new flow makes "edit the catalog → re-run `claude:mcp-sync` → every backend drops to the same server set" the single path.
+2. **SuperAgent 0.8.8 integration.** The `SuperAgentBackend` was a 65-line one-shot wrapper. It now honours `max_turns`, `max_cost_usd` (hard budget cap inside the Agent loop), tool filters, `mcp_config_file`, and the new Kimi/Qwen/GLM/MiniMax `region` split. New `ApiHealthDetector` + `api:status` command wrap the SDK's `ProviderRegistry::healthCheck()` so operators can tell auth-rejected vs network-timeout vs no-key apart for every direct-HTTP API provider (anthropic / openai / gemini / kimi / qwen / glm / minimax / openrouter) from one table.
+3. **Weak-model agent-spawn hardening.** After RUN 68 (2026-04-22) where a Gemini Flash child wrote a `generate_charts.py`, fabricated a sibling-role subdir, and crowned its subdir with a `summary.md` that belongs to the consolidator, `Orchestrator::run()` now audits each agent's output subdir post-fanout and annotates the report with contract-violation warnings. Per-agent plumbing (`run.log`, prompt, exec script) also moves out of the user-facing output dir into `$TMPDIR`, so the founder browsing the run directory sees only real deliverables. `GeminiCliBackend::parseJson()` tolerates the "YOLO mode is enabled." / "MCP issues detected." / deprecation-warning preamble the CLI prepends to its JSON output.
+
+No breaking changes. No migrations. Hosts already on 0.6.7 upgrade cleanly.
+
+### Added
+
+**`claude:mcp-sync` — catalog + host-map → project `.mcp.json` + agent frontmatter + backend configs**
+- New standalone & artisan command. Reads a host-supplied catalog (`.mcp-servers/mcp-catalog.json`, shape `{mcpServers: {name: {command, args, env}}}`) plus a thin host mapping (`.claude/mcp-host.json`) that picks the project tier-1 server list and per-agent tier-2 assignments. Writes the canonical project `.mcp.json`, upserts managed `mcpServers:` blocks inside `.claude/agents/*.md` between `# superaicore:mcp:begin` / `# superaicore:mcp:end` markers, then propagates the same server set to each installed CLI backend's native config via `McpManager::syncAllBackends()`.
+- `--dry-run` prints the +/- change table without touching disk. `--no-propagate` skips the backend fan-out. `--host-config` / `--project-root` accept overrides for scripted runs.
+- Non-destructive by contract (via `AbstractManifestWriter`): byte-equal on-disk hash → `unchanged`; on-disk hash differs from manifest → `user-edited` and we leave it alone for the project file; for agent frontmatter, edits outside the markers are preserved while edits inside are flagged `user_edited` but still overwritten (the managed region belongs to this tool by design). Agents absent from `assignments` are **never** touched.
+
+**`mcp:sync-backends` — standalone fan-out for hand-edited `.mcp.json` or file-watcher auto-sync**
+- Ships as a separate entry point for three cases: hand-edited `.mcp.json` (bypassing the host-map flow), file-watcher / git-hook driven auto-sync on every `.mcp.json` write, and recovering from a backend whose own config drifted. `--backends=claude,codex` narrows the target set; default is every backend whose `BackendCapabilities::supportsMcp()` returns true.
+
+**`Services\McpCatalog` + `Sync\ClaudeProjectMcpWriter` + `Sync\ClaudeAgentMcpWriter`**
+- `McpCatalog` loads the catalog JSON and exposes `names() / has() / get() / subset() / domain()` — kept separate from `McpManager` because `McpManager`'s registry is installer-oriented (icons, categories, install_dir), while `McpCatalog` is the runtime-config view (portable paths).
+- `ClaudeProjectMcpWriter::render()` emits a deterministic `.mcp.json` shape (`{type, command, args?, env?}` per server, `args` / `env` omitted when empty, trailing newline). `sync()` round-trips through `AbstractManifestWriter::applyOne()`.
+- `ClaudeAgentMcpWriter::renderManagedBlock()` / `upsertManagedBlock()` / `extractManagedBlock()` splice the YAML block into each agent's frontmatter; tolerates CRLF frontmatter and BOM prefixes. Throws when the agent file lacks leading `---` (rather than silently injecting into free-form markdown).
+
+**`SuperAgentBackend` — in-process agentic loop instead of one-shot completion**
+- `max_turns` (default 1, preserves pre-0.6.8 behaviour); `max_cost_usd` → `Agent::withMaxBudget()` so a runaway in-process loop aborts before it burns the caller's budget; `allowed_tools` / `denied_tools` filter the tool surface; `mcp_config_file` (pointing at a `.mcp.json` — same shape `claude:mcp-sync` writes) loads via `MCPManager::loadFromJsonFile()` + `autoConnect()`, registers each MCPTool on the Agent, and `disconnectAll()` runs in `finally{}` so stdio subprocesses don't linger past `generate()`.
+- `provider_config.region` routes through `ProviderRegistry::createWithRegion()` rather than the normal string-name path — SuperAgent 0.8.8's region map (Kimi intl/cn, Qwen intl/us/cn/hk, GLM intl/cn, MiniMax intl/cn) requires the provider instance be built with the region in config, but `Agent::resolveProvider()`'s internal 8-key allowlist silently drops `region`. The backend builds the LLMProvider explicitly and hands the instance in to route around this.
+- Envelope gains `usage.cache_read_input_tokens`, `usage.cache_creation_input_tokens`, `cost_usd` (the SDK's own turn-summed cost — Dispatcher already prefers backend-reported cost when non-zero), and `turns`.
+- Default path passes `tools: []` to short-circuit SDK's `ToolLoader` — avoids a cascade of `[SuperAgent] Config unavailable …` stderr lines in non-Laravel contexts. Callers wanting the SDK's default tool set pass `load_tools: true` explicitly.
+
+**`api:status` + `ApiHealthDetector` — 5s cURL probe for direct-HTTP API providers**
+- New command (`bin/superaicore api:status` / `php artisan api:status`) runs SuperAgent's `ProviderRegistry::healthCheck()` against anthropic / openai / openrouter / gemini / kimi / qwen / glm / minimax. Each probe is a 5s `GET /v1/models` (or equivalent cheapest listing endpoint) and returns `{ok, latency_ms, reason}`. Auth rejections (HTTP 401/403), network timeouts, and missing keys each report themselves with a distinct `reason` so operators can fix the right thing without guessing.
+- Default behaviour filters to providers whose API-key env var is actually set — `--all` probes every DEFAULT_PROVIDERS entry (useful for debugging which env vars are missing), `--providers=a,b,c` narrows, `--json` emits structured output for piping into dashboards. Parallel sibling of `cli:status` for CLI engines.
+
+**`Services\CliStatusDetector::safeProbeOutput()` helper**
+- Extracts the "spawn a short CLI probe, swallow timeouts/crashes, return trimmed stdout or null" pattern shared by `detectBinary()` (`--version`) and `detectAuth()` (Claude / Codex auth subcommands). Status probes run from `/providers` and `cli:status` on every hit and must be infallible; the new helper centralises that contract so future probes can't accidentally let a Throwable leak.
+
+**`AgentSpawn\Orchestrator::auditAgentOutput()` — post-fanout contract audit**
+- Scans each agent's output subdir after its child exits and flags three classes of weak-model contract violation: (a) non-whitelisted extensions (anything outside `md` / `csv` / `png`), (b) consolidator-reserved filenames inside an agent subdir (`summary.md`, `思维导图.md`, `流程图.md`, English + Chinese variants), and (c) sibling-role sub-directories (kebab-case agent-id shapes, plus a hard list of role nouns: `ceo / cfo / cto / marketing / …`). Warnings land in `report[N].warnings[]` — never modifies disk, so a founder-facing re-dispatch decision stays with the host.
+- `Pipeline::runFanoutAndConsolidate()` logs each warning to `laravel.log` via `logger->warning('Pipeline: audit [<agent>] — <message>')` so regressions are visible without the operator opening per-agent `run.log` files in `$TMPDIR`. The `_spawn_plan.json` plumbing file is deleted on successful consolidation — it's a mechanism, not a deliverable, and cluttered the output dir a founder actually browses.
+
+**Per-agent plumbing moved to `$TMPDIR`**
+- `Orchestrator::run()` now mints one `$TMPDIR/superaicore-spawn-<date>-<hex>/<agent>/` tree per fanout and writes each child's `run.log` + derived `run.prompt.md` / `run-exec.sh` / `-last.txt` files there. The user-facing `$outputRoot/<agent>/` dir only receives the child's real deliverables via Write/write_file — so the founder browsing the run output sees only `.md` / `.csv` / `.png`, not five lines of shell plumbing. Retained on failure paths for post-mortem debugging.
+
+**`GeminiCliBackend::parseJson()` tolerates CLI preamble noise**
+- Gemini CLI prepends noise to stdout before the JSON blob depending on flags and environment: `"YOLO mode is enabled. All tool calls will be automatically approved."` (often twice), `"MCP issues detected. Run /mcp list for status."`, deprecation warnings. A strict `$output[0] !== '{'` check was dropping the whole result → `text=''` → `TaskRunner` flagged `success=false` → `Pipeline`'s spawn-plan handoff was skipped while `_spawn_plan.json` sat orphaned in the output dir (RUN 65, 2026-04-22). Parser now locates the first `{` and decodes from there; `json_decode` itself rejects the case where the `{` is inside a preamble sentence rather than starting a real object.
+
+**`docs/mcp-sync.md`**
+- End-to-end documentation for the MCP-sync layer: catalog shape, host mapping shape, non-destructive contract, dry-run, propagation, typical workflows (first setup / adding a server / recovering a drifted backend).
+
+### Changed
+
+- `Services\CostCalculator::resolveRate()` — SDK's `\SuperAgent\Providers\ModelCatalog::pricing()` was already the final fallback since 0.6.3; behaviour unchanged, but with SuperAgent 0.8.8 upgraded the catalog now covers Kimi K2.6, Qwen3.6, GLM-5 / 4.6, MiniMax M2.7 out of the box — new models get accurate pricing on first run without `composer update`.
+- `src/Console/Application.php` — registers the three new commands (`claude:mcp-sync`, `mcp:sync-backends`, `api:status`).
+- `SuperAICoreServiceProvider::boot()` — registers the same three as artisan commands in Laravel hosts.
+
+### Migration notes
+
+No database changes. Hosts should review:
+
+- **First-time MCP-sync setup:** drop a catalog at `.mcp-servers/mcp-catalog.json`, write `.claude/mcp-host.json` referencing which servers belong to the project tier vs which agents get which tier-2 servers, then `php artisan claude:mcp-sync --dry-run` to preview. See `docs/mcp-sync.md` for the full shape.
+- **Hosts already using `SuperAgentBackend` for one-shot calls:** no change. `max_turns` defaults to 1, envelope stays shape-compatible (new keys are additive), `generate()` still returns `array|null`.
+- **Hosts that want real agentic runs through `SuperAgentBackend`:** pass `max_turns > 1`, and optionally `max_cost_usd` as a safety cap and `mcp_config_file` to make the project's MCP tools available to the in-process Agent.
+- **API provider debugging:** `bin/superaicore api:status --all --json` surfaces a per-provider `{ok, latency_ms, reason}` table — fastest way to distinguish a dead key from a network issue.
+
+---
+
 ## [0.6.7] — 2026-04-22
 
 Runtime-polish release focused on Claude CLI headless invocation + Process Monitor accuracy. Two production blockers uncovered while running `claude` from PHP-FPM dev servers (SuperTeam / PPT) are fixed upstream: (1) child claude processes inherited the parent `claude` shell's `CLAUDECODE` / `CLAUDE_CODE_*` markers and tripped the recursion guard with `"Not logged in"`; (2) `builtin` OAuth auth failed under PHP-FPM because macOS Keychain access is scoped to the audit session that wrote the item, and web workers live in a different session than the terminal where the user ran `claude login`. The Process Monitor also switches to a live-only view so finished runs disappear the moment their subprocess exits instead of accumulating in the UI.

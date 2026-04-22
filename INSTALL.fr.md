@@ -376,6 +376,24 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 `AiProcessSource::list()` est désormais **live-only** par contrat — il ne renvoie QUE les processus OS actuellement en cours. Les hôtes qui se reposaient sur `list()` pour récupérer des lignes terminées doivent désormais interroger `ai_processes` directement (la table reste le journal d'audit complet de chaque spawn).
 
+**0.6.8 — aucune migration.** Fonctionnalités purement additives. Trois points à revoir :
+
+1. **Adopter le sync MCP piloté par catalogue est opt-in.** Déposez un catalogue à `.mcp-servers/mcp-catalog.json`, écrivez `.claude/mcp-host.json` avec les choix tier projet / tier agent, puis `php artisan claude:mcp-sync --dry-run` pour prévisualiser. Les hôtes qui n'exécutent pas la commande ne voient aucun changement — aucun fichier n'est touché tant que vous ne l'invoquez pas. Voir `docs/mcp-sync.md` pour la shape.
+
+2. **Mettre à jour les appelants `SuperAgentBackend`.** Les utilisateurs one-shot existants continuent de marcher tels quels (`max_turns` vaut toujours 1 par défaut, les clés d'enveloppe sont additives). Pour tirer parti des nouvelles capacités SuperAgent 0.8.8 dans le chemin in-process, passez :
+   ```php
+   $dispatcher->dispatch([
+       'prompt'          => '…',
+       'backend'         => 'superagent',
+       'max_turns'       => 10,              // lance la vraie boucle agentique
+       'max_cost_usd'    => 1.50,            // plafond dur via Agent::withMaxBudget()
+       'mcp_config_file' => base_path('.mcp.json'),
+       'provider_config' => ['provider' => 'kimi', 'region' => 'cn'],  // sensible à la région
+   ]);
+   ```
+
+3. **Déboguer les providers API en une commande.** `bin/superaicore api:status` sonde chaque provider dont la variable d'env API-key est définie (5 s cURL chacun) ; `--all` élargit à tout DEFAULT_PROVIDERS, `--json` émet du JSON structuré pour les dashboards. Distingue auth rejetée (HTTP 401/403), timeout réseau et clé absente avec un `reason` distinct pour chaque.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

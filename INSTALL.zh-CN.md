@@ -368,6 +368,24 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 `AiProcessSource::list()` 的契约现在明确为 **live-only** —— 只返回当前在跑的 OS 进程。之前靠 `list()` 拿历史行的宿主,请直接查 `ai_processes` 表（仍然是每次 spawn 的完整审计日志）。
 
+**0.6.8 —— 无迁移。** 纯增量功能。三点值得复核:
+
+1. **接入 catalog 驱动的 MCP 同步是 opt-in 的。** 在 `.mcp-servers/mcp-catalog.json` 放一份目录,在 `.claude/mcp-host.json` 里选好项目 tier / agent tier 的 server 分配,然后 `php artisan claude:mcp-sync --dry-run` 预览。不跑这个命令的宿主零变化 —— 你不调用,它不改盘。shape 详见 `docs/mcp-sync.md`。
+
+2. **升级 `SuperAgentBackend` 调用方。** 原来的 one-shot 调用方零改动(`max_turns` 仍默认 1,envelope 里新 key 都是加法)。要真正吃到 SuperAgent 0.8.8 在 in-process 路径的新能力,传这些:
+   ```php
+   $dispatcher->dispatch([
+       'prompt'          => '…',
+       'backend'         => 'superagent',
+       'max_turns'       => 10,              // 真正跑 agentic loop
+       'max_cost_usd'    => 1.50,            // Agent::withMaxBudget() 硬卡
+       'mcp_config_file' => base_path('.mcp.json'),
+       'provider_config' => ['provider' => 'kimi', 'region' => 'cn'],  // 区域感知
+   ]);
+   ```
+
+3. **一条命令调试 API provider。** `bin/superaicore api:status` 对所有有 API-key env 的 provider 做 5s cURL 探测;`--all` 覆盖全部 DEFAULT_PROVIDERS、`--json` 输出给 dashboard。auth 被拒(HTTP 401/403)、网络超时、key 未配,三种情况每个都有独立的 `reason`。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。
