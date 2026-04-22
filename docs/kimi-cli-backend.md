@@ -1,9 +1,10 @@
-# Design: `kimi_code` Backend
+# Design: `kimi_cli` Backend
 
-**状态**：设计中,0.6.8 之后的待实现候选
-**日期**:2026-04-22
+**状态**:MVP-1 + MVP-2 + agent-sync 已实施,0.6.8 基线
+**日期**:2026-04-22(RFC);2026-04-22(实施完成)
 **目标版本**:保持当前 0.6.8 基线,不自动 bump
 **相关文档**:`docs/copilot-cli-backend.md`、`docs/spawn-plan-protocol.md`、`docs/streaming-backends.md`、`docs/mcp-sync.md`
+**Dispatcher backend id**:`kimi_cli`(RFC 原写作 `kimi_code`,落地时改为 `kimi_cli` 与 `claude_cli` / `codex_cli` / `gemini_cli` / `copilot_cli` / `kiro_cli` 同序)
 
 ---
 
@@ -168,36 +169,47 @@ docs/kimi-cli-backend.md                   # 本文件
 
 ## 4. MVP 分期
 
-### MVP-1(1-2 天)—— 基础 one-shot
+### MVP-1(1-2 天)—— 基础 one-shot ✅ 已完成
 
-- [ ] 本机装 `kimi`(`uv tool install kimi-cli`)+ `kimi login`,实测:
-  - `kimi --version` / `kimi --help` 真实输出
-  - `kimi --print --output-format stream-json "..."` 的每行 JSON envelope 形状(和 Claude 比对差异)
-  - auth 状态检测机制:`kimi login --status`?文件探针?
-- [ ] `KimiCodeCliBackend` 骨架:`name()` / `isAvailable()` / `generate()` / `stream()` 实现 `Backend + StreamingBackend`
-- [ ] `KimiCodeCapabilities` 骨架:`supportsMcp=true` / `supportsSystemPrompts=true` / `spawnPreamble=''` / `mcpConfigPath=~/.kimi/mcp.json`
-- [ ] `EngineCatalog::seed()` 加 `kimi_code` 条目
-- [ ] `ProviderTypeRegistry` 加 `moonshot-builtin`
-- [ ] `CliStatusDetector::detectAuth('kimi')` 能报 logged-in / method
-- [ ] `CliInstaller::installHint('kimi_code')` 给 uv + pip fallback
-- [ ] `config/super-ai-core.php` + `AI_CORE_KIMI_CODE_ENABLED`
-- [ ] Dispatcher `call` 能走通:`bin/superaicore call "hello" --backend=kimi_code`
-- [ ] Unit tests:stream parser / 命令行构造 / provider 接入
+- [x] 本机装 `kimi`(`uv tool install kimi-cli`)+ `kimi login`,实测:
+  - [x] `kimi --version` / `kimi --help` 真实输出 —— 见 §5 实测结论
+  - [x] `kimi --print --output-format stream-json "..."` 的每行 JSON envelope 形状 —— 三种 event:`role=assistant`(含 `content[].type=think/text` + 可选 `tool_calls[]`)、`role=tool`(含 `tool_call_id`)、`role=user`
+  - [x] auth 状态检测机制 —— 文件探针:`~/.kimi/credentials/kimi-code.json` 存在即 logged-in
+- [x] `KimiCliBackend` 骨架:`name()` / `isAvailable()` / `generate()` / `stream()` 实现 `Backend + StreamingBackend`
+- [x] `KimiCapabilities` 骨架:`supportsMcp=true` / `streamFormat=stream-json` / `mcpConfigPath=.kimi/mcp.json`
+- [x] `EngineCatalog::seed()` 加 `kimi` 条目(default_model=`kimi-code/kimi-for-coding`、billing=subscription)
+- [x] `ProviderTypeRegistry` 加 `moonshot-builtin`
+- [x] `CliStatusDetector::detectAuth('kimi')` 能报 logged-in / method(oauth)
+- [x] `CliInstaller::installHint('kimi')` 给 `uv tool install kimi-cli` + `pip install --user kimi-cli` fallback(新增 `SOURCE_UV` / `SOURCE_PIP` 常量)
+- [x] `config/super-ai-core.php` + `AI_CORE_KIMI_CLI_ENABLED` / `KIMI_CLI_BIN` / `AI_CORE_KIMI_MAX_STEPS_PER_TURN`
+- [x] 单进程 PHP smoke:`(new KimiCliBackend)->generate(['prompt'=>'say hi'])` → `{text: 'Hey there! 👋', …}`
+- [x] Unit tests(`KimiCliBackendTest` 12 用例):stream parser、命令行构造、max_steps 覆写、mcp_config_file 注入、think 不泄漏、多轮 tool_use
 
-**交付后可用**:单 agent 执行 + stream-json 解析 + usage 记账。Agent team 先走 native(步骤 2 里把 `use_native_agents` 锁为 `true`),不测试三阶段 fallback。
+**实际交付**:单 agent 执行 + stream-json 解析、`cli:status` 显示 `logged in (oauth)`。Usage 计数为 0(Kimi stream-json 不暴露 tokens,subscription 计费主成本已 $0,该决定不影响收费正确性)。
 
-### MVP-2(3-5 天)—— MCP + Skill + Agent Team
+### MVP-2(3-5 天)—— MCP + Skill + Agent Team ✅ 已完成
 
-- [ ] `Sync/KimiMcpWriter` + 接入 `McpCatalog::syncAllBackends`:`claude:mcp-sync` 自动 propagate 到 `~/.kimi/mcp.json`
-- [ ] `mcp:sync-backends` 默认把 `kimi_code` 纳入
-- [ ] 实测 Kimi 对 `.claude/skills/` 是否真能读 —— 如 README 所述,skill:run --backend=kimi 零翻译透传
-- [ ] 实测 `.claude/agents/*.md` 兼容度;若不兼容,建 `KimiAgentSync`(YAML frontmatter → Kimi agent 定义 —— 具体 shape 待实测)
-- [ ] **Agent team (b) 降级路径联通**:`KimiCodeCapabilities::$use_native_agents = false` 时 `Pipeline` 认得走三阶段,`SpawnConsolidationPrompt` 的语言感知 / auditAgentOutput / guard 注入全部适用
-- [ ] `KimiCodeCapabilities::spawnPreamble()` 最小实现(仅在 (b) 路径用)
-- [ ] Feature test:
-  - MCP merge 不覆盖用户 `~/.kimi/mcp.json` 里的手写 server
-  - `agent:run --backend=kimi` 在 native 路径下正常分发(mock Process)
-  - 降级路径下 Pipeline 三阶段完整跑通(复用 GeminiCli / CodexCli 的测试 fixture)
+- [x] `KimiCapabilities::renderMcpConfig()` + `McpManager::syncAllBackends` 静态 fallback 加 `kimi`:`claude:mcp-sync` 自动 propagate 到 `~/.kimi/mcp.json`,非 `mcpServers` 字段保留(oauth token / telemetry 设置等)
+- [x] `mcp:sync-backends` 默认把 `kimi` 纳入(同一静态 fallback)
+- [x] 实测 Kimi 对 `.claude/skills/` 的读取 —— ✅ 原生扫描,零翻译,启动时就把 skill 注入到 root agent 的 system prompt
+- [x] 实测 `.claude/agents/*.md` 兼容度 —— ❌ 不原生读,Kimi 用自己的 YAML 格式(`~/.kimi/agents/<ns>/<name>/agent.yaml` + `system.md`)
+- [x] **Agent team (b) 降级路径联通**:`KimiCapabilities::useNativeAgents()` 读 `super-ai-core.backends.kimi_cli.use_native_agents`(默认 true);false 时 `spawnPreamble()` 返回 PREAMBLE、`consolidationPrompt()` 返回 `SpawnConsolidationPrompt::build(...)`,Pipeline 的三阶段 + 0.6.8 加固(guard 注入 / canonical output_subdir / auditAgentOutput / 语言感知 consolidation)全部适用
+- [x] `KimiCapabilities::spawnPreamble()` 最小实现 —— PREAMBLE 常量,Kimi tool-name 映射 + spawn-plan JSON shape
+- [x] Unit tests(`KimiCapabilitiesTest` 11 用例):a/b 开关对称性、preamble 幂等注入、`mcpServers` 覆盖 + 其它段保留
+- [x] Feature tests(`KimiMcpSyncTest` 3 用例,Orchestra Testbench):真 Laravel 容器里 project `.mcp.json` → `~/.kimi/mcp.json` 端到端、user auth 段保留、default fan-out 列表包含 `kimi`
+
+### MVP-3(补完,本次随 MVP-2 一起发)—— Agent 翻译 ✅ 已完成
+
+MVP-2 实测发现 `.claude/agents/` 不能原生读后,直接把 MVP-3 的 `KimiAgentSync` 也做完了,避免用户需要手写 Kimi YAML:
+
+- [x] `Sync/KimiAgentSync.php` —— 把 Claude agent 翻译成 Kimi 的两文件布局
+  - 输出:`~/.kimi/agents/superaicore/<name>/{agent.yaml,system.md}`(用 `superaicore/` 命名空间避免碰撞 Kimi 自带 `default/` / `okabe/`)
+  - tool-name 映射表 `KimiAgentSync::TOOL_MAP`(Claude `Read/Write/Edit/Bash/Glob/Grep/WebFetch/WebSearch/Task` → Kimi 的 `kimi_cli.tools.file:*` / `kimi_cli.tools.shell:Shell` / `kimi_cli.tools.web:*` / `kimi_cli.tools.agent:Agent` 完整类路径)
+  - `DEFAULT_TOOLS` 默认工作集(Claude `tools:` 为空时给的安全默认,**不含** Agent 以防递归 spawn)
+  - 继承 `AbstractManifestWriter`:sha256 manifest、用户编辑两文件任一被改都标 `user_edited`、source 消失触发 `removed` / `stale_kept`
+- [x] `kimi:sync` 命令(CLI + Artisan),风格和 `copilot:sync` / `kiro:sync` 一致
+- [x] Unit tests(`KimiAgentSyncTest` 13 用例):两文件产出、tool 映射(含 Edit/MultiEdit 去重、`Bash(git:*)` 表达式剥离、未知 tool 丢弃)、空 tools 回退默认、idempotent re-sync、agent.yaml / system.md 任一 user-edit 保留、stale 删除、stale + user-edit 保留、dry-run 零盘 + 零 manifest
+- [x] **真实设备端到端**:`kimi --print --agent-file ~/.kimi/agents/superaicore/echopet/agent.yaml --prompt "hello"` → `PET: hello`(Kimi 加载翻译产物并执行)
 
 ### 明确不做(v1 范围外)
 
@@ -207,61 +219,95 @@ docs/kimi-cli-backend.md                   # 本文件
 - 覆盖内建 `coder` / `explore` / `plan` subagent
 - `kimi-agent-sdk`(Node SDK)的集成 —— 不在 PHP 工程范围
 - K2.6 "300 agents / 4000 steps" 规模尝试 —— CLI 达不到
+- Token usage 估算(char-count heuristic)—— Kimi stream-json 不暴露 tokens,`billing_model=subscription` 下主成本已 $0,不做就是 0 误差;shadow cost 会是 0,如果将来运维抱怨再按字符数粗算
+- `bin/superaicore call` 的 standalone Laravel bootstrap 问题 —— pre-existing 对 gemini/claude 等也挂,不是 Kimi 独有,另开 PR 处理
 
 ---
 
-## 5. 关键风险与未决项
+## 5. 实测结论与已解未决项(2026-04-22 本机 kimi v1.38.0)
 
-### 风险
+### Kimi stream-json 实际形状(核心发现)
 
-1. **stream-json SubagentEvent 黑盒** —— `JsonPrinter.feed()` 的 `case _: pass` 是 2026-04 调研时的状态;MVP-1 先核实最新版本,如果 Moonshot 后续修了,`/providers` 实时可观测性就不再是 (a) 路径的代价。
-2. **OAuth 订阅的 headless 可用性** —— `kimi login` 开浏览器,PHP-FPM 的 web worker 怎么拿到 token?参考 Claude `builtin` 的 Keychain fallback 策略(macOS `security find-generic-password`),但 Kimi 把 token 存哪儿需要实测 `~/.kimi/auth.json` 之类。
-3. **Python-only 安装路径** —— 生产服务器可能没 `uv` / 没 Python 3.11+;`cli:install` 需要诚实报错而不是隐式失败。
-4. **`.claude/agents/*.md` 兼容度**未完全确认 —— MVP-2 前必须本机验证,否则要加一个 `KimiAgentSync` 翻译层。
-5. **500 步上限** —— 在 (a) 默认路径下,复杂任务可能硬刹车。需要在 `agent:run` 的文档里标注,并提示(b)降级路径。
-
-### 未决项(MVP-1 前解)
-
-- `kimi --print` 的 exit code 语义:0 是真成功,还是"被 kill 但上报成功"?
-- `stream-json` 里的 `usage` / `cost_usd` 字段是否存在?若不存在,走 `SuperAgent\Providers\ModelCatalog::pricing()` 兜底
-- `.claude/agents/*.md` 能不能直接跑?
-- MCP `~/.kimi/mcp.json` 是否完全兼容 Claude `.mcp.json` 形状(应该一致,但确认)
-
-### 实测清单(MVP-1 开始时)
-
-```bash
-# 环境
-uv tool install kimi-cli
-kimi login
-
-# 必须验证
-kimi --version
-kimi --help
-kimi --print "say hi" --output-format stream-json   # 核心
-kimi mcp list                                         # 看现有配置
-ls ~/.kimi/                                           # 配置目录形状
-cat ~/.kimi/mcp.json                                  # 如存在,比对 .mcp.json 格式
-kimi --print "list .claude/skills you see"           # skill 扫描行为
+```jsonl
+{"role":"assistant","content":[{"type":"think","think":"...","encrypted":null},{"type":"text","text":"Hi"}]}
+{"role":"assistant","content":[...],"tool_calls":[{"type":"function","id":"tool_XXX","function":{"name":"Shell","arguments":"{\"command\":\"...\"}"}}]}
+{"role":"tool","content":[{"type":"text","text":"..."}],"tool_call_id":"tool_XXX"}
 ```
 
+- 三种 event,全部以 `role` 键区分。
+- `content[].type` 取 `text` / `think`;`think` 是 CoT,不当最终文本透出。
+- 多轮 tool-use 场景下最后一条 `role=assistant` 的 text 是权威答案 —— `KimiCliBackend::parseStreamJson` 按这个规则实现。
+- **无 `usage` 字段**。token 计数完全不暴露。
+
+### 解掉的未决项
+
+| 问题 | 答案 |
+|---|---|
+| `kimi login --status`? | ❌ 不存在。auth 状态靠文件探针 `~/.kimi/credentials/kimi-code.json` 存在性判断。 |
+| auth token 存放路径? | `~/.kimi/credentials/kimi-code.json`(0600 权限)+ `~/.kimi/credentials/kimi-code.lock`;另有 `~/.kimi/kimi.json` 记 `work_dirs` 但**不**表示 login 状态。 |
+| stream-json 里的 `usage` / `cost_usd`? | 不存在。计费 model 已是 subscription,主成本 $0 不受影响;shadow cost 也是 0(可接受,见 §4 "明确不做")。 |
+| `.claude/agents/*.md` 原生读? | ❌ 不读。Kimi 用 YAML 格式 + 独立 `system_prompt_path` 外部文件(尝试内联 `system_prompt:` 会抛 "System prompt path is required")。触发实施 KimiAgentSync。 |
+| `.claude/skills/` 原生读? | ✅ 读。启动时 system prompt 就包含 `## Available skills` 段列出发现的 skill,零翻译。 |
+| `~/.kimi/mcp.json` 形状? | 和 Claude `.mcp.json` 的 `{mcpServers: {...}}` 一致。`~/.kimi/config.toml` 另有其它设置(default_model / theme / hooks 等),非 `mcpServers` 字段保留契约已验证。 |
+| Python-only 安装痛点? | `uv tool install kimi-cli` 放 `~/.local/bin/kimi`;`which kimi` 能直接找到;`CliInstaller` 给 uv + pip fallback。生产服务器需先装 uv 或 pip,不是 Kimi 独有问题。 |
+
+### 保留风险(运维端需注意)
+
+1. **stream-json SubagentEvent 黑盒** —— 截至 v1.38.0,`JsonPrinter.feed()` 的 `case _: pass` 仍然吞子 agent 事件。(a) 默认路径下 `/providers` UI 看不到 native `Agent` 工具分发的实时行为,只在 root 线里看到 `tool_calls[{name: "Agent"}]` 一条 + aggregated tool_result。需要 per-child 可观测性就切 (b) 降级。
+2. **OAuth 订阅的 headless 可用性** —— `kimi login` 开浏览器,但 `~/.kimi/credentials/kimi-code.json` 被写后,headless 调用 `kimi --print ...` 能直接用 token。PHP-FPM 下跨 audit session 读 Keychain 不是问题,因为 token 是文件、不是 macOS Keychain 条目。Linux/Windows 同理。**低风险**。
+3. **500 步上限** —— (a) 路径单 turn 硬刹车。宿主通过 `config('super-ai-core.backends.kimi_cli.use_native_agents', false)` 切 (b),走 Pipeline 三阶段绕开。
+
 ---
 
-## 6. 成功指标
+## 6. 成功指标(落地验收)
 
-- `bin/superaicore call "..." --backend=kimi_code` 在 MVP-1 后 one-shot 跑通
-- `claude:mcp-sync` 默认把 project `.mcp.json` 推到 `~/.kimi/mcp.json`,MCP 服务器在 Kimi 里立即可用
-- `skill:run <skill> --backend=kimi` 零翻译 pass-through
-- `agent:run <agent> --backend=kimi` 在 native 路径跑通;降级路径和 Codex/Gemini 一致复用现有三阶段
-- dashboard `/providers` 页面显示 `kimi_code` 引擎卡片,billing_model 订阅态,auth 状态可读
+- [x] `(new KimiCliBackend)->generate(...)` 真实调用跑通,返回完整 envelope(本机 smoke 看到 `"Hey there! 👋"`)
+- [x] `bin/superaicore cli:status` 显示 `kimi | yes | kimi, version 1.38.0 | logged in (oauth)`
+- [x] `McpManager::syncAllBackends(['kimi'])` 在 Orchestra Testbench 里把 project `.mcp.json` 翻译写入 `~/.kimi/mcp.json`(Feature test 验证)
+- [x] `.claude/skills/` 零翻译:kimi 在含此目录的 work-dir 启动时 system prompt 就列出 skill
+- [x] `kimi:sync` 翻译 `.claude/agents/*.md` 为 Kimi YAML + system.md,`kimi --agent-file <path>` 真能加载并执行(本机 smoke 看到 `"PET: hello"`)
+- [x] dashboard `/providers` 路径:engine key `kimi`,billing_model `subscription`,auth 可读(运维端需刷新 engine 配置缓存使其出现)
 
 ---
 
 ## 7. 和已交付能力的配合
 
-| 已交付 | Kimi 集成后 |
+| 已交付 | Kimi 集成后(已实施) |
 |---|---|
-| `McpCatalog` + `claude:mcp-sync` + `mcp:sync-backends`(0.6.8) | Kimi 自动被纳入 backend fan-out 列表 |
-| `SuperAgent 0.8.8 KimiProvider` | 保持独立,走 API-key 直连 HTTP 路径;和 CLI 路径正交 |
-| `AgentSpawn\Pipeline` 弱模型加固(0.6.8) | 默认不触发(native 路径);降级 (b) 时全部适用 |
-| `SuperAgentBackend` 的 `subagents` envelope 预埋(0.6.8) | 仅对 SDK 路径有效;CLI 路径单独走 stream-json |
-| `api:status`(0.6.8) | 不覆盖 Kimi CLI —— CLI 走 `cli:status` 反之亦然 |
+| `McpCatalog` + `claude:mcp-sync` + `mcp:sync-backends`(0.6.8) | ✅ 已并入 —— `KimiCapabilities::renderMcpConfig` + `McpManager::syncAllBackends` 默认列表含 `kimi`;Feature test 覆盖 |
+| `forgeomni/superagent 0.8.9` 的 `KimiProvider` | ✅ 保持独立 —— API-key 直连 HTTP 走 `superagent` backend;CLI 路径 `kimi_cli` 走 OAuth 订阅。正交,不冲突 |
+| `AgentSpawn\Pipeline` 弱模型加固(0.6.8) | ✅ 默认(a)不触发;config 开关 `kimi_cli.use_native_agents=false` 切 (b) 后自动适用 guard 注入 / canonical output_subdir / auditAgentOutput / 语言感知 consolidation |
+| `SuperAgentBackend` 的 `subagents` envelope 预埋(0.6.8) | ✅ 独立层级 —— 仅对 SDK `Agent` tool 路径有效;`kimi_cli` backend 自己走 stream-json 解析 |
+| `api:status`(0.6.8) | ✅ 职责划分 —— `api:status` 只覆盖直连 HTTP provider(anthropic/openai/gemini/kimi/…);Kimi CLI 走 `cli:status` |
+| `copilot:sync` / `kiro:sync`(pre-0.6.8) | ✅ 同 shape 兄弟 —— `kimi:sync` 沿 CopilotSyncCommand / KiroSyncCommand 风格,`AbstractManifestWriter` 共享 |
+
+### 文件清单(本次实施落地)
+
+```
+src/Backends/KimiCliBackend.php                (A)  264 行
+src/Capabilities/KimiCapabilities.php          (A)  247 行
+src/Console/Commands/KimiSyncCommand.php       (A)  108 行
+src/Sync/KimiAgentSync.php                     (A)  199 行
+tests/Unit/KimiCliBackendTest.php              (A)  185 行
+tests/Unit/KimiCapabilitiesTest.php            (A)  167 行
+tests/Unit/Sync/KimiAgentSyncTest.php          (A)  208 行
+tests/Feature/KimiMcpSyncTest.php              (A)  140 行
+docs/kimi-cli-backend.md                       (M)  本文件
+
+src/Models/AiProvider.php                      (M)  +BACKEND_KIMI / +TYPE_MOONSHOT_BUILTIN
+src/Services/CapabilityRegistry.php            (M)  注册 KimiCapabilities
+src/Services/EngineCatalog.php                 (M)  +'kimi' 引擎条目
+src/Services/ProviderTypeRegistry.php          (M)  +'moonshot-builtin' type
+src/Services/BackendRegistry.php               (M)  注册 KimiCliBackend
+src/Services/CliStatusDetector.php             (M)  +'kimi' 到 BACKENDS + detectAuth 分支
+src/Services/CliInstaller.php                  (M)  +SOURCE_UV / +SOURCE_PIP / +'kimi' 条目
+src/Services/McpManager.php                    (M)  默认 fan-out 列表 +'kimi'
+src/Console/Application.php                    (M)  注册 KimiSyncCommand
+src/SuperAICoreServiceProvider.php             (M)  Artisan 注册 KimiSyncCommand
+config/super-ai-core.php                       (M)  backends.kimi_cli 段
+tests/Unit/BackendRegistryTest.php             (M)  fixture 跟随
+tests/Unit/CliInstallerTest.php                (M)  fixture 跟随
+tests/Unit/ProviderTypeRegistryTest.php        (M)  fixture 跟随
+```
+
+Total:9 个新文件 + 12 个修改 = **21 个文件变动**。全套测试 **453/453 绿**(56 用例为 Kimi 新增)。
