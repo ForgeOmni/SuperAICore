@@ -191,6 +191,90 @@ final class SuperAgentBackendTest extends TestCase
         $this->assertNull($r);
     }
 
+    public function test_envelope_omits_subagents_key_when_no_agent_tool_result_present(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $r = (new CapturingSuperAgentBackend())->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+        ]);
+        $this->assertIsArray($r);
+        $this->assertArrayNotHasKey('subagents', $r);
+    }
+
+    public function test_extract_subagent_productivity_parses_agent_tool_results(): void
+    {
+        $backend = new CapturingSuperAgentBackend();
+        $msgs = [
+            \SuperAgent\Messages\ToolResultMessage::fromResult('tu_1', [
+                'status'              => 'completed',
+                'agentId'             => 'research-jordan',
+                'agentType'           => 'research',
+                'content'             => [['type' => 'text', 'text' => 'hi']],
+                'filesWritten'        => ['/tmp/a.md', '/tmp/b.md'],
+                'toolCallsByName'     => ['Read' => 3, 'Write' => 2],
+                'productivityWarning' => null,
+                'totalToolUseCount'   => 5,
+            ]),
+            \SuperAgent\Messages\ToolResultMessage::fromResult('tu_2', [
+                'status'              => 'completed_empty',
+                'agentId'             => 'advisor-kate',
+                'content'             => [],
+                'filesWritten'        => [],
+                'toolCallsByName'     => [],
+                'productivityWarning' => 'zero tool calls — model described plan instead of doing it',
+                'totalToolUseCount'   => 0,
+            ]),
+        ];
+
+        $out = $backend->exposeExtractSubagentProductivity($msgs);
+
+        $this->assertCount(2, $out);
+        $this->assertSame('research-jordan', $out[0]['agentId']);
+        $this->assertSame('completed',       $out[0]['status']);
+        $this->assertSame(['/tmp/a.md', '/tmp/b.md'], $out[0]['filesWritten']);
+        $this->assertSame(['Read' => 3, 'Write' => 2], $out[0]['toolCallsByName']);
+        $this->assertNull($out[0]['productivityWarning']);
+        $this->assertSame(5, $out[0]['totalToolUseCount']);
+
+        $this->assertSame('completed_empty', $out[1]['status']);
+        $this->assertStringContainsString('zero tool calls', (string) $out[1]['productivityWarning']);
+        $this->assertSame(0, $out[1]['totalToolUseCount']);
+    }
+
+    public function test_extract_ignores_non_agent_tool_results(): void
+    {
+        $backend = new CapturingSuperAgentBackend();
+        $msgs = [
+            // read_file tool result — a plain string payload, no agentId.
+            \SuperAgent\Messages\ToolResultMessage::fromResult('tu_read', 'file contents here'),
+            // A JSON payload that lacks `agentId` (not from AgentTool).
+            \SuperAgent\Messages\ToolResultMessage::fromResult('tu_other', ['ok' => true, 'rows' => 42]),
+            // A payload with `agentId` but without any 0.8.9 productivity
+            // fields — looks like a pre-0.8.9 AgentTool shape; must skip.
+            \SuperAgent\Messages\ToolResultMessage::fromResult('tu_legacy', [
+                'status' => 'completed', 'agentId' => 'legacy', 'totalTokens' => 100,
+            ]),
+        ];
+
+        $this->assertSame([], $backend->exposeExtractSubagentProductivity($msgs));
+    }
+
+    public function test_extract_skips_malformed_json_silently(): void
+    {
+        $backend = new CapturingSuperAgentBackend();
+        // Manually construct a ToolResultMessage whose content string is
+        // not valid JSON — must not throw.
+        $block = new \SuperAgent\Messages\ContentBlock(
+            type: 'tool_result',
+            toolUseId: 'tu_bad',
+            content: '{not valid json',
+        );
+        $msg = new \SuperAgent\Messages\ToolResultMessage([$block]);
+
+        $this->assertSame([], $backend->exposeExtractSubagentProductivity([$msg]));
+    }
+
     private function stubMessage(
         string $text,
         int $inputTokens = 0,
@@ -219,6 +303,12 @@ final class CapturingSuperAgentBackend extends SuperAgentBackend
     {
         $this->lastAgentConfig = $agentConfig;
         return parent::makeAgent($agentConfig);
+    }
+
+    /** Test accessor for the protected extractor. */
+    public function exposeExtractSubagentProductivity(array $messages): array
+    {
+        return $this->extractSubagentProductivity($messages);
     }
 }
 

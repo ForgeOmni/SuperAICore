@@ -68,7 +68,7 @@ class SuperAgentBackend implements Backend
             $usage = method_exists($result, 'totalUsage') ? $result->totalUsage() : null;
             $model = $options['model'] ?? $providerConfig['model'] ?? 'unknown';
 
-            return [
+            $envelope = [
                 'text'  => $text,
                 'model' => $model,
                 'usage' => [
@@ -81,6 +81,18 @@ class SuperAgentBackend implements Backend
                 'turns'       => method_exists($result, 'turns') ? $result->turns() : 1,
                 'stop_reason' => null,
             ];
+
+            // SDK 0.8.9+ AgentTool productivity (only emitted when the caller
+            // opted into `load_tools: ['agent']` or similar — AgentTool isn't
+            // in the default set). Key is omitted when no sub-agent ran, so
+            // existing envelope shape stays byte-exact for callers that don't
+            // dispatch sub-agents through the SDK path.
+            $subagents = $this->extractSubagentProductivity($result->messages ?? []);
+            if ($subagents !== []) {
+                $envelope['subagents'] = $subagents;
+            }
+
+            return $envelope;
         } catch (\Throwable $e) {
             if ($this->logger) {
                 $this->logger->warning('SuperAgentBackend error: ' . $e->getMessage());
@@ -194,5 +206,57 @@ class SuperAgentBackend implements Backend
         }
 
         return $manager;
+    }
+
+    /**
+     * Extract SDK 0.8.9+ `AgentTool` productivity info from the Agent's
+     * message trail. 0.8.9's `AgentTool` attaches `filesWritten` /
+     * `toolCallsByName` / `productivityWarning` / sharpened `status`
+     * (`completed` | `completed_empty`) to every sub-agent dispatch
+     * result; we surface the list upward so `Dispatcher` callers that
+     * opted into SDK sub-agent dispatch can detect a child that produced
+     * only prose (`completed_empty`) or called tools without writing
+     * (advisory `productivityWarning`) without scraping narratives.
+     *
+     * Pre-0.8.9 or callers that don't dispatch sub-agents see an empty
+     * list here and thus no `subagents` key in the envelope — the shape
+     * stays byte-compatible. The helper never throws: malformed JSON or
+     * unexpected message types get skipped silently.
+     *
+     * @param  array<int, object> $messages  `AgentResult::$messages`
+     * @return list<array{agentId:string,status:string,filesWritten:list<string>,toolCallsByName:array<string,int>,productivityWarning:?string,totalToolUseCount:int}>
+     */
+    protected function extractSubagentProductivity(array $messages): array
+    {
+        $out = [];
+        foreach ($messages as $msg) {
+            if (!$msg instanceof \SuperAgent\Messages\ToolResultMessage) continue;
+            foreach ($msg->content as $block) {
+                if (!is_object($block) || ($block->type ?? null) !== 'tool_result') continue;
+                $raw = $block->content ?? null;
+                if (!is_string($raw) || $raw === '' || $raw[0] !== '{') continue;
+                $d = json_decode($raw, true);
+                if (!is_array($d) || !isset($d['agentId'])) continue;
+                // Require at least one of the 0.8.9 productivity fields so
+                // unrelated AgentTool-shaped results from a pre-0.8.9 SDK
+                // (or a third-party tool that happens to emit `agentId`)
+                // don't false-match.
+                if (!array_key_exists('filesWritten', $d)
+                    && !array_key_exists('productivityWarning', $d)
+                    && !array_key_exists('toolCallsByName', $d)) {
+                    continue;
+                }
+                $out[] = [
+                    'agentId'             => (string) $d['agentId'],
+                    'status'              => (string) ($d['status'] ?? 'completed'),
+                    'filesWritten'        => array_values(array_map('strval', (array) ($d['filesWritten'] ?? []))),
+                    'toolCallsByName'     => array_map('intval', (array) ($d['toolCallsByName'] ?? [])),
+                    'productivityWarning' => isset($d['productivityWarning']) && $d['productivityWarning'] !== null
+                        ? (string) $d['productivityWarning'] : null,
+                    'totalToolUseCount'   => (int) ($d['totalToolUseCount'] ?? 0),
+                ];
+            }
+        }
+        return $out;
     }
 }
