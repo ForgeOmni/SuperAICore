@@ -132,6 +132,7 @@ class SuperAICoreServiceProvider extends ServiceProvider
             $this->commands([
                 \SuperAICore\Console\Commands\ClaudeMcpSyncCommand::class,
                 \SuperAICore\Console\Commands\McpSyncBackendsCommand::class,
+                \SuperAICore\Console\Commands\ApiStatusCommand::class,
             ]);
         }
 

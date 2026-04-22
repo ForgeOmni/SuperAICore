@@ -4,6 +4,7 @@ namespace SuperAICore\Console;
 
 use SuperAICore\Console\Commands\AgentListCommand;
 use SuperAICore\Console\Commands\AgentRunCommand;
+use SuperAICore\Console\Commands\ApiStatusCommand;
 use SuperAICore\Console\Commands\CallCommand;
 use SuperAICore\Console\Commands\ClaudeMcpSyncCommand;
 use SuperAICore\Console\Commands\CliInstallCommand;
@@ -46,6 +47,7 @@ class Application extends SymfonyApplication
         $this->add(new McpSyncBackendsCommand());
         $this->add(new CliStatusCommand());
         $this->add(new CliInstallCommand());
+        $this->add(new ApiStatusCommand());
         $this->add(new ModelsCommand());
     }
 }
