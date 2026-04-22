@@ -372,7 +372,7 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 1. **接入 catalog 驱动的 MCP 同步是 opt-in 的。** 在 `.mcp-servers/mcp-catalog.json` 放一份目录,在 `.claude/mcp-host.json` 里选好项目 tier / agent tier 的 server 分配,然后 `php artisan claude:mcp-sync --dry-run` 预览。不跑这个命令的宿主零变化 —— 你不调用,它不改盘。shape 详见 `docs/mcp-sync.md`。
 
-2. **升级 `SuperAgentBackend` 调用方。** 原来的 one-shot 调用方零改动(`max_turns` 仍默认 1,envelope 里新 key 都是加法)。要真正吃到 SuperAgent 0.8.8 在 in-process 路径的新能力,传这些:
+2. **升级 `SuperAgentBackend` 调用方。** 原来的 one-shot 调用方零改动(`max_turns` 仍默认 1,envelope 里新 key 都是加法)。SDK 已锁到 **`forgeomni/superagent` 0.8.9**。要真正吃到 in-process 路径的新能力,传这些:
    ```php
    $dispatcher->dispatch([
        'prompt'          => '…',
@@ -381,7 +381,22 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
        'max_cost_usd'    => 1.50,            // Agent::withMaxBudget() 硬卡
        'mcp_config_file' => base_path('.mcp.json'),
        'provider_config' => ['provider' => 'kimi', 'region' => 'cn'],  // 区域感知
+       'load_tools'      => ['agent'],       // 可选:开启 SDK 子 agent dispatch(AgentTool)
    ]);
+
+   // 当传了 load_tools: ['agent'] 且 run 里实际分发了子 agent 时,envelope 多一个可选的
+   // subagents key(SDK 0.8.9 productivity):
+   //   [
+   //     ['agentId' => 'research-jordan',
+   //      'status' => 'completed',           // 或 'completed_empty' —— 零工具调用
+   //      'filesWritten' => ['/abs/path.md'],
+   //      'toolCallsByName' => ['Read' => 3, 'Write' => 1],
+   //      'productivityWarning' => null,     // 调了工具但没写文件时有 advisory 字符串
+   //      'totalToolUseCount' => 4],
+   //     …,
+   //   ]
+   // `status === 'completed_empty'` 或 productivityWarning 非 null 时建议重 dispatch。
+   // 没子 agent 运行时 key 不出现 —— 不走 AgentTool 的调用方零改动。
    ```
 
 3. **一条命令调试 API provider。** `bin/superaicore api:status` 对所有有 API-key env 的 provider 做 5s cURL 探测;`--all` 覆盖全部 DEFAULT_PROVIDERS、`--json` 输出给 dashboard。auth 被拒(HTTP 401/403)、网络超时、key 未配,三种情况每个都有独立的 `reason`。

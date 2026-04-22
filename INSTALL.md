@@ -375,7 +375,7 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 1. **Adopting catalog-driven MCP sync** is opt-in. Drop a catalog at `.mcp-servers/mcp-catalog.json`, write `.claude/mcp-host.json` with the project / agent tier choices, then `php artisan claude:mcp-sync --dry-run` to preview. Hosts that don't run the command see zero change — no file is touched until you invoke it. See `docs/mcp-sync.md` for the shape.
 
-2. **Upgrading `SuperAgentBackend` callers.** Existing one-shot users keep working verbatim (`max_turns` still defaults to 1, envelope keys are additive). To actually use SuperAgent 0.8.8's new capabilities in the in-process path, pass:
+2. **Upgrading `SuperAgentBackend` callers.** Existing one-shot users keep working verbatim (`max_turns` still defaults to 1, envelope keys are additive). The SDK is pinned at **`forgeomni/superagent` 0.8.9**. To actually use the new in-process capabilities, pass:
    ```php
    $dispatcher->dispatch([
        'prompt'          => '…',
@@ -384,7 +384,23 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
        'max_cost_usd'    => 1.50,            // hard cap via Agent::withMaxBudget()
        'mcp_config_file' => base_path('.mcp.json'),
        'provider_config' => ['provider' => 'kimi', 'region' => 'cn'],  // region-aware
+       'load_tools'      => ['agent'],       // OPT-IN: SDK sub-agent dispatch via AgentTool
    ]);
+
+   // When `load_tools: ['agent']` is set and the run dispatched sub-agents,
+   // the envelope gains an optional `subagents` key (SDK 0.8.9 productivity):
+   //   [
+   //     ['agentId' => 'research-jordan',
+   //      'status' => 'completed',           // or 'completed_empty' on zero-tool-call runs
+   //      'filesWritten' => ['/abs/path.md'],
+   //      'toolCallsByName' => ['Read' => 3, 'Write' => 1],
+   //      'productivityWarning' => null,     // advisory when tools ran but wrote nothing
+   //      'totalToolUseCount' => 4],
+   //     …,
+   //   ]
+   // Treat `status === 'completed_empty'` or a non-null `productivityWarning`
+   // as a re-dispatch signal. Key is omitted entirely when no sub-agent ran —
+   // zero change for callers that don't use AgentTool.
    ```
 
 3. **Debug API providers with one command.** `bin/superaicore api:status` probes every provider whose API-key env var is set (5s cURL per); `--all` widens to every DEFAULT_PROVIDERS entry, `--json` emits structured output for dashboards. Distinguishes auth-rejected (HTTP 401/403), network timeout, and missing key each with a distinct `reason`.
