@@ -102,7 +102,16 @@ class Pipeline
             $planPath = $canonical;
         }
 
-        $plan = SpawnPlan::fromFile($planPath);
+        // Resolve the host's agents directory so plans that omit
+        // `system_prompt` (the preferred minimal shape) get their role
+        // definitions loaded from disk instead of forcing the model to
+        // embed multi-line markdown inside JSON.
+        $projectRoot = $options['project_root'] ?? \dirname($outputDir, 1);
+        $agentsDir = $options['agents_dir']
+            ?? rtrim((string) $projectRoot, '/\\') . DIRECTORY_SEPARATOR
+               . '.claude' . DIRECTORY_SEPARATOR . 'agents';
+
+        $plan = SpawnPlan::fromFile($planPath, is_dir($agentsDir) ? $agentsDir : null);
         if ($plan === null) {
             $this->log('warning', "Pipeline: spawn plan at {$planPath} failed to parse");
             return null;

@@ -4,6 +4,59 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] — 2026-04-22
+
+Runtime-polish release focused on Claude CLI headless invocation + Process Monitor accuracy. Two production blockers uncovered while running `claude` from PHP-FPM dev servers (SuperTeam / PPT) are fixed upstream: (1) child claude processes inherited the parent `claude` shell's `CLAUDECODE` / `CLAUDE_CODE_*` markers and tripped the recursion guard with `"Not logged in"`; (2) `builtin` OAuth auth failed under PHP-FPM because macOS Keychain access is scoped to the audit session that wrote the item, and web workers live in a different session than the terminal where the user ran `claude login`. The Process Monitor also switches to a live-only view so finished runs disappear the moment their subprocess exits instead of accumulating in the UI.
+
+No breaking changes. No migrations. Hosts already on 0.6.6 upgrade cleanly.
+
+### Fixed
+
+**`ClaudeCliBackend` env scrub — unsets `CLAUDECODE` / `CLAUDE_CODE_*` parent markers**
+- When `php artisan serve` (or a `php-fpm` pool) was launched from a shell that was itself inside a `claude` session, the parent Claude Code 2.x process set `CLAUDECODE=1`, `CLAUDE_CODE_ENTRYPOINT=cli`, `CLAUDE_CODE_SSE_PORT=...`, `CLAUDE_CODE_EXECPATH=...`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=...` and those leaked through Symfony Process into the child `claude -p` invocation. Claude's parent-recursion guard saw them and refused authentication with `"Not logged in · Please run /login"` even though the user was fully logged in.
+- `buildEnv()` now seeds the Process env array with those five keys set to `false` (Symfony's "actively remove this var from the child env" sentinel) before any provider-type branch runs. The bedrock / vertex branches still set their own `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` on top — those are intentional and not in the unset list.
+
+**`ClaudeCliBackend` builtin OAuth — macOS Keychain fallback via `security` CLI**
+- `builtin` provider type (local `claude login`) used to rely on claude's native Keychain call to read the OAuth token. That call respects macOS audit-session boundaries, so processes spawned from PHP-FPM workers (web UI → `nohup` → `task:execute` → `claude`) live in a different audit session from the interactive shell where the user ran `claude login` and the call silently fails — the CLI reports `apiKeySource:"none"` and `"Not logged in"`.
+- New `readBuiltinOauthToken()` shells out to `security find-generic-password -s "Claude Code-credentials" -w`, parses the JSON payload, extracts `claudeAiOauth.accessToken`, and injects it as `ANTHROPIC_API_KEY` in the child env. Claude honors that env var as an authenticated session. Silent fallback on non-macOS / no-token / no-login — env stays empty and claude's native path takes over, matching prior behavior.
+- This only kicks in when the provider type is `builtin` AND the host platform is Darwin AND the Keychain item exists. Zero change for API-key providers, bedrock, vertex, or Linux deployments.
+
+**`AiProcessSource::list()` — live-only view (OS is source of truth)**
+- Previously returned the last 100 `ai_processes` rows ordered by `started_at` with dead PIDs reaped as a side effect. Finished / failed / killed runs lingered in the Process Monitor UI until a user manually cleared them, and the `status` column was stamped from the DB row (which could lag the real subprocess).
+- Now indexes the live `ps aux` snapshot once, iterates only `status=running` rows, verifies each row's PID is in the live set (falling back to `$p->isAlive()` for cross-platform parity), reaps dead PIDs as before, and returns ONLY the verified-alive entries with `status=running` stamped from ground truth. Hosts that want a historical view should query `ai_processes` directly — the table remains the full audit log of every spawn.
+
+### Added
+
+**`cwd` option on every `StreamingBackend::stream()`**
+- New optional key on the stream options. When set, overrides the child process's working directory via `Process::setWorkingDirectory()`. Critical when the parent PHP process runs from a directory the CLI doesn't expect (e.g. PHP-FPM serving from `web/public` while the CLI's skill / agent / MCP loaders need to find `artisan` + `.claude/` at the project root).
+- Plumbed through all five CLI backends (`ClaudeCliBackend` / `CodexCliBackend` / `GeminiCliBackend` / `KiroCliBackend` / `CopilotCliBackend`) and the shared `StreamableProcess` trait. Omit the key to keep the process's inherited cwd — prior behavior.
+
+**Claude-specific stream options: `permission_mode`, `allowed_tools`, `session_id`**
+- `permission_mode` — forwarded to claude's `--permission-mode` flag. Pass `'bypassPermissions'` for headless runs (claude otherwise blocks on interactive Write / Edit / Bash approval prompts that never get answered and produces no output). `'default'` / `'plan'` also accepted for interactive wrappers; omit to leave claude's default.
+- `allowed_tools` — forwarded to `--allowedTools` as a comma-separated list (accepts array or string, e.g. `['Read','Grep','Write','WebSearch']`). Restricts the tool surface when combined with `permission_mode=default`.
+- `session_id` — forwarded to `--session-id` for traceability across host log files and claude's session store. Claude auto-generates one when omitted.
+- Documented on the `StreamingBackend` option-shape PHPDoc so IDEs auto-complete them. Other CLIs ignore these three keys (no-op) — they're claude-specific today.
+
+**`process_monitor.host_owned_label_prefixes` config**
+- New list-typed config key under `super-ai-core.process_monitor`. Hosts register the label prefixes their own `ProcessSource` claims (SuperTeam uses `['task:']`). When `AiProcessSource::list()` encounters a row whose `external_label` starts with one of those prefixes, it skips emitting it — the host's rich entry (with task / project / model / provider badges) is the only one the view renders. The row is still PID-verified and reaped if dead.
+- Default `[]` — legacy behavior (emit every row) preserved for hosts without their own ProcessSource.
+
+### Changed
+
+- `Contracts\StreamingBackend` — option-shape PHPDoc extended with `cwd`, `permission_mode`, `allowed_tools`, `session_id`. No method-signature change; backends that don't consume a key silently ignore it.
+- `resources/views/processes/index.blade.php` — the "Run #X" pill now resolves through `__('processes.run_id')` instead of a hard-coded label, so host translation packs can override it cleanly. No `processes` translation file ships in this release yet — Laravel's fallback renders the key verbatim until one is published.
+- `composer.json` — reformatted to 2-space indentation. No dependency or metadata changes.
+
+### Migration notes
+
+No database changes. Hosts should review:
+
+- **Running claude from PHP-FPM / `php artisan serve` under a parent `claude` shell:** the env-scrub fix means your first 0.6.7 run will start authenticating correctly without any host-side change. If you had a workaround that manually unset the `CLAUDECODE` markers, it's now redundant but harmless.
+- **Hosts with their own `ProcessSource`:** add your label prefix to `super-ai-core.process_monitor.host_owned_label_prefixes` in `config/super-ai-core.php` to stop `AiProcessSource` from emitting a duplicate bare row for runs your source already renders.
+- **Hosts relying on `AiProcessSource::list()` returning finished rows:** switch to querying `ai_processes` directly. The list() method is now explicitly live-only by contract.
+
+---
+
 ## [0.6.6] — 2026-04-21
 
 Bundles all five phases of the **host-spawn-uplift** roadmap (`docs/host-spawn-uplift-roadmap.md`) in one release: live-streaming CLI execution (Phase A), one-call task orchestration (Phase B), three-phase spawn-plan emulation (Phase C), `ai_usage_logs` idempotency (Phase D), and a formal SemVer contract freeze (Phase E). Hosts that want to stay on `Backend::generate()` are unaffected — every new path is purely additive. The one technical interface addition (`BackendCapabilities::spawnPreamble` + `consolidationPrompt` from Phase C) is shielded for downstream extenders by the new `Capabilities\Concerns\BackendCapabilitiesDefaults` trait shipped in Phase E.

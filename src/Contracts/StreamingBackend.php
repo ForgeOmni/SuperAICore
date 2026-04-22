@@ -50,6 +50,10 @@ namespace SuperAICore\Contracts;
  *   external_label?: string,
  *   onChunk?: callable(string $chunk, string $stream): void,
  *   metadata?: array<string,mixed>,
+ *   cwd?: string,
+ *   permission_mode?: string,        Claude only: 'bypassPermissions' for headless
+ *   allowed_tools?: string|string[], Claude only: tool allowlist
+ *   session_id?: string,             Claude only: explicit session id for traceability
  * }
  */
 interface StreamingBackend extends Backend

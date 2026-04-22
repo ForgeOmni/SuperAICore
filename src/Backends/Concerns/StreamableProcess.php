@@ -70,6 +70,7 @@ trait StreamableProcess
         ?callable $onChunk = null,
         ?string $externalLabel = null,
         array $monitorMetadata = [],
+        ?string $cwd = null,
     ): array {
         $logFile = $logFile ?: ProcessRegistrar::defaultLogPath($backend, $externalLabel ?? 'stream');
         $tee = new TeeLogger($logFile);
@@ -80,6 +81,15 @@ trait StreamableProcess
         // explicit value for long-running tasks).
         if ($timeout !== null) $process->setTimeout($timeout);
         if ($idleTimeout !== null) $process->setIdleTimeout($idleTimeout);
+
+        // Override cwd — critical when the parent PHP process runs from
+        // a directory the CLI doesn't expect (e.g. PHP-FPM serving from
+        // `web/public` while the CLI's skill loaders need to find
+        // `artisan` at the project root). null leaves whatever cwd the
+        // Process was constructed with (typically inherited from PHP).
+        if ($cwd !== null) {
+            $process->setWorkingDirectory($cwd);
+        }
 
         $startedAt = microtime(true);
         $captured = '';

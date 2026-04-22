@@ -1,42 +1,54 @@
 {
-    "name": "forgeomni/superaicore",
-    "description": "Laravel package for AI execution engine: pluggable backends (Claude CLI / Codex CLI / SuperAgent / Anthropic API / OpenAI API), provider/service/routing management UI, MCP server management, usage tracking, cost analytics, process monitor. Works standalone in a fresh Laravel install; UI is optional and overridable.",
-    "keywords": ["laravel", "ai", "llm", "anthropic", "openai", "claude", "codex", "mcp", "agent"],
-    "license": "MIT",
-    "type": "library",
-    "require": {
-        "php": "^8.1",
-        "illuminate/support": "^10.0|^11.0|^12.0",
-        "illuminate/database": "^10.0|^11.0|^12.0",
-        "illuminate/http": "^10.0|^11.0|^12.0",
-        "illuminate/console": "^10.0|^11.0|^12.0",
-        "guzzlehttp/guzzle": "^7.0",
-        "symfony/process": "^6.0|^7.0",
-        "forgeomni/superagent": "^0.8.0",
-        "symfony/console": "^6.0|^7.0"
-    },
-    "require-dev": {
-        "orchestra/testbench": "^8.0|^9.0|^10.0",
-        "phpunit/phpunit": "^10.0|^11.0"
-    },
-    "autoload": {
-        "psr-4": {
-            "SuperAICore\\": "src/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "SuperAICore\\Tests\\": "tests/"
-        }
-    },
-    "bin": ["bin/superaicore"],
-    "extra": {
-        "laravel": {
-            "providers": [
-                "SuperAICore\\SuperAICoreServiceProvider"
-            ]
-        }
-    },
-    "minimum-stability": "dev",
-    "prefer-stable": true
+  "name": "forgeomni/superaicore",
+  "description": "Laravel package for AI execution engine: pluggable backends (Claude CLI / Codex CLI / SuperAgent / Anthropic API / OpenAI API), provider/service/routing management UI, MCP server management, usage tracking, cost analytics, process monitor. Works standalone in a fresh Laravel install; UI is optional and overridable.",
+  "keywords": [
+    "laravel",
+    "ai",
+    "llm",
+    "anthropic",
+    "openai",
+    "claude",
+    "codex",
+    "mcp",
+    "agent"
+  ],
+  "license": "MIT",
+  "type": "library",
+  "require": {
+    "php": "^8.1",
+    "illuminate/support": "^10.0|^11.0|^12.0",
+    "illuminate/database": "^10.0|^11.0|^12.0",
+    "illuminate/http": "^10.0|^11.0|^12.0",
+    "illuminate/console": "^10.0|^11.0|^12.0",
+    "guzzlehttp/guzzle": "^7.0",
+    "symfony/process": "^6.0|^7.0",
+    "forgeomni/superagent": "^0.8.0",
+    "symfony/console": "^6.0|^7.0"
+  },
+  "require-dev": {
+    "orchestra/testbench": "^8.0|^9.0|^10.0",
+    "phpunit/phpunit": "^10.0|^11.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "SuperAICore\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "SuperAICore\\Tests\\": "tests/"
+    }
+  },
+  "bin": [
+    "bin/superaicore"
+  ],
+  "extra": {
+    "laravel": {
+      "providers": [
+        "SuperAICore\\SuperAICoreServiceProvider"
+      ]
+    }
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
 }

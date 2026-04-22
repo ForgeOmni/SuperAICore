@@ -359,6 +359,23 @@ Consultez [CHANGELOG.md](CHANGELOG.md) avant un `--force` sur la config.
 DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND output_tokens = 0;
 ```
 
+**Migration 0.6.6** — ajoute une colonne nullable + un index composite à `ai_usage_logs` : `idempotency_key varchar(80)` + index `(idempotency_key, created_at)`. Alimente la fenêtre de dédup 60 s du Dispatcher.
+
+**0.6.7 — aucune migration.** Changement de comportement runtime pur. Deux points à revoir :
+
+1. **Hôtes lançant claude depuis un processus lui-même démarré par un shell parent `claude`** (par ex. `php artisan serve` lancé depuis une session Claude Code) : claude se met soudain à s'authentifier correctement après la mise à jour. Si vous aviez masqué ça par un env-scrub manuel dans votre runner, il est maintenant redondant mais inoffensif.
+2. **Hôtes avec leur propre `ProcessSource`** : ajoutez votre préfixe de label à la nouvelle clé de config pour qu'`AiProcessSource` ne rende pas une ligne nue en doublon à côté de votre ligne riche :
+
+   ```php
+   // config/super-ai-core.php
+   'process_monitor' => [
+       'enabled' => env('AI_CORE_PROCESS_MONITOR', false),
+       'host_owned_label_prefixes' => ['task:'],   // convention SuperTeam
+   ],
+   ```
+
+`AiProcessSource::list()` est désormais **live-only** par contrat — il ne renvoie QUE les processus OS actuellement en cours. Les hôtes qui se reposaient sur `list()` pour récupérer des lignes terminées doivent désormais interroger `ai_processes` directement (la table reste le journal d'audit complet de chaque spawn).
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

@@ -96,17 +96,18 @@ You are running under OpenAI codex-rs. Tool names follow the standard Read/Write
 
 **Agent spawning — Spawn Plan protocol**: codex has no native sub-agent tool. Do NOT play all roles yourself sequentially. Instead, when a skill tells you to spawn / assemble / dispatch N agents:
 
-1. Read each agent's role definition from `.claude/agents/<agent-name>.md`.
-2. Write `_spawn_plan.json` in the output directory using the **absolute path** from the skill's output-directory rule. Never use a bare relative path — codex's cwd is the project root, so the plan would land in the wrong place.
+1. You do **NOT** need to read `.claude/agents/<name>.md` — the host loads each role file from disk by `name` when it fans out the children.
+2. Write `_spawn_plan.json` in the output directory using the **absolute path** from the skill's output-directory rule. Never use a bare relative path — codex's cwd is the project root, so the plan would land in the wrong place. Keep the plan MINIMAL — `name`, `task_prompt`, optional `output_subdir`. **Do NOT embed the full role markdown in a `system_prompt` field** — multi-line YAML-frontmatter strings frequently ship with unescaped quotes that corrupt the JSON; the host already has the role file on disk.
    ```json
    {
      "version": 1, "concurrency": 4,
      "agents": [
-       { "name": "ceo-bezos", "system_prompt": "...role.md contents...", "task_prompt": "task-specific instructions...", "output_subdir": "ceo-bezos" },
+       { "name": "ceo-bezos", "task_prompt": "specific instructions — include absolute output dir, $LANGUAGE, and the per-agent output budget the skill defined", "output_subdir": "ceo-bezos" },
        ...
      ]
    }
    ```
+   JSON hygiene before `write`: no literal newlines inside strings, no unescaped `"` inside strings, no trailing commas. Emit shorter `task_prompt` strings if you're unsure — a terse plan that parses beats a rich plan that doesn't.
 3. Stop. The host will fan out real child processes in parallel and then call you back with every agent's output files ready to consolidate.
 
 **External research**: If the task requires web search / URL fetch, these are available only through MCP servers (Exa, Tavily, Brave, Firecrawl, etc.). Check `~/.codex/config.toml` `[mcp_servers.*]` for what's installed. If none are configured for research and the task needs external information, note this limitation in your final report rather than making up data.

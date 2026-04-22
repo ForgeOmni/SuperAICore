@@ -151,6 +151,7 @@ class GeminiCliBackend implements Backend, StreamingBackend
                 onChunk: $options['onChunk'] ?? null,
                 externalLabel: $options['external_label'] ?? null,
                 monitorMetadata: $options['metadata'] ?? [],
+                cwd: $options['cwd'] ?? null,
             );
         } catch (\Throwable $e) {
             if ($this->logger) $this->logger->warning("GeminiCliBackend stream error: {$e->getMessage()}");

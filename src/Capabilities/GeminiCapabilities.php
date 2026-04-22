@@ -111,9 +111,11 @@ You are running under the Gemini CLI runtime. The task instructions below refere
 
 If the skill tells you to spawn / assemble / dispatch N agents, your job here is to **write a plan file and stop** — the host will fan out the real child processes in parallel and then call you back to consolidate.
 
-**Step 1.** Decide which agents to spawn (2–5 unless the skill says otherwise). For each one, read its role definition from `.claude/agents/<agent-name>.md` via `read_file`.
+**Step 1.** Decide which agents to spawn (2–5 unless the skill says otherwise). You do **NOT** need to read `.claude/agents/<name>.md` — the host loads each role file from disk by `name` when it fans out the children. Save your context budget.
 
 **Step 2.** Write `_spawn_plan.json` in the output directory using the **absolute path** from the skill's output-directory rule (the one in the SECURITY SANDBOX block later in this prompt). Never use a bare relative path like `_spawn_plan.json` — gemini-cli's cwd is the project root, not the sandbox dir, so the plan would land in the wrong place.
+
+**Keep the plan MINIMAL.** Emit only `name` (the subagent identifier, e.g. `ceo-bezos`), `task_prompt` (the run-specific instructions as ONE string), and optionally `output_subdir`. **Do NOT embed the full role markdown in a `system_prompt` field** — that forces you to JSON-escape multi-line content with YAML frontmatter quotes, which routinely produces broken JSON the host can't parse (every `"` inside an embedded `description: "..."` line ends the JSON string early). The host loads `.claude/agents/<name>.md` itself.
 
 Exact shape:
 
@@ -124,14 +126,20 @@ Exact shape:
   "agents": [
     {
       "name": "ceo-bezos",
-      "system_prompt": "...full contents of .claude/agents/ceo-bezos.md...",
-      "task_prompt": "Specific instructions for THIS agent on THIS task — include the output dir, language requirement, and any methodology the skill requires (research keywords, CSV format, etc.).",
+      "task_prompt": "Specific instructions for THIS agent on THIS task. Include the absolute output dir, $LANGUAGE, and the skill's per-agent budget (e.g. 1 md + 1 data). Keep it to a few hundred characters.",
       "output_subdir": "ceo-bezos"
     },
-    { "name": "legal-lessig", "system_prompt": "...", "task_prompt": "...", "output_subdir": "legal-lessig" }
+    { "name": "legal-lessig", "task_prompt": "...", "output_subdir": "legal-lessig" }
   ]
 }
 ```
+
+JSON hygiene checklist before you call `write_file`:
+- Every string uses `"..."` with **no literal newlines** inside — use spaces or `\n` escapes only.
+- **No unescaped `"`** inside a string — if you must quote something, use single quotes `'...'` or Chinese 「」/『』 instead.
+- No trailing commas, no comments.
+
+If unsure, **emit shorter `task_prompt` strings** — a terse plan that parses beats a rich plan that doesn't.
 
 **Step 3.** After writing the plan, stop. Do NOT play the roles yourself. Reply with a one-line confirmation like `Plan emitted: N agents.` and end.
 

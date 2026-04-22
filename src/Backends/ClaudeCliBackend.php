@@ -145,6 +145,39 @@ class ClaudeCliBackend implements Backend, StreamingBackend
             $cmd[] = $options['system'];
         }
 
+        // Permission mode — `bypassPermissions` skips claude's interactive
+        // approval prompts for Write / Edit / Bash. Required in headless
+        // mode; without it, claude blocks waiting for input that never
+        // arrives and produces no output files. Hosts that want claude to
+        // ask (e.g. interactive REPL wrappers) can pass `'default'`,
+        // `'plan'`, etc. or omit the option to leave claude's default.
+        if (!empty($options['permission_mode'])) {
+            $cmd[] = '--permission-mode';
+            $cmd[] = (string) $options['permission_mode'];
+        }
+
+        // Allowed tools — comma-separated allowlist passed to claude's
+        // `--allowedTools` flag. When omitted, claude uses its default
+        // tool set. Pass an explicit list (e.g.
+        // `'Read,Glob,Grep,Write,WebSearch,WebFetch,Agent'`) when you
+        // want to restrict the tool surface — claude's `default`
+        // permission mode then auto-allows just those tools.
+        if (!empty($options['allowed_tools'])) {
+            $tools = is_array($options['allowed_tools'])
+                ? implode(',', $options['allowed_tools'])
+                : (string) $options['allowed_tools'];
+            $cmd[] = '--allowedTools';
+            $cmd[] = $tools;
+        }
+
+        // Session id — propagate caller's id for traceability across the
+        // host's log files + claude's session store. Claude auto-generates
+        // one when omitted.
+        if (!empty($options['session_id'])) {
+            $cmd[] = '--session-id';
+            $cmd[] = (string) $options['session_id'];
+        }
+
         // MCP injection — see method doc.
         $mcpMode = $options['mcp_mode'] ?? 'inherit';
         $mcpTempFile = null;
@@ -176,6 +209,7 @@ class ClaudeCliBackend implements Backend, StreamingBackend
                 onChunk: $options['onChunk'] ?? null,
                 externalLabel: $options['external_label'] ?? null,
                 monitorMetadata: $options['metadata'] ?? [],
+                cwd: $options['cwd'] ?? null,
             );
         } catch (\Throwable $e) {
             if ($mcpTempFile && file_exists($mcpTempFile)) @unlink($mcpTempFile);
@@ -313,10 +347,38 @@ class ClaudeCliBackend implements Backend, StreamingBackend
 
     /**
      * Build env vars for claude CLI invocation based on provider type.
+     *
+     * Always unsets every `CLAUDECODE` / `CLAUDE_CODE_*` marker the
+     * parent claude session may have set. When claude is spawned from a
+     * process that itself was launched by Claude Code (e.g. a Laravel
+     * dev server started from a `claude` shell), those env vars trip
+     * claude's parent-recursion guards and cause the child to refuse
+     * authentication with the message "Not logged in · Please run
+     * /login". `false` tells Symfony Process to actively REMOVE each
+     * var from the child env (vs `''` which would set it to empty
+     * string — claude's checks are truthy/falsy so empty also works,
+     * but `false` is the correct semantic).
+     *
+     * Markers observed leaking (Claude Code 2.x):
+     *   - CLAUDECODE                              recursion sentinel
+     *   - CLAUDE_CODE_ENTRYPOINT                  "cli" / "ide" hint
+     *   - CLAUDE_CODE_SSE_PORT                    parent IPC port
+     *   - CLAUDE_CODE_EXECPATH                    parent binary path
+     *   - CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS    experimental gate
+     *
+     * `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX` are NOT in
+     * the unset list because the bedrock/vertex provider-type branches
+     * below set them intentionally — letting them through.
      */
     protected function buildEnv(array $providerConfig): array
     {
-        $env = [];
+        $env = [
+            'CLAUDECODE'                            => false,
+            'CLAUDE_CODE_ENTRYPOINT'                => false,
+            'CLAUDE_CODE_SSE_PORT'                  => false,
+            'CLAUDE_CODE_EXECPATH'                  => false,
+            'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'  => false,
+        ];
         $type = $providerConfig['type'] ?? 'builtin';
 
         switch ($type) {
@@ -352,11 +414,59 @@ class ClaudeCliBackend implements Backend, StreamingBackend
 
             case 'builtin':
             default:
-                // Use local Claude Code login — no extra env
+                // macOS fallback: extract the OAuth token from Keychain
+                // and inject it as ANTHROPIC_API_KEY when we can reach it.
+                //
+                // Why: claude's native `builtin` login talks to macOS
+                // Keychain via the native Security framework API, which
+                // respects audit-session boundaries. Processes spawned
+                // from PHP-FPM workers (web UI → nohup → task:execute
+                // → claude) live in a different audit session from the
+                // interactive shell where the user ran `claude login`;
+                // claude's native keychain call silently fails there and
+                // the CLI returns `"Not logged in · Please run /login"`
+                // with `apiKeySource:"none"`.
+                //
+                // The `security` CLI escapes this restriction (it's a
+                // privileged macOS tool) and returns the same OAuth
+                // token claude stored. We read it here and pass it
+                // through as `ANTHROPIC_API_KEY` — claude honors that
+                // env var as an authenticated session.
+                //
+                // Silent fallback: if the keychain lookup fails (non-macOS,
+                // token not present, user never logged in), we leave env
+                // empty and let claude's native path handle it. In
+                // keychain-accessible contexts this is redundant but
+                // harmless; in PHP-FPM contexts it's the only path that
+                // works for OAuth-based builtin auth.
+                $oauthToken = $this->readBuiltinOauthToken();
+                if ($oauthToken) {
+                    $env['ANTHROPIC_API_KEY'] = $oauthToken;
+                }
                 break;
         }
 
         return $env;
+    }
+
+    /**
+     * Return the Claude Code OAuth access token from macOS Keychain, or
+     * null when the platform isn't macOS / the token isn't present /
+     * the security CLI isn't accessible.
+     */
+    protected function readBuiltinOauthToken(): ?string
+    {
+        if (PHP_OS_FAMILY !== 'Darwin') return null;
+
+        // `security find-generic-password -s "Claude Code-credentials"
+        //  -w` prints the password payload (JSON blob) to stdout.
+        // 2>/dev/null swallows "not found" / ACL errors silently.
+        $json = @shell_exec('security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null');
+        if (!$json) return null;
+
+        $creds = json_decode(trim($json), true);
+        $token = $creds['claudeAiOauth']['accessToken'] ?? null;
+        return (is_string($token) && $token !== '') ? $token : null;
     }
 
     protected function messagesToPrompt(array $messages): string

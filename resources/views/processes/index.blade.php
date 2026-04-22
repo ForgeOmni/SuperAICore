@@ -143,7 +143,7 @@
                                         <span>{{ $proc->task_type }}</span>
                                     </div>
                                     <div style="font-size:.7rem;margin-top:.125rem" class="d-flex align-items-center gap-1 flex-wrap">
-                                        <span class="badge" style="background:#f1f5f9;color:#475569;font-size:.6rem">Run #{{ $proc->result_id }}</span>
+                                        <span class="badge" style="background:#f1f5f9;color:#475569;font-size:.6rem">{{ __('processes.run_id') }} #{{ $proc->result_id }}</span>
                                         @if(!empty($proc->run_mode))
                                             <span class="badge" style="background:#fefce8;color:#a16207;font-size:.6rem">{{ $proc->run_mode }}</span>
                                         @endif

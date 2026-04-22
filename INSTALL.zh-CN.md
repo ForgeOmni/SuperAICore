@@ -351,6 +351,23 @@ php artisan migrate
 DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND output_tokens = 0;
 ```
 
+**0.6.6 迁移** —— 给 `ai_usage_logs` 加一列可空列 + 一个复合索引：`idempotency_key varchar(80)` + `(idempotency_key, created_at)`。为 Dispatcher 60s 去重窗口服务。
+
+**0.6.7 —— 无迁移。** 纯运行时行为改动。两点值得复核：
+
+1. **父进程是 `claude` shell 再起 Laravel server 的场景**（例如在 Claude Code 会话里敲 `php artisan serve`），升级后 claude 会开始正常认证。如果之前你自己的 runner 里做了手工 env-scrub 来绕这个坑,现在它冗余但无害。
+2. **自带 `ProcessSource` 的宿主**应该把自己的 label 前缀加到新配置键,免得 `AiProcessSource` 在你已经渲染了富行之外再输出一条裸行:
+
+   ```php
+   // config/super-ai-core.php
+   'process_monitor' => [
+       'enabled' => env('AI_CORE_PROCESS_MONITOR', false),
+       'host_owned_label_prefixes' => ['task:'],   // SuperTeam 约定
+   ],
+   ```
+
+`AiProcessSource::list()` 的契约现在明确为 **live-only** —— 只返回当前在跑的 OS 进程。之前靠 `list()` 拿历史行的宿主,请直接查 `ai_processes` 表（仍然是每次 spawn 的完整审计日志）。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

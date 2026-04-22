@@ -354,6 +354,23 @@ Review [CHANGELOG.md](CHANGELOG.md) for breaking changes before `--force` publis
 DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND output_tokens = 0;
 ```
 
+**0.6.6 migration** — adds one nullable column + composite index to `ai_usage_logs`: `idempotency_key varchar(80)` + index `(idempotency_key, created_at)`. Powers the 60s Dispatcher dedup window.
+
+**0.6.7 — no migration.** Pure runtime behavior change. Two things worth reviewing:
+
+1. **Hosts running claude from a process that was itself launched by a parent `claude` shell** (e.g. `php artisan serve` started inside a Claude Code session) will notice claude suddenly starts authenticating correctly. If you'd papered over this with a manual env-scrub in your own runner, it's now redundant but harmless.
+2. **Hosts with their own `ProcessSource`** should add their label prefix to the new config key so `AiProcessSource` doesn't emit a duplicate bare row next to their rich one:
+
+   ```php
+   // config/super-ai-core.php
+   'process_monitor' => [
+       'enabled' => env('AI_CORE_PROCESS_MONITOR', false),
+       'host_owned_label_prefixes' => ['task:'],   // SuperTeam convention
+   ],
+   ```
+
+`AiProcessSource::list()` is now explicitly **live-only** by contract — it returns ONLY currently-running OS processes. Hosts that previously relied on `list()` returning finished rows for a history view should query the `ai_processes` table directly (it remains the full audit log of every spawn).
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

@@ -127,6 +127,14 @@ return [
     // ─── Process monitor (admin only) ───
     'process_monitor' => [
         'enabled' => env('AI_CORE_PROCESS_MONITOR', false),
+
+        // `external_label` prefixes claimed by host ProcessSources. The
+        // built-in AiProcessSource skips emitting rows whose label starts
+        // with any of these, so the host's rich entry (with task /
+        // project / model badges) is the only one the view renders.
+        // Example for SuperTeam: ['task:']. Leave empty when the host has
+        // no ProcessSource of its own.
+        'host_owned_label_prefixes' => [],
     ],
 
     // ─── Engine catalog overrides ───
