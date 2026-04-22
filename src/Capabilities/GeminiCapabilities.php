@@ -141,6 +141,15 @@ JSON hygiene checklist before you call `write_file`:
 
 If unsure, **emit shorter `task_prompt` strings** — a terse plan that parses beats a rich plan that doesn't.
 
+**MANDATORY per-agent guard clauses.** Every `task_prompt` you emit MUST embed these four rules verbatim (translate them if `$LANGUAGE` is not English — the rules must be in the same language the agent will reply in, otherwise Gemini Flash defaults the "technical" bits back to English):
+
+1. **Stay in your lane.** You are exactly ONE agent (`<name>`). Do NOT create sibling-role sub-directories (e.g. if you are `regional-khanna`, do NOT make `ceo/`, `cfo/`, `marketing/` inside your output dir). Do NOT write reports as if you were another agent. Only the files listed in your output budget, inside your own `output_subdir`.
+2. **Consolidation is not your job.** Do NOT emit `summary.md` / `摘要.md` / `思维导图.md` / `流程图.md` / `mindmap.md` / `flowchart.md` / or any name the skill reserves for the consolidator. The host re-invokes the parent backend for consolidation — those files come from that pass.
+3. **Language uniformity.** Every file you Write — the markdown report, the CSV (including column headers and non-proper-noun cell values), the `_signals/<name>.md` Findings Board, code comments — must be in `$LANGUAGE`. Proper nouns (company names, product names, URLs) can stay in their original form. CSV numbers stay numeric. Do NOT switch to English for "technical" sections or protocol blocks.
+4. **File extension whitelist.** Only `.md`, `.csv`, `.png`. NO `.py` / `.sh` / `.json` / `.txt` / `.html`. If you need a chart, render it to PNG directly (via mmdc or similar) and write the PNG — do NOT leave helper scripts behind.
+
+When you inject the IAP (Inter-Agent Protocol) snippet into a `task_prompt`, translate the whole snippet (`Self-consult`, `Findings Board`, `Cross-domain signals`, etc.) into `$LANGUAGE` too. Mixed-language prompts bias Flash toward writing the "English-looking" artifacts (CSV, `_signals/*.md`) in English — which breaks rule #3.
+
 **Step 3.** After writing the plan, stop. Do NOT play the roles yourself. Reply with a one-line confirmation like `Plan emitted: N agents.` and end.
 
 When the host re-invokes you for **consolidation**, you will see each agent's output files already present in their `output_subdir`. Read them via `read_file`, then write the final summary / 思维导图 / 流程图 files as the skill requires.

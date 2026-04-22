@@ -119,6 +119,17 @@ class Pipeline
 
         $this->log('info', "Pipeline: spawn plan detected ({$engineKey}) — {$this->agentCount($plan)} agents");
 
+        // Clean up any consolidator-reserved files the first-pass model
+        // wrote at outputRoot top-level (RUN 70, 2026-04-22: Gemini Flash
+        // wrote `思维导图.md` + `流程图.md` during first pass even though
+        // the preamble says "write the plan and STOP"). Leaving them in
+        // place would either (a) mislead the founder into thinking
+        // consolidation succeeded when it didn't, or (b) race with the
+        // real consolidation pass and present whichever wins. Deleting
+        // pre-fanout forces the real consolidation to produce fresh
+        // content. This is idempotent — subsequent runs don't care.
+        self::cleanPrematureConsolidatorFiles($outputDir, fn (string $msg) => $this->log('warning', $msg));
+
         // Phase 2 — parallel fanout via existing Orchestrator (or test stub)
         try {
             $orchestrator = $this->orchestratorFactory
@@ -321,6 +332,41 @@ class Pipeline
     {
         if ($this->logger) {
             $this->logger->{$level}($message);
+        }
+    }
+
+    /**
+     * Consolidator-reserved filenames. Agents must never produce these at
+     * `$outputDir` top-level — they're the consolidation pass's job. When
+     * a weak first-pass model writes them anyway, we delete pre-fanout so
+     * the real consolidation produces fresh content.
+     */
+    private const CONSOLIDATOR_RESERVED = [
+        'summary.md', 'mindmap.md', 'flowchart.md',
+        '摘要.md', '思维导图.md', '流程图.md',
+        '摘要.html', '思维导图.html', '流程图.html',
+    ];
+
+    /**
+     * Delete any premature consolidator-reserved files sitting at
+     * `$outputDir` top-level (non-recursive; agent subdirs are audited
+     * separately in {@see Orchestrator::auditAgentOutput}). Emits a
+     * warning per deletion so the operator can trace the first-pass
+     * preamble violation back to a specific backend invocation.
+     *
+     * @param callable $warn callable(string $msg): void
+     */
+    private static function cleanPrematureConsolidatorFiles(string $outputDir, callable $warn): void
+    {
+        $dir = rtrim($outputDir, '/\\');
+        if (!is_dir($dir)) return;
+        foreach (self::CONSOLIDATOR_RESERVED as $name) {
+            $path = $dir . DIRECTORY_SEPARATOR . $name;
+            if (is_file($path)) {
+                if (@unlink($path)) {
+                    $warn("Pipeline: removed premature consolidator file before fanout — {$path}");
+                }
+            }
         }
     }
 }

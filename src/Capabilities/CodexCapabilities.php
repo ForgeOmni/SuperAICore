@@ -108,6 +108,14 @@ You are running under OpenAI codex-rs. Tool names follow the standard Read/Write
    }
    ```
    JSON hygiene before `write`: no literal newlines inside strings, no unescaped `"` inside strings, no trailing commas. Emit shorter `task_prompt` strings if you're unsure — a terse plan that parses beats a rich plan that doesn't.
+
+   **MANDATORY per-agent guard clauses.** Every `task_prompt` MUST embed these four rules verbatim, translated into the same language the agent will reply in (`$LANGUAGE`) — mixed English/non-English prompts bias the child toward writing CSV headers and `_signals/*.md` in English:
+
+   a. **Stay in your lane.** You are exactly ONE agent (`<name>`). Do NOT create sibling-role sub-directories (e.g. `ceo/`, `cfo/`, `marketing/`) inside your output dir. Do NOT write reports as if you were another agent. Only files in your own `output_subdir`.
+   b. **Consolidation is not your job.** Do NOT emit `summary.md` / `摘要.md` / `思维导图.md` / `流程图.md` / `mindmap.md` / `flowchart.md` or similar skill-reserved names. The host re-invokes the parent backend for consolidation.
+   c. **Language uniformity.** Every file (markdown, CSV headers and non-proper-noun cells, `_signals/<name>.md`, code comments) in `$LANGUAGE`. Proper nouns stay original, numbers stay numeric. Do NOT switch to English for "technical" sections or protocol blocks.
+   d. **File extension whitelist.** Only `.md`, `.csv`, `.png`. NO `.py` / `.sh` / `.json` / `.txt` / `.html`. Render charts directly to PNG.
+
 3. Stop. The host will fan out real child processes in parallel and then call you back with every agent's output files ready to consolidate.
 
 **External research**: If the task requires web search / URL fetch, these are available only through MCP servers (Exa, Tavily, Brave, Firecrawl, etc.). Check `~/.codex/config.toml` `[mcp_servers.*]` for what's installed. If none are configured for research and the task needs external information, note this limitation in your final report rather than making up data.
