@@ -2,7 +2,9 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Models\AiProvider;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
@@ -31,8 +33,10 @@ use Symfony\Component\Process\Process;
  * glm-5, qwen3-coder-next, auto, …). Omitting --model lets Kiro's
  * router pick based on the subscription tier.
  */
-class KiroCliBackend implements Backend
+class KiroCliBackend implements Backend, StreamingBackend
 {
+    use StreamableProcess;
+
     public function __construct(
         protected string $binary = 'kiro-cli',
         protected int $timeout = 300,
@@ -117,6 +121,90 @@ class KiroCliBackend implements Backend
             if ($this->logger) $this->logger->warning("KiroCliBackend error: {$e->getMessage()}");
             return null;
         }
+    }
+
+    /**
+     * Streaming variant. Kiro emits plain text (no structured stream),
+     * so chunks delivered during the run are partial human-readable
+     * output. Tee them to disk for live tailing, parse the final summary
+     * line at exit. Same args as generate(), with usage envelope expanded
+     * with log_file / duration_ms / exit_code.
+     *
+     * MCP injection: Kiro 2.x supports MCP via `~/.kiro/mcp.json`. The
+     * `mcp_mode` knob is currently a no-op for Kiro because the CLI
+     * doesn't expose a per-invocation `--mcp-config` flag — operators
+     * who need an empty MCP set should rename the file out before
+     * dispatching. Honored here as a forward-compatible stub.
+     *
+     * @see Contracts\StreamingBackend for the full options spec.
+     */
+    public function stream(array $options): ?array
+    {
+        $providerConfig = $options['provider_config'] ?? [];
+        $prompt = $options['prompt'] ?? '';
+        if ($prompt === '' && !empty($options['messages'])) {
+            $prompt = $this->messagesToPrompt($options['messages']);
+        }
+        if ($prompt === '') return null;
+
+        $rawModel = $options['model'] ?? $providerConfig['model'] ?? null;
+        $model = \SuperAICore\Services\KiroModelResolver::resolve($rawModel);
+
+        $cmd = [$this->binary, 'chat', '--no-interactive'];
+        if ($this->trustAllTools) {
+            $cmd[] = '--trust-all-tools';
+        }
+        if ($model !== null && $model !== '') {
+            $cmd[] = '--model';
+            $cmd[] = $model;
+        }
+        $cmd[] = $prompt;
+
+        try {
+            $env = $this->buildEnv($providerConfig);
+            $process = new Process($cmd, null, $env);
+            $result = $this->runStreaming(
+                process: $process,
+                backend: $this->name(),
+                commandSummary: $this->binary . ' chat --no-interactive' . ($model ? " --model {$model}" : ''),
+                logFile: $options['log_file'] ?? null,
+                timeout: $options['timeout'] ?? null,
+                idleTimeout: $options['idle_timeout'] ?? null,
+                onChunk: $options['onChunk'] ?? null,
+                externalLabel: $options['external_label'] ?? null,
+                monitorMetadata: $options['metadata'] ?? [],
+            );
+        } catch (\Throwable $e) {
+            if ($this->logger) $this->logger->warning("KiroCliBackend stream error: {$e->getMessage()}");
+            return null;
+        }
+
+        $parsed = $this->parseOutput($result['captured']);
+        if (!$parsed || $parsed['text'] === '') {
+            return [
+                'text'        => '',
+                'model'       => $model ?? 'kiro-default',
+                'usage'       => [],
+                'log_file'    => $result['log_file'],
+                'duration_ms' => $result['duration_ms'],
+                'exit_code'   => $result['exit_code'],
+            ];
+        }
+
+        return [
+            'text'  => $parsed['text'],
+            'model' => $model ?? 'kiro-default',
+            'usage' => [
+                'input_tokens'  => 0,
+                'output_tokens' => 0,
+                'credits'       => $parsed['credits'],
+                'duration_s'    => $parsed['duration_s'],
+            ],
+            'stop_reason' => 'end_turn',
+            'log_file'    => $result['log_file'],
+            'duration_ms' => $result['duration_ms'],
+            'exit_code'   => $result['exit_code'],
+        ];
     }
 
     /**

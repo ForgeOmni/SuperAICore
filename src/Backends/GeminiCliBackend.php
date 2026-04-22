@@ -2,7 +2,9 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Services\GeminiModelResolver;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
@@ -20,8 +22,10 @@ use Symfony\Component\Process\Process;
  * We pick the model whose role is "main" (vs. "utility_router" side
  * calls that inflate counts but don't represent the user-facing answer).
  */
-class GeminiCliBackend implements Backend
+class GeminiCliBackend implements Backend, StreamingBackend
 {
+    use StreamableProcess;
+
     public function __construct(
         protected string $binary = 'gemini',
         protected int $timeout = 300,
@@ -96,6 +100,89 @@ class GeminiCliBackend implements Backend
             if ($this->logger) $this->logger->warning("GeminiCliBackend error: {$e->getMessage()}");
             return null;
         }
+    }
+
+    /**
+     * Streaming variant — gemini's `--output-format=json` is single-blob
+     * (no NDJSON streaming mode in current CLI), so chunks delivered
+     * during the run are partial JSON. We tee them all to disk for live
+     * tailing, then parse the assembled blob at exit.
+     *
+     * @see Contracts\StreamingBackend for the full options spec.
+     */
+    public function stream(array $options): ?array
+    {
+        $providerConfig = $options['provider_config'] ?? [];
+        $prompt = $options['prompt'] ?? '';
+        if ($prompt === '') return null;
+
+        $model = GeminiModelResolver::resolve($options['model'] ?? $providerConfig['model'] ?? null);
+
+        $cmd = [$this->binary, '--output-format=json', '--yolo'];
+        if ($model) {
+            $cmd[] = '--model';
+            $cmd[] = $model;
+        }
+        $cmd[] = '-p';
+        $cmd[] = $prompt;
+
+        $env = [];
+        if (!empty($providerConfig['api_key'])) {
+            $env['GEMINI_API_KEY'] = $providerConfig['api_key'];
+        }
+        $extra = $providerConfig['extra_config'] ?? [];
+        if (!empty($extra['project_id'])) {
+            $env['GOOGLE_CLOUD_PROJECT'] = $extra['project_id'];
+            $env['GOOGLE_GENAI_USE_VERTEXAI'] = 'true';
+        }
+        if (!empty($extra['region'])) {
+            $env['GOOGLE_CLOUD_LOCATION'] = $extra['region'];
+        }
+
+        try {
+            $process = new Process($cmd, null, $env);
+            $result = $this->runStreaming(
+                process: $process,
+                backend: $this->name(),
+                commandSummary: $this->binary . ' --output-format=json -p' . ($model ? " --model {$model}" : ''),
+                logFile: $options['log_file'] ?? null,
+                timeout: $options['timeout'] ?? null,
+                idleTimeout: $options['idle_timeout'] ?? null,
+                onChunk: $options['onChunk'] ?? null,
+                externalLabel: $options['external_label'] ?? null,
+                monitorMetadata: $options['metadata'] ?? [],
+            );
+        } catch (\Throwable $e) {
+            if ($this->logger) $this->logger->warning("GeminiCliBackend stream error: {$e->getMessage()}");
+            return null;
+        }
+
+        $parsed = $this->parseJson($result['captured']);
+        if (!$parsed) {
+            return [
+                'text'        => '',
+                'model'       => $model ?? 'gemini-default',
+                'usage'       => [],
+                'log_file'    => $result['log_file'],
+                'duration_ms' => $result['duration_ms'],
+                'exit_code'   => $result['exit_code'],
+            ];
+        }
+
+        return [
+            'text'        => $parsed['text'],
+            'model'       => $parsed['model'] ?? $model ?? 'gemini-default',
+            'usage'       => [
+                'input_tokens'        => $parsed['input_tokens'],
+                'output_tokens'       => $parsed['output_tokens'],
+                'cached_input_tokens' => $parsed['cached_input_tokens'],
+                'thoughts_tokens'     => $parsed['thoughts_tokens'],
+            ],
+            'stop_reason' => null,
+            'log_file'    => $result['log_file'],
+            'duration_ms' => $result['duration_ms'],
+            'exit_code'   => $result['exit_code'],
+        ];
     }
 
     /**

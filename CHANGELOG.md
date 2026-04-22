@@ -4,6 +4,47 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Phase A of the **host-spawn-uplift** roadmap (`docs/host-spawn-uplift-roadmap.md`) — lifts live-streaming CLI execution from each downstream host into SuperAICore so every CLI benefits, not just the three the host currently spawns. Hosts that want to stay on `generate()` are unaffected; the new `stream()` path is purely additive.
+
+### Added
+
+**`Contracts\StreamingBackend` — sibling of `Backend`**
+- New interface declaring `stream(array $options): ?array`. Same inputs as `generate()`, plus `log_file` / `timeout` / `idle_timeout` / `mcp_mode` / `mcp_config_file` / `external_label` / `onChunk` / `metadata`. Returns the same envelope `generate()` does, augmented with `log_file`, `duration_ms`, and `exit_code`.
+- All five CLI backends implement it in this release: `ClaudeCliBackend` / `CodexCliBackend` / `GeminiCliBackend` / `KiroCliBackend` / `CopilotCliBackend`. The API backends (`AnthropicApiBackend`, `OpenAiApiBackend`, `GeminiApiBackend`) and `SuperAgentBackend` are deferred — they'd need SSE / SDK-internal streaming support that's out of scope for Phase A.
+
+**`Support\TeeLogger` — append-only tee writer for streamed CLI output**
+- Used by `stream()` implementations (and any future runner that wants the same "chunk fan-out") to persist the raw stream so the Process Monitor `tail` view, the post-hoc `CliOutputParser`, and the ad-hoc human reader all see the same authoritative bytes. Failure is non-fatal: unwritable paths silently skip disk writes rather than killing the run. `bytesWritten()` / `path()` / `isOpen()` helpers for observability.
+
+**`Backends\Concerns\StreamableProcess` — shared register-tee-wait-end trait**
+- Packages the `ProcessRegistrar::start() + TeeLogger + Process::wait(callback) + ProcessRegistrar::end()` dance so each backend's `stream()` body can stay focused on command construction + output parsing. Different from the long-standing `Runner\Concerns\MonitoredProcess` trait in two ways: no `emit()` requirement on the consumer (backends are silent by default; UI updates flow through `$onChunk` only when the caller passes one), and returns a richer envelope bundling captured output + log path + timing.
+
+**`ClaudeCliBackend::parseStreamJson()` — NDJSON walker for `--output-format=stream-json` captures**
+- Walks a captured stream-json log for the LAST `result` event and extracts `{text, model, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, total_cost_usd, stop_reason, num_turns, session_id}`. Public for testing — host parsers that already capture the same NDJSON shape (PPT pipelines, task runners) can reuse this without spawning a process.
+
+**`Dispatcher::dispatch([...'stream' => true])` — opt-in streaming route**
+- When `options['stream'] === true` and the resolved backend implements `StreamingBackend`, `dispatch()` calls `stream()` instead of `generate()` and forwards `log_file` / `timeout` / `idle_timeout` / `mcp_mode` / `mcp_config_file` / `external_label` / `onChunk` through unchanged. Backends that don't implement the contract fall back to `generate()` silently — callers see the same envelope shape either way (stream-only adds `log_file` + `exit_code`).
+
+**MCP injection knob — `mcp_mode: 'inherit' | 'empty' | 'file'` (ClaudeCliBackend only today)**
+- `empty` writes a temp `{"mcpServers":{}}` and passes `--mcp-config <file> --strict-mcp-config` to claude — **required in headless mode when the host has many global MCPs**, otherwise claude keeps spawning them past its final stream event and blocks parent exit. `file` uses an explicit `mcp_config_file`. `inherit` (default) lets claude pick up its global MCP set as usual. Other backends accept the option but no-op today; forward-compat stub so hosts can pass it defensively.
+
+### Changed
+
+- `ClaudeCliBackend` / `CodexCliBackend` / `GeminiCliBackend` / `KiroCliBackend` / `CopilotCliBackend` all gained `implements StreamingBackend` + `use StreamableProcess;`. `generate()` signature / behavior unchanged — no breaking change for existing callers.
+
+### Migration notes
+
+Hosts that currently hand-roll the spawn (build `claude -p --output-format stream-json --verbose ... > log.txt 2>&1`, manage `--mcp-config`, manage timeouts, manage tee) can replace that entire block with one `Dispatcher::dispatch(['stream' => true, ...])` call. See `docs/streaming-backends.md` for the full quickstart + options reference. Subsequent phases (B: `TaskRunner`, C: `AgentSpawn\Pipeline`) collapse this further; Phase A is the load-bearing primitive.
+
+No database migration required. No config change required. No host code change required — existing `generate()` callers untouched.
+
+### Tests
+
+- 22 new tests covering `TeeLogger` basics (7), `ClaudeCliBackend::parseStreamJson()` edge cases (5), and `StreamingBackend` contract enforcement across all 5 CLIs (10). Full suite: **298 tests / 855 assertions / 0 failures / 0 skipped** (was 276 / 812).
+
+---
+
 ## [0.6.5] — 2026-04-21
 
 Small patch tightening the 0.6.2 accounting story. Fixes a Kiro auth-detection bug that reported `not-logged-in` on machines with a valid `~/.kiro/` session, teaches `shadowCalculate()` about Anthropic's cache-token price tiers so heavy-cache Claude calls don't overstate shadow cost by ~10×, prefers the CLI's own `total_cost_usd` over the pricing catalog when the envelope carries it, and tidies the Recent-calls dashboard (Provider / Service column + capability column + filter-state persistence). Also adds an opt-in `MonitoredProcess::runMonitoredAndRecord()` helper so host runners can drop one line after a CLI exits and get a fully-populated `ai_usage_logs` row for free.

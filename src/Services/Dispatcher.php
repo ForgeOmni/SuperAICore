@@ -5,6 +5,7 @@ namespace SuperAICore\Services;
 use SuperAICore\Contracts\Backend;
 use SuperAICore\Contracts\ProviderRepository;
 use SuperAICore\Contracts\RoutingRepository;
+use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Support\BackendState;
 use Psr\Log\LoggerInterface;
 
@@ -41,8 +42,23 @@ class Dispatcher
      *   scope?: string,          global|user (default global)
      *   scope_id?: int,          user_id when scope=user
      *   user_id?: int,           for usage attribution
+     *   stream?: bool,           when true and the resolved backend implements
+     *                            StreamingBackend, calls stream() for live tee
+     *                            log + Process Monitor row + onChunk callback;
+     *                            falls back to generate() when not implemented.
+     *   log_file?: string,       (stream only) tee path; auto-named when absent
+     *   timeout?: int,           (stream only) hard timeout seconds
+     *   idle_timeout?: int,      (stream only) idle timeout seconds
+     *   mcp_mode?: 'inherit'|'empty'|'file',  (stream only) backends that
+     *                                          load MCP servers honor this
+     *   mcp_config_file?: string,             (stream only) when mcp_mode=file
+     *   external_label?: string, (stream only) Process Monitor row label
+     *   onChunk?: callable,      (stream only) fn(string $chunk, string $stream)
+     *   metadata?: array,        attached to ai_usage_logs; (stream) also
+     *                            stamped on the Process Monitor row
      * }
      * @return array|null  {text, model, usage, cost_usd, backend, duration_ms}
+     *                     plus when stream=true: log_file, exit_code
      */
     public function dispatch(array $options): ?array
     {
@@ -69,7 +85,18 @@ class Dispatcher
             $options['provider_config'] ?? [],
         );
 
-        $result = $backend->generate($callOptions);
+        // Streaming opt-in. When the caller asks for stream:true and the
+        // resolved backend implements StreamingBackend, prefer stream() so
+        // the host gets a live tee log + Process Monitor row + onChunk
+        // callback. Backends that don't implement the contract fall back
+        // to generate() silently — callers see the same envelope shape
+        // either way (stream() bolts on log_file + exit_code; generate()
+        // just doesn't carry them).
+        if (!empty($options['stream']) && $backend instanceof StreamingBackend) {
+            $result = $backend->stream($callOptions);
+        } else {
+            $result = $backend->generate($callOptions);
+        }
         $durationMs = (int) round((microtime(true) - $start) * 1000);
 
         if (!$result) return null;

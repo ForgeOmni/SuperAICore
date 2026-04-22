@@ -2,7 +2,9 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Services\CodexModelResolver;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
@@ -15,8 +17,10 @@ use Symfony\Component\Process\Process;
  * `turn.completed.usage` object carries `input_tokens`, `output_tokens`,
  * and `cached_input_tokens`.
  */
-class CodexCliBackend implements Backend
+class CodexCliBackend implements Backend, StreamingBackend
 {
+    use StreamableProcess;
+
     public function __construct(
         protected string $binary = 'codex',
         protected int $timeout = 300,
@@ -88,6 +92,85 @@ class CodexCliBackend implements Backend
             if ($this->logger) $this->logger->warning("CodexCliBackend error: {$e->getMessage()}");
             return null;
         }
+    }
+
+    /**
+     * Streaming variant — codex's `exec --json` is already JSONL, so the
+     * command shape matches generate(). Differences:
+     *   - tee'd to a log file for live tailing
+     *   - registered with the Process Monitor
+     *   - configurable timeouts (host task runs need much longer than 300s)
+     *   - chunks fanned to an optional `onChunk` callback for live UI
+     *
+     * @see Contracts\StreamingBackend for the full options spec.
+     */
+    public function stream(array $options): ?array
+    {
+        $providerConfig = $options['provider_config'] ?? [];
+        $prompt = $options['prompt'] ?? '';
+        if ($prompt === '') return null;
+
+        $model = $options['model'] ?? $providerConfig['model'] ?? null;
+        $model = CodexModelResolver::resolve($model, $this->binary);
+
+        $cmd = [$this->binary, 'exec', '--json', '--full-auto', '--skip-git-repo-check'];
+        if ($model) {
+            $cmd[] = '--model';
+            $cmd[] = $model;
+        }
+        $cmd[] = $prompt;
+
+        $env = [];
+        if (!empty($providerConfig['api_key'])) {
+            $env['OPENAI_API_KEY'] = $providerConfig['api_key'];
+        }
+        if (!empty($providerConfig['base_url'])) {
+            $env['OPENAI_BASE_URL'] = $providerConfig['base_url'];
+        }
+
+        try {
+            $process = new Process($cmd, null, $env);
+            $result = $this->runStreaming(
+                process: $process,
+                backend: $this->name(),
+                commandSummary: $this->binary . ' exec --json --full-auto' . ($model ? " --model {$model}" : ''),
+                logFile: $options['log_file'] ?? null,
+                timeout: $options['timeout'] ?? null,
+                idleTimeout: $options['idle_timeout'] ?? null,
+                onChunk: $options['onChunk'] ?? null,
+                externalLabel: $options['external_label'] ?? null,
+                monitorMetadata: $options['metadata'] ?? [],
+            );
+        } catch (\Throwable $e) {
+            if ($this->logger) $this->logger->warning("CodexCliBackend stream error: {$e->getMessage()}");
+            return null;
+        }
+
+        $parsed = $this->parseJsonl($result['captured']);
+        if (!$parsed) {
+            return [
+                'text'        => '',
+                'model'       => $model ?? 'codex-default',
+                'usage'       => [],
+                'log_file'    => $result['log_file'],
+                'duration_ms' => $result['duration_ms'],
+                'exit_code'   => $result['exit_code'],
+            ];
+        }
+
+        return [
+            'text'        => $parsed['text'],
+            'model'       => $model ?? 'codex-default',
+            'usage'       => [
+                'input_tokens'        => $parsed['input_tokens'],
+                'output_tokens'       => $parsed['output_tokens'],
+                'cached_input_tokens' => $parsed['cached_input_tokens'],
+            ],
+            'stop_reason' => $parsed['stop_reason'],
+            'log_file'    => $result['log_file'],
+            'duration_ms' => $result['duration_ms'],
+            'exit_code'   => $result['exit_code'],
+        ];
     }
 
     /**

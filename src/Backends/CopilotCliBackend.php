@@ -2,7 +2,9 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Services\CopilotModelResolver;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
@@ -17,8 +19,10 @@ use Symfony\Component\Process\Process;
  * the same way the other CLI backends do, but the default (`builtin`) just
  * lets the local `copilot login` state carry the request.
  */
-class CopilotCliBackend implements Backend
+class CopilotCliBackend implements Backend, StreamingBackend
 {
+    use StreamableProcess;
+
     public function __construct(
         protected string $binary = 'copilot',
         protected int $timeout = 300,
@@ -97,6 +101,81 @@ class CopilotCliBackend implements Backend
             if ($this->logger) $this->logger->warning("CopilotCliBackend error: {$e->getMessage()}");
             return null;
         }
+    }
+
+    /**
+     * Streaming variant — `copilot -p ... --output-format=json` is already
+     * JSONL (one event per line), so chunks delivered during the run are
+     * naturally complete events that hosts can parse incrementally if
+     * desired. Tee'd to a log file + Process Monitor row + chunk callback.
+     *
+     * @see Contracts\StreamingBackend for the full options spec.
+     */
+    public function stream(array $options): ?array
+    {
+        $providerConfig = $options['provider_config'] ?? [];
+        $prompt = $options['prompt'] ?? '';
+        if ($prompt === '' && !empty($options['messages'])) {
+            $prompt = $this->messagesToPrompt($options['messages']);
+        }
+        if ($prompt === '') return null;
+
+        $model = $options['model'] ?? $providerConfig['model'] ?? null;
+        $model = CopilotModelResolver::resolve($model);
+
+        $cmd = [$this->binary, '-p', $prompt, '--output-format=json'];
+        if ($this->allowAllTools) {
+            $cmd[] = '--allow-all-tools';
+        }
+        if ($model) {
+            $cmd[] = '--model';
+            $cmd[] = $model;
+        }
+
+        try {
+            $env = $this->buildEnv($providerConfig);
+            $process = new Process($cmd, null, $env);
+            $result = $this->runStreaming(
+                process: $process,
+                backend: $this->name(),
+                commandSummary: $this->binary . ' -p --output-format=json' . ($model ? " --model {$model}" : ''),
+                logFile: $options['log_file'] ?? null,
+                timeout: $options['timeout'] ?? null,
+                idleTimeout: $options['idle_timeout'] ?? null,
+                onChunk: $options['onChunk'] ?? null,
+                externalLabel: $options['external_label'] ?? null,
+                monitorMetadata: $options['metadata'] ?? [],
+            );
+        } catch (\Throwable $e) {
+            if ($this->logger) $this->logger->warning("CopilotCliBackend stream error: {$e->getMessage()}");
+            return null;
+        }
+
+        $parsed = $this->parseJsonl($result['captured']);
+        if (!$parsed) {
+            return [
+                'text'        => '',
+                'model'       => $model ?? 'copilot-default',
+                'usage'       => [],
+                'log_file'    => $result['log_file'],
+                'duration_ms' => $result['duration_ms'],
+                'exit_code'   => $result['exit_code'],
+            ];
+        }
+
+        return [
+            'text'  => $parsed['text'],
+            'model' => $parsed['model'] ?? $model ?? 'copilot-default',
+            'usage' => [
+                'input_tokens'     => 0,
+                'output_tokens'    => $parsed['output_tokens'],
+                'premium_requests' => $parsed['premium_requests'],
+            ],
+            'stop_reason' => $parsed['exit_code'] === 0 ? 'end_turn' : 'error',
+            'log_file'    => $result['log_file'],
+            'duration_ms' => $result['duration_ms'],
+            'exit_code'   => $result['exit_code'],
+        ];
     }
 
     /**
