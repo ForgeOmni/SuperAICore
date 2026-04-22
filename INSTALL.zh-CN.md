@@ -386,6 +386,10 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 3. **一条命令调试 API provider。** `bin/superaicore api:status` 对所有有 API-key env 的 provider 做 5s cURL 探测;`--all` 覆盖全部 DEFAULT_PROVIDERS、`--json` 输出给 dashboard。auth 被拒(HTTP 401/403)、网络超时、key 未配,三种情况每个都有独立的 `reason`。
 
+4. **弱模型 agent-spawn 加固自动生效。** 用 `AgentSpawn\Pipeline`(包括所有 `TaskRunner` + `spawn_plan_dir` 的宿主)的 caller 升级后零改动拿到五层防御:宿主端 `task_prompt` guard 注入(CJK 检测自动分中英文)、canonical ASCII `output_subdir`、fanout 前清早产 consolidator 文件、fanout 后 contract 审计、语言感知的 consolidation prompt(禁止自创错误文件名)。两个副作用值得注意:
+   - 每个 agent 的 `run.log` / 提示词 / 执行脚本现在写到 `$TMPDIR/superaicore-spawn-<date>-<hex>/<agent>/`,而不是 `$outputRoot/<agent>/`。用户可见输出目录只放真交付物(`.md` / `.csv` / `.png`)。宿主里有 glob `$outputRoot/<agent>/run.log` 的地方需要更新路径。
+   - `Orchestrator::run()` 返回的每行 report 现在可能带 `warnings[]`。只读 `exit` / `log` / `duration_ms` / `error` 的旧调用方源码兼容(key 在 PHPDoc 里标了 optional)。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

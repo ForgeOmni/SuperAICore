@@ -389,6 +389,10 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 3. **Debug API providers with one command.** `bin/superaicore api:status` probes every provider whose API-key env var is set (5s cURL per); `--all` widens to every DEFAULT_PROVIDERS entry, `--json` emits structured output for dashboards. Distinguishes auth-rejected (HTTP 401/403), network timeout, and missing key each with a distinct `reason`.
 
+4. **Weak-model agent-spawn hardening is automatic.** Hosts using `AgentSpawn\Pipeline` (including everyone on `TaskRunner` with `spawn_plan_dir`) pick up five additional defences on upgrade with zero code change: host-injected per-agent guard clauses in every `task_prompt` (language-aware via CJK detection), canonical ASCII `output_subdir`, pre-fanout cleanup of premature consolidator-reserved files, post-fanout contract audit, and a language-aware consolidation prompt that forbids fabricated error-filenames. Two side-effects worth knowing:
+   - Per-agent `run.log` / prompt / exec script now write to `$TMPDIR/superaicore-spawn-<date>-<hex>/<agent>/` instead of `$outputRoot/<agent>/`. The user-facing output dir only holds real deliverables (`.md` / `.csv` / `.png`). Update any host tooling that previously globbed `$outputRoot/<agent>/run.log` — the path moved.
+   - `Orchestrator::run()` now returns `report[N].warnings[]` on each entry. Existing callers that only read `exit` / `log` / `duration_ms` / `error` stay source-compatible (the key is optional per the PHPDoc).
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.
