@@ -125,6 +125,16 @@ class SuperAICoreServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
         $this->loadTranslationsFrom(__DIR__ . '/../resources/lang', 'super-ai-core');
 
+        // Register artisan commands. Historically these lived only on the
+        // standalone `bin/superaicore` console — keep the set narrow here so
+        // we don't leak every internal Symfony command into `php artisan`.
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                \SuperAICore\Console\Commands\ClaudeMcpSyncCommand::class,
+                \SuperAICore\Console\Commands\McpSyncBackendsCommand::class,
+            ]);
+        }
+
         if (config('super-ai-core.views_enabled', true)) {
             $this->loadViewsFrom(__DIR__ . '/../resources/views', 'super-ai-core');
         }

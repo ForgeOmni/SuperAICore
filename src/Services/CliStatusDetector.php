@@ -97,6 +97,27 @@ class CliStatusDetector
         }
     }
 
+    /**
+     * Run a short CLI probe and return trimmed stdout, or null if the binary
+     * times out, crashes, or prints nothing. Never throws — status probes must
+     * not surface failures to callers, since `cli:status` and `/providers` are
+     * called from request paths that assume the detector is infallible.
+     *
+     * @param array<string,string> $env
+     */
+    protected static function safeProbeOutput(string $command, array $env, int $timeoutSeconds): ?string
+    {
+        $p = Process::fromShellCommandline($command, null, $env);
+        $p->setTimeout($timeoutSeconds);
+        try {
+            $p->run();
+        } catch (\Throwable) {
+            return null;
+        }
+        $out = trim($p->getOutput());
+        return $out === '' ? null : $out;
+    }
+
     protected static function detectBinary(string $binary): array
     {
         $path = self::findPath($binary);
@@ -111,10 +132,7 @@ class CliStatusDetector
         }
 
         $env = self::childEnv();
-        $versionProcess = Process::fromShellCommandline("\"{$path}\" --version 2>/dev/null", null, $env);
-        $versionProcess->setTimeout(5);
-        $versionProcess->run();
-        $version = trim($versionProcess->getOutput()) ?: null;
+        $version = self::safeProbeOutput("\"{$path}\" --version 2>/dev/null", $env, 5);
 
         $auth = self::detectAuth($binary, $path);
 
@@ -188,18 +206,12 @@ class CliStatusDetector
     {
         $env = self::childEnv();
         if ($binary === 'claude') {
-            $p = Process::fromShellCommandline("\"{$path}\" auth status 2>/dev/null", null, $env);
-            $p->setTimeout(5);
-            $p->run();
-            $out = trim($p->getOutput());
+            $out = self::safeProbeOutput("\"{$path}\" auth status 2>/dev/null", $env, 5) ?? '';
             $decoded = json_decode($out, true);
             return is_array($decoded) ? $decoded : null;
         }
         if ($binary === 'codex') {
-            $p = Process::fromShellCommandline("\"{$path}\" login status 2>&1", null, $env);
-            $p->setTimeout(5);
-            $p->run();
-            $out = trim($p->getOutput());
+            $out = self::safeProbeOutput("\"{$path}\" login status 2>&1", $env, 5) ?? '';
             $normalized = strtolower($out);
             return [
                 'loggedIn' => str_contains($normalized, 'logged in'),
