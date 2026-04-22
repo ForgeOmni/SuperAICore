@@ -13,6 +13,7 @@ use SuperAICore\Console\Commands\CopilotFleetCommand;
 use SuperAICore\Console\Commands\CopilotSyncCommand;
 use SuperAICore\Console\Commands\CopilotSyncHooksCommand;
 use SuperAICore\Console\Commands\GeminiSyncCommand;
+use SuperAICore\Console\Commands\KimiSyncCommand;
 use SuperAICore\Console\Commands\KiroSyncCommand;
 use SuperAICore\Console\Commands\McpSyncBackendsCommand;
 use SuperAICore\Console\Commands\ListBackendsCommand;
@@ -43,6 +44,7 @@ class Application extends SymfonyApplication
         $this->add(new CopilotFleetCommand());
         $this->add(new CopilotSyncHooksCommand());
         $this->add(new KiroSyncCommand());
+        $this->add(new KimiSyncCommand());
         $this->add(new ClaudeMcpSyncCommand());
         $this->add(new McpSyncBackendsCommand());
         $this->add(new CliStatusCommand());

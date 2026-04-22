@@ -9,7 +9,7 @@ use SuperAICore\Support\ProviderTypeDescriptor;
 
 final class ProviderTypeRegistryTest extends TestCase
 {
-    public function test_bundles_all_nine_provider_types(): void
+    public function test_bundles_all_bundled_provider_types(): void
     {
         $registry = new ProviderTypeRegistry();
         $types = array_keys($registry->all());
@@ -22,6 +22,7 @@ final class ProviderTypeRegistryTest extends TestCase
             AiProvider::TYPE_BUILTIN,
             AiProvider::TYPE_GOOGLE_AI,
             AiProvider::TYPE_KIRO_API,
+            AiProvider::TYPE_MOONSHOT_BUILTIN,
             AiProvider::TYPE_OPENAI,
             AiProvider::TYPE_OPENAI_COMPATIBLE,
             AiProvider::TYPE_VERTEX,

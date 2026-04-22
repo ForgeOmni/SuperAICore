@@ -24,9 +24,14 @@ final class CliInstaller
     public const SOURCE_NPM    = 'npm';
     public const SOURCE_BREW   = 'brew';
     public const SOURCE_SCRIPT = 'script';
+    // Kimi CLI is distributed as a Python package — not on npm or brew.
+    // Preferred install is `uv tool install` (fast, PEP 668-safe); pip
+    // with `--user` stays as a fallback for hosts without uv.
+    public const SOURCE_UV     = 'uv';
+    public const SOURCE_PIP    = 'pip';
 
     /** Backends we know how to install. Superagent is intentionally absent. */
-    public const INSTALLABLE_BACKENDS = ['claude', 'codex', 'gemini', 'copilot'];
+    public const INSTALLABLE_BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'kimi'];
 
     /**
      * Install-command matrix. Each backend maps to a list of `{source, argv}`
@@ -51,6 +56,10 @@ final class CliInstaller
             ],
             'copilot' => [
                 ['source' => self::SOURCE_NPM, 'argv' => ['npm', 'install', '-g', '@github/copilot']],
+            ],
+            'kimi' => [
+                ['source' => self::SOURCE_UV,  'argv' => ['uv', 'tool', 'install', 'kimi-cli']],
+                ['source' => self::SOURCE_PIP, 'argv' => ['pip', 'install', '--user', 'kimi-cli'], 'note' => 'fallback when uv unavailable'],
             ],
         ];
     }
@@ -83,6 +92,8 @@ final class CliInstaller
             self::SOURCE_NPM    => 'npm',
             self::SOURCE_BREW   => 'brew',
             self::SOURCE_SCRIPT => 'sh',
+            self::SOURCE_UV     => 'uv',
+            self::SOURCE_PIP    => 'pip',
             default             => null,
         };
         if ($binary === null) return false;

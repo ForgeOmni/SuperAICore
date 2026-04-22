@@ -88,6 +88,32 @@ return [
             // that pre-populate approvals via `--trust-tools=<categories>`.
             'trust_all_tools' => (bool) env('AI_CORE_KIRO_TRUST_ALL_TOOLS', true),
         ],
+        'kimi_cli' => [
+            'enabled' => env('AI_CORE_KIMI_CLI_ENABLED', true),
+            'binary' => env('KIMI_CLI_BIN', 'kimi'),
+            'timeout' => 300,
+            // Kimi's agentic loop is capped at max_steps_per_turn (defaults
+            // to 500 in ~/.kimi/config.toml). Override here when the host
+            // wants a tighter budget for cost control, or higher for long
+            // -running tasks — Kimi's K2.6 ramp targets 4000 steps but
+            // needs the SDK, not this CLI, for that scale.
+            'max_steps_per_turn' => (int) env('AI_CORE_KIMI_MAX_STEPS_PER_TURN', 500),
+            // Agent-team routing toggle (see docs/kimi-cli-backend.md §3.4):
+            //   true  — (a) default: let Kimi drive its own `Agent` tool
+            //           fanout. Host `AgentSpawn\Pipeline` fast-exits.
+            //   false — (b) opt-in: route through our three-phase Pipeline
+            //           so 0.6.8 weak-model hardening applies (guard
+            //           injection, canonical output_subdir, post-fanout
+            //           audit, language-aware consolidation). Needed for
+            //           per-child stream observability (Kimi's stream-json
+            //           hides SubagentEvent) or workloads exceeding the
+            //           500-step per-turn cap.
+            'use_native_agents' => filter_var(
+                env('AI_CORE_KIMI_USE_NATIVE_AGENTS', true),
+                FILTER_VALIDATE_BOOLEAN,
+                FILTER_NULL_ON_FAILURE,
+            ) ?? true,
+        ],
         'gemini_api' => [
             'enabled' => env('AI_CORE_GEMINI_API_ENABLED', true),
             'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com'),

@@ -21,7 +21,7 @@ class CliStatusDetector
      * by `resolveBackends()` so `cli:status` / `/providers` pick them up
      * without this const being rewritten.
      */
-    const BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'superagent'];
+    const BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'superagent'];
 
     public static function all(): array
     {
@@ -42,7 +42,7 @@ class CliStatusDetector
         // (host-registered CLI engines) must live in the catalog with
         // `is_cli: true` + a `cli_binary` to be probed; anything else is
         // reported as not-installed so the cli:status row still renders.
-        if (in_array($backend, ['claude', 'codex', 'gemini', 'copilot'], true)) {
+        if (in_array($backend, ['claude', 'codex', 'gemini', 'copilot', 'kimi'], true)) {
             return self::detectBinary($backend);
         }
         $engine = self::catalogEngine($backend);
@@ -225,6 +225,24 @@ class CliStatusDetector
             // order as SuperAgent\Auth\GeminiCliCredentials so the two stay in
             // sync. Falls back to env-var API keys when no file is present.
             return self::detectGeminiAuth($env);
+        }
+        if ($binary === 'kimi') {
+            // Kimi CLI has no `auth status` subcommand — `kimi login`
+            // writes the OAuth token to ~/.kimi/credentials/kimi-code.json.
+            // The file is 0600 and its mere presence (+ non-zero size)
+            // is sufficient for the logged-in signal. The `work_dirs`
+            // tracker in ~/.kimi/kimi.json is orthogonal and does NOT
+            // indicate auth — it persists even after `kimi logout`.
+            $home = self::resolvedHome();
+            $credFile = $home ? $home . '/.kimi/credentials/kimi-code.json' : '';
+            $loggedIn = $credFile !== ''
+                && is_file($credFile)
+                && @filesize($credFile) > 0;
+            return [
+                'loggedIn' => $loggedIn,
+                'status'   => $loggedIn ? 'oauth-credential-present' : 'not-logged-in',
+                'method'   => $loggedIn ? 'oauth' : null,
+            ];
         }
         if ($binary === 'copilot') {
             // Copilot has no first-class `auth status` — keychain/token state lives

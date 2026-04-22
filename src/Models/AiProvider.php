@@ -34,7 +34,8 @@ class AiProvider extends Model
     const BACKEND_GEMINI     = 'gemini';
     const BACKEND_COPILOT    = 'copilot';
     const BACKEND_KIRO       = 'kiro';
-    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT, self::BACKEND_KIRO];
+    const BACKEND_KIMI       = 'kimi';
+    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT, self::BACKEND_KIRO, self::BACKEND_KIMI];
 
     const TYPE_BUILTIN           = 'builtin';
     const TYPE_ANTHROPIC         = 'anthropic';
@@ -48,6 +49,11 @@ class AiProvider extends Model
     // KIRO_API_KEY at spawn time; presence of the env var makes kiro-cli
     // skip its browser-login flow. Requires a Kiro Pro / Pro+ / Power plan.
     const TYPE_KIRO_API          = 'kiro-api';
+    // Kimi CLI's OAuth-subscription channel. `kimi login` (browser OAuth)
+    // owns the token; SuperAICore only reads the state in ~/.kimi/. Distinct
+    // from the BYO-API-key Moonshot path, which routes through the
+    // superagent backend (SDK's KimiProvider) against api.moonshot.ai.
+    const TYPE_MOONSHOT_BUILTIN  = 'moonshot-builtin';
 
     const TYPES = [
         self::TYPE_BUILTIN           => 'builtin',
@@ -59,6 +65,7 @@ class AiProvider extends Model
         self::TYPE_OPENAI_COMPATIBLE => 'openai-compatible',
         self::TYPE_GOOGLE_AI         => 'google-ai',
         self::TYPE_KIRO_API          => 'kiro-api',
+        self::TYPE_MOONSHOT_BUILTIN  => 'moonshot-builtin',
     ];
 
     /**
@@ -102,6 +109,13 @@ class AiProvider extends Model
         self::BACKEND_KIRO => [
             self::TYPE_BUILTIN,    // kiro-cli login already completed on host
             self::TYPE_KIRO_API,   // DB-stored KIRO_API_KEY injected at spawn
+        ],
+        self::BACKEND_KIMI => [
+            // `kimi login` completed on host; ~/.kimi/ holds OAuth state.
+            // No API-key channel here — direct-HTTP BYO-key usage routes
+            // through the superagent backend via SDK's KimiProvider, not
+            // through this CLI.
+            self::TYPE_MOONSHOT_BUILTIN,
         ],
     ];
 

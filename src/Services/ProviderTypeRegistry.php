@@ -117,6 +117,19 @@ class ProviderTypeRegistry
                 // builtin relies on the CLI's own keychain/session — no env injection.
             ],
 
+            AiProvider::TYPE_MOONSHOT_BUILTIN => [
+                'icon'             => 'bi-moon-stars',
+                'fields'           => [],
+                'default_backend'  => AiProvider::BACKEND_KIMI,
+                // Only `kimi_cli` consumes this type — direct-HTTP BYO-key
+                // Moonshot access routes through the superagent backend via
+                // SDK's KimiProvider under separate provider types.
+                'allowed_backends' => [AiProvider::BACKEND_KIMI],
+                'needs_api_key'    => false,
+                'needs_base_url'   => false,
+                // `kimi login` OAuth writes to ~/.kimi/; no env injection.
+            ],
+
             AiProvider::TYPE_ANTHROPIC => [
                 'icon'             => 'bi-key',
                 'fields'           => ['api_key'],

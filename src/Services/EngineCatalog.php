@@ -463,6 +463,44 @@ class EngineCatalog
                     defaultFlags:     ['--allow-all-tools'],
                 ),
             ],
+            'kimi' => [
+                'label'               => 'Kimi Code',
+                'icon'                => 'moon-stars',
+                'dispatcher_backends' => ['kimi_cli'],
+                'is_cli'              => true,
+                'cli_binary'          => 'kimi',
+                // Kimi routes server-side via `kimi login` OAuth. Default
+                // model identifier follows the `<namespace>/<name>` shape
+                // the CLI uses in `~/.kimi/config.toml` (display_name in
+                // the user UI is "Kimi-k2.6" but `--model` takes the full
+                // namespaced slug). Leaving `--model` unset in the
+                // command line and relying on config's own default is
+                // equivalent — the seed value here just drives the
+                // engine-info readout on `/providers`.
+                'default_model'       => 'kimi-code/kimi-for-coding',
+                // Subscription-billed like Copilot / Kiro — usage rows
+                // emit $0 and the dashboard surfaces shadow cost from
+                // ModelCatalog pricing instead. Kimi's stream-json
+                // output format does NOT expose token counts, so shadow
+                // cost will read as $0 until MVP-2 adds a char-count
+                // estimator.
+                'billing_model'       => 'subscription',
+                'available_models'    => [
+                    'kimi-code/kimi-for-coding',
+                ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'kimi',
+                    versionArgs:      ['--version'],
+                    // `kimi login` / `kimi logout` manage auth; the state
+                    // lives in ~/.kimi/ — CliStatusDetector probes the
+                    // directory rather than invoking a subcommand. Leaving
+                    // authStatusArgs null skips the default probe.
+                    authStatusArgs:   null,
+                    promptFlag:       '--print',
+                    outputFormatFlag: '--output-format=stream-json',
+                    modelFlag:        '--model',
+                ),
+            ],
             'superagent' => [
                 'label'               => 'SuperAgent SDK',
                 'icon'                => 'cpu',

@@ -11,10 +11,26 @@ final class CliInstallerTest extends TestCase
     {
         $matrix = CliInstaller::sources();
 
+        // Default source varies per backend — most use npm, but Kimi ships
+        // as a Python package on PyPI so its default is `uv tool install`
+        // (with pip as a fallback). Keep the map explicit so a future
+        // distribution-channel change surfaces as a test failure instead
+        // of silently re-defaulting.
+        $expectedDefault = [
+            'claude'  => CliInstaller::SOURCE_NPM,
+            'codex'   => CliInstaller::SOURCE_NPM,
+            'gemini'  => CliInstaller::SOURCE_NPM,
+            'copilot' => CliInstaller::SOURCE_NPM,
+            'kimi'    => CliInstaller::SOURCE_UV,
+        ];
         foreach (CliInstaller::INSTALLABLE_BACKENDS as $b) {
             $this->assertArrayHasKey($b, $matrix, "missing source entry for {$b}");
             $this->assertNotEmpty($matrix[$b], "empty source list for {$b}");
-            $this->assertSame(CliInstaller::SOURCE_NPM, $matrix[$b][0]['source'], "npm should be the default source for {$b}");
+            $this->assertSame(
+                $expectedDefault[$b] ?? CliInstaller::SOURCE_NPM,
+                $matrix[$b][0]['source'],
+                "unexpected default source for {$b}",
+            );
         }
     }
 
