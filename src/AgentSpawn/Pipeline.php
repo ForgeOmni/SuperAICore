@@ -143,6 +143,20 @@ class Pipeline
         $succeeded = count(array_filter($report, static fn ($r) => ($r['exit'] ?? 1) === 0));
         $this->log('info', "Pipeline: fanout complete — {$succeeded}/" . count($report) . ' agents exit 0');
 
+        // Bubble up the Orchestrator's post-fanout audit warnings (weak-model
+        // contract violations: non-whitelisted extensions, sibling-role
+        // sub-directories, consolidator-reserved filenames). Surface to the
+        // operator via laravel.log so regressions are visible without opening
+        // per-agent run.log files in $TMPDIR.
+        foreach ($report as $r) {
+            $ws = $r['warnings'] ?? [];
+            if (!$ws) continue;
+            $name = (string) ($r['name'] ?? '?');
+            foreach ($ws as $w) {
+                $this->log('warning', "Pipeline: audit [{$name}] — {$w}");
+            }
+        }
+
         // Phase 3 — consolidation re-call against the same backend
         $consolidationPrompt = $capability->consolidationPrompt($plan, $report, $outputDir);
 
@@ -203,6 +217,15 @@ class Pipeline
         // the consolidation result (the user-facing answer).
         $consolidationText = (string) ($consolidationResult['text'] ?? '');
         $exitCode = (int) ($consolidationResult['exit_code'] ?? 0);
+
+        // The plan file is an internal mechanism, not a deliverable. Once
+        // consolidation has run we no longer need it — remove so it doesn't
+        // clutter the output dir the founder browses. Retained on failure
+        // paths above (consolidation null, or fanout exceptions) to aid
+        // post-mortem debugging.
+        if ($exitCode === 0 && $consolidationText !== '') {
+            @unlink($planPath);
+        }
 
         return new TaskResultEnvelope(
             success:        $exitCode === 0 && $consolidationText !== '',

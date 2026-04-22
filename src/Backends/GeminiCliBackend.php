@@ -199,7 +199,25 @@ class GeminiCliBackend implements Backend, StreamingBackend
     public function parseJson(string $output): ?array
     {
         $output = trim($output);
-        if ($output === '' || $output[0] !== '{') return null;
+        if ($output === '') return null;
+
+        // Gemini CLI prepends preamble noise to stdout before the JSON blob
+        // depending on flags and environment. Observed prefixes: "YOLO mode
+        // is enabled. All tool calls will be automatically approved." (often
+        // twice), "MCP issues detected. Run /mcp list for status.", deprecation
+        // warnings, etc. These may or may not have a trailing newline before
+        // the JSON opening brace. A strict `$output[0] !== '{'` check dropped
+        // the whole result (→ text='' → TaskRunner flagged success=false →
+        // Pipeline's spawn-plan handoff was skipped while _spawn_plan.json
+        // sat orphaned in the output dir — see RUN 65, 2026-04-22). Locate
+        // the first `{` and decode from there; json_decode itself rejects
+        // the case where the `{` is inside a preamble sentence rather than
+        // starting a real object.
+        if ($output[0] !== '{') {
+            $start = strpos($output, '{');
+            if ($start === false) return null;
+            $output = substr($output, $start);
+        }
 
         $data = json_decode($output, true);
         if (!is_array($data) || !isset($data['response'])) return null;

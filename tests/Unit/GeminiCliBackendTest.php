@@ -107,4 +107,52 @@ final class GeminiCliBackendTest extends TestCase
         $backend = new GeminiCliBackend(binary: '__definitely_not_a_real_binary__');
         $this->assertFalse($backend->isAvailable());
     }
+
+    /**
+     * Regression for RUN 65 (2026-04-22): Gemini CLI emits preamble lines
+     * before the JSON blob — "YOLO mode is enabled..." (often twice),
+     * "MCP issues detected. Run /mcp list for status.", deprecation
+     * warnings, etc. Before the fix, the strict `$output[0] !== '{'` guard
+     * treated the whole payload as un-parseable, TaskRunner saw text='' →
+     * success=false, Pipeline skipped the spawn-plan handoff, and the DB
+     * row ended up "error / Exit code: 0" with _spawn_plan.json orphaned.
+     *
+     * Fix: skip any prefix until the first '{' and let json_decode judge.
+     */
+    public function test_parses_through_gemini_yolo_preamble_noise(): void
+    {
+        $backend = new GeminiCliBackend();
+
+        $json = json_encode([
+            'session_id' => 's1',
+            'response'   => 'Plan emitted: 4 agents.',
+            'stats'      => [
+                'models' => [
+                    'gemini-2.5-flash' => [
+                        'tokens' => ['prompt' => 55506, 'candidates' => 2320, 'cached' => 25776, 'thoughts' => 331],
+                        'roles'  => ['main' => ['totalRequests' => 2]],
+                    ],
+                ],
+            ],
+        ]);
+
+        $noisy = "YOLO mode is enabled. All tool calls will be automatically approved.\n"
+               . "YOLO mode is enabled. All tool calls will be automatically approved.\n"
+               . "MCP issues detected. Run /mcp list for status." . $json;
+
+        $parsed = $backend->parseJson($noisy);
+
+        $this->assertNotNull($parsed);
+        $this->assertSame('Plan emitted: 4 agents.', $parsed['text']);
+        $this->assertSame('gemini-2.5-flash', $parsed['model']);
+        $this->assertSame(55506, $parsed['input_tokens']);
+    }
+
+    public function test_returns_null_when_brace_is_inside_noise_but_no_real_object(): void
+    {
+        $backend = new GeminiCliBackend();
+        // A lone `{` inside a preamble sentence — json_decode will fail,
+        // parseJson must return null rather than throwing or looping.
+        $this->assertNull($backend->parseJson('Warning: { preamble-with-brace } that is not valid.'));
+    }
 }

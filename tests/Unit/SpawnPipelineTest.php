@@ -243,8 +243,14 @@ final class SpawnPipelineTest extends TestCase
             $pipeline->maybeRun('codex_cli', $this->tmpDir, $this->okEnvelope('first'));
 
             $canonical = $this->tmpDir . '/_spawn_plan.json';
-            $this->assertFileExists($canonical, 'plan should have been moved into outputDir');
+            // The rogue file must have been MOVED away (not merely copied) —
+            // the canonical location is where Pipeline then consumes it.
             $this->assertFileDoesNotExist($rogueLocation, 'plan should no longer be at the rogue location');
+            // After successful consolidation (our mock dispatcher returned
+            // text:'ok', exit_code:0), Pipeline deletes the canonical file
+            // so the output dir the founder browses doesn't show an internal
+            // mechanism file. Retained on failure paths for post-mortem.
+            $this->assertFileDoesNotExist($canonical, 'plan should be cleaned up after successful consolidation');
         } finally {
             if ($original !== false) chdir($original);
             @unlink($rogueLocation);  // cleanup if still there
