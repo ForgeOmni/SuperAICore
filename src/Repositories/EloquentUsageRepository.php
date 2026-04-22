@@ -7,8 +7,32 @@ use SuperAICore\Models\AiUsageLog;
 
 class EloquentUsageRepository implements UsageRepository
 {
+    /**
+     * Idempotency window — a record() call with an `idempotency_key`
+     * that matches a row written within this many seconds short-circuits
+     * to returning that row's id instead of inserting a duplicate.
+     *
+     * 60s is long enough to absorb host-side accidental double-records
+     * (Dispatcher writing + a host that also calls UsageRecorder for the
+     * same turn) but short enough that two genuinely separate runs that
+     * happen to share a key don't get falsely deduped.
+     */
+    public const IDEMPOTENCY_WINDOW_SECONDS = 60;
+
     public function record(array $data): int
     {
+        $key = $data['idempotency_key'] ?? null;
+        if ($key !== null && $key !== '') {
+            $existing = AiUsageLog::query()
+                ->where('idempotency_key', $key)
+                ->where('created_at', '>=', now()->subSeconds(self::IDEMPOTENCY_WINDOW_SECONDS))
+                ->orderByDesc('created_at')
+                ->value('id');
+            if ($existing !== null) {
+                return (int) $existing;
+            }
+        }
+
         return AiUsageLog::create($data)->id;
     }
 

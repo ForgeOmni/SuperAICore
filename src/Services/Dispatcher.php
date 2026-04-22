@@ -137,9 +137,25 @@ class Dispatcher
         $result['billing_model'] = $billingModel;
         $result['duration_ms'] = $durationMs;
 
-        // Record usage
+        // Record usage. Surfacing the inserted row id on the result lets
+        // downstream callers (notably TaskRunner) attach the id to their
+        // own envelope without re-querying — handy for "patch this row
+        // with extra metadata once Phase C consolidation finishes" flows
+        // and for skipping double-record on hosts that still call
+        // UsageRecorder themselves.
+        //
+        // Phase D: also auto-generate an idempotency_key when caller
+        // didn't supply one. The key is derived from `external_label`
+        // (typically `task:42` or `ppt:job:7:strategist` — stable
+        // across the duplicate dispatches that come from a host's
+        // accidental double-record). Hosts that want stronger
+        // guarantees pass `idempotency_key` explicitly. Hosts that
+        // want NO dedup (rare — every call legitimately distinct) can
+        // pass `idempotency_key => false` to skip auto-gen.
         if ($this->usage) {
-            $this->usage->record([
+            $idempotencyKey = $this->resolveIdempotencyKey($options, $backend->name());
+
+            $usageLogId = $this->usage->record([
                 'backend' => $backend->name(),
                 'provider_id' => $providerId,
                 'service_id' => $serviceId,
@@ -159,10 +175,41 @@ class Dispatcher
                     'cache_write_tokens'   => $cacheWriteTokens ?: null,
                     'cost_source'          => isset($usage['total_cost_usd']) ? 'cli_envelope' : 'calculator',
                 ]) ?: null,
+                'idempotency_key' => $idempotencyKey,
             ]);
+            if ($usageLogId !== null) {
+                $result['usage_log_id'] = $usageLogId;
+            }
         }
 
         return $result;
+    }
+
+    /**
+     * Pick or build an idempotency key for this dispatch.
+     *
+     * Precedence:
+     *   1. Explicit `options['idempotency_key']` — caller knows best
+     *      (e.g. their internal job id). `false` opts out of auto-gen.
+     *   2. Auto-derived from `external_label` when present:
+     *      `{backend}:{external_label}` — stable across the duplicate
+     *      dispatches that come from a host's accidental double-record,
+     *      distinct across legitimately separate runs (each task has
+     *      its own external_label).
+     *   3. Otherwise null — no dedup, every record() inserts a row.
+     */
+    protected function resolveIdempotencyKey(array $options, string $backendName): ?string
+    {
+        if (array_key_exists('idempotency_key', $options)) {
+            $explicit = $options['idempotency_key'];
+            if ($explicit === false) return null;          // opt-out
+            if ($explicit === null || $explicit === '') return null;
+            return mb_substr((string) $explicit, 0, 80);
+        }
+
+        $label = $options['external_label'] ?? null;
+        if ($label === null || $label === '') return null;
+        return mb_substr($backendName . ':' . $label, 0, 80);
     }
 
     /**

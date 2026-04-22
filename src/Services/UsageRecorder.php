@@ -63,6 +63,13 @@ class UsageRecorder
      *   cost_usd?: ?float,        override — skip calculator (authoritative
      *                              when the CLI reported total_cost_usd)
      *   shadow_cost_usd?: ?float, override — skip calculator
+     *   idempotency_key?: ?string, when set, repository returns the id of an
+     *                              existing row written within
+     *                              IDEMPOTENCY_WINDOW_SECONDS (default 60)
+     *                              instead of inserting a duplicate. Hosts
+     *                              that double-record (Dispatcher + their
+     *                              own UsageRecorder call for the same turn)
+     *                              stop double-counting without a code change.
      * } $data
      */
     public function record(array $data): ?int
@@ -123,6 +130,7 @@ class UsageRecorder
             'duration_ms'     => $data['duration_ms'] ?? null,
             'user_id'         => $data['user_id'] ?? null,
             'metadata'        => $metadata ?: null,
+            'idempotency_key' => $data['idempotency_key'] ?? null,
         ]);
     }
 }

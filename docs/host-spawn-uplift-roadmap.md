@@ -1,6 +1,6 @@
 # Roadmap — Lift Host Spawn Path Upstream
 
-**Status:** Phase A complete (2026-04-21) — see Unreleased CHANGELOG entry. B / C / D / E pending.
+**Status:** Phases A + B + C + D + E shipped in **v0.6.6** (2026-04-21). **Note:** Phase E shipped pre-soak by maintainer's choice (see `docs/api-stability.md` "pre-soak caveat" section).
 **Driver:** SuperTeam currently maintains ~700 lines of CLI-spawn / log-tee /
 spawn-plan / usage-extract logic that should live in SuperAICore so every
 host (SuperTeam, Shopify Autopilot, future hosts) inherits the same
@@ -419,7 +419,28 @@ When a phase lands, append a one-liner here so future maintainers can
 see at a glance what's done — version is whatever the maintainer chose
 for that release:
 
-- 2026-04-21 — Phase A code-complete, sitting in `[Unreleased]` CHANGELOG.
+- 2026-04-21 — Phase A code-complete, shipped in v0.6.6.
   StreamingBackend interface + TeeLogger + StreamableProcess trait + 5
   CLI `stream()` impls + Dispatcher `stream:true` flag + 22 new tests.
-  Awaiting maintainer to pick a version and tag.
+- 2026-04-21 — Phase B code-complete, folded into the same v0.6.6
+  release. TaskRunner + TaskResultEnvelope + Dispatcher `usage_log_id`
+  surface + 15 new tests. Hosts now have one-call execution; spawn-plan
+  hook stubbed for Phase C activation. Suite 276 → 313.
+- 2026-04-21 — Phase C code-complete, folded into the same v0.6.6
+  release. AgentSpawn\Pipeline + SpawnConsolidationPrompt +
+  BackendCapabilities::spawnPreamble/consolidationPrompt + TaskRunner→
+  Pipeline activation + 24 new tests (Orchestrator stubbed for hermetic
+  unit testing). Hosts can now delete ~150 lines of spawn-plan glue.
+  Suite 313 → 337.
+- 2026-04-21 — Phase D code-complete, folded into the same v0.6.6
+  release. Migration (idempotency_key column + composite index) +
+  EloquentUsageRepository 60s dedup window + UsageRecorder threading +
+  Dispatcher auto-key from external_label + 10 new tests. Hosts that
+  double-record the same turn now auto-collapse to one row with zero
+  code change. Suite 337 → 347.
+- 2026-04-21 — Phase E code-complete, folded into the same v0.6.6
+  release. docs/api-stability.md (formal SemVer contract) +
+  BackendCapabilitiesDefaults trait (forward-compat for future
+  interface additions) + README.md TaskRunner promotion + 2 new tests.
+  Maintainer chose to declare stability pre-soak; pre-soak caveat
+  recorded in api-stability.md. Suite 347 → 349.

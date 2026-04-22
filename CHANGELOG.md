@@ -4,11 +4,94 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.6] — 2026-04-21
 
-Phase A of the **host-spawn-uplift** roadmap (`docs/host-spawn-uplift-roadmap.md`) — lifts live-streaming CLI execution from each downstream host into SuperAICore so every CLI benefits, not just the three the host currently spawns. Hosts that want to stay on `generate()` are unaffected; the new `stream()` path is purely additive.
+Bundles all five phases of the **host-spawn-uplift** roadmap (`docs/host-spawn-uplift-roadmap.md`) in one release: live-streaming CLI execution (Phase A), one-call task orchestration (Phase B), three-phase spawn-plan emulation (Phase C), `ai_usage_logs` idempotency (Phase D), and a formal SemVer contract freeze (Phase E). Hosts that want to stay on `Backend::generate()` are unaffected — every new path is purely additive. The one technical interface addition (`BackendCapabilities::spawnPreamble` + `consolidationPrompt` from Phase C) is shielded for downstream extenders by the new `Capabilities\Concerns\BackendCapabilitiesDefaults` trait shipped in Phase E.
 
-### Added
+**Migration required:** `php artisan migrate` adds the nullable `idempotency_key` column + composite index for Phase D. No config changes. No host code changes — existing call sites keep working.
+
+### Added — Phase E (API stability + forward-compat trait)
+
+**`docs/api-stability.md` — formal SemVer contract**
+- Lists every API now considered stable: `Contracts\StreamingBackend`, `Support\TeeLogger`, `Backends\Concerns\StreamableProcess`, `Runner\TaskRunner`, `Runner\TaskResultEnvelope`, `AgentSpawn\Pipeline`, `Contracts\BackendCapabilities` (with the trait below for future-proofing), `Capabilities\SpawnConsolidationPrompt::build()` (signature only — prompt text remains tunable), `Services\Dispatcher::dispatch()` option keys + return shape, `Services\UsageRecorder::record()` shape, `Services\EloquentUsageRepository::IDEMPOTENCY_WINDOW_SECONDS`, and `Models\AiUsageLog` columns.
+- Documents the deprecation policy: deprecated APIs ship in minor release N with a pointer to the replacement, coexist for at least two minor releases (N+1, N+2), and only get removed at the next major.
+- Lists what's intentionally NOT stable so hosts know which surfaces they can lean on and which to avoid: concrete CLI backend internals, `Runner\AgentRunner` family (older API), `AgentSpawn\Orchestrator` direct usage, `AgentSpawn\ChildRunner` interface, Blade views, CLI command output formats, internal index/column types.
+- Includes a **pre-soak caveat** documenting that the maintainer chose to declare stability before the originally-planned production-soak window. If a Phase A/B/C/D bug forces a backward-incompatible fix, the maintainer will bump major rather than retroactively rewrite history.
+
+**`Capabilities\Concerns\BackendCapabilitiesDefaults` — forward-compat trait**
+- New trait providing no-op default implementations of any `BackendCapabilities` methods added after the Phase E freeze (currently `spawnPreamble()` and `consolidationPrompt()` from Phase C, both returning `''`).
+- Hosts implementing custom `BackendCapabilities` should `use BackendCapabilitiesDefaults;` to inherit safe defaults for any method SuperAICore adds in future minor releases — the host class stays satisfying the interface without adding the new method itself. Bundled `*Capabilities` classes do NOT use the trait (they provide real implementations); it exists exclusively for downstream extension safety.
+- Maintainer commitment: when SuperAICore adds another `BackendCapabilities` method in a future release, a no-op default lands in this trait in the SAME release so hosts that adopted the trait get safe semantics for free.
+
+**README.md — `TaskRunner` promoted to recommended entry point**
+- New "PHP quick start" section leads with a realistic `TaskRunner::run()` example showing log-file tee, MCP injection, spawn-plan handoff, idempotency-via-external_label, and live `onChunk` UI updates. The previous one-shot `Dispatcher::dispatch()` example moves below it as the "short call" path for non-task workloads (test connections, vision routing, embeddings).
+- Cross-links to the four phase docs (`task-runner-quickstart.md`, `streaming-backends.md`, `spawn-plan-protocol.md`, `idempotency.md`) plus the new `api-stability.md`.
+
+### Added — Phase D (idempotency_key + 60s dedup window)
+
+**Migration: `ai_usage_logs.idempotency_key VARCHAR(80) NULL`**
+- New migration `2026_04_21_000002_add_idempotency_key_to_ai_usage_logs.php` adds the column + a composite index `(idempotency_key, created_at)` covering the "find a matching row in the last N seconds" lookup the repository runs on every record() with a key set. Run `php artisan migrate` after upgrading.
+- Nullable + non-unique by design — old rows + non-keyed callers (test_connection probes, ad-hoc scripts) coexist fine.
+
+**`EloquentUsageRepository::record()` honors `idempotency_key`**
+- When the input data has `idempotency_key` set, the repository checks `ai_usage_logs` for a row with the same key written within `IDEMPOTENCY_WINDOW_SECONDS` (default 60). If found, returns that row's id instead of inserting a duplicate.
+- 60s is long enough to absorb host-side accidental double-records (Dispatcher writing + a host that also calls UsageRecorder for the same turn) but short enough that two genuinely separate runs that happen to share a key don't get falsely deduped.
+- `EloquentUsageRepository::IDEMPOTENCY_WINDOW_SECONDS` is `public const` so callers can read it (e.g. for cleanup window math) without depending on hardcoded literals.
+
+**`UsageRecorder::record()` accepts and forwards `idempotency_key`**
+- Threaded straight through to `UsageTracker → UsageRepository`. Hosts that want explicit dedup control pass their own key (e.g. internal job id, run UUID).
+
+**`Dispatcher::dispatch()` auto-generates `idempotency_key` from `external_label`**
+- New `Dispatcher::resolveIdempotencyKey()` picks the key with this precedence:
+  1. Explicit `options['idempotency_key']` — caller wins. `false` opts out of auto-gen entirely.
+  2. Auto-derived from `options['external_label']` when present: `"{backend}:{external_label}"` — stable across the duplicate dispatches that come from a host's accidental double-record, distinct across legitimately separate runs (each task has its own external_label).
+  3. Otherwise null — no dedup, every record() inserts a row.
+- Truncated to 80 chars to fit the column.
+- This is the load-bearing safety net: hosts that haven't fully migrated to TaskRunner often call both `Dispatcher::dispatch()` AND their own `UsageRecorder::record()` for the same logical turn (PPT ClaudeStreamUsageParser is a known case). After Phase D those duplicate calls auto-collapse to one row without any host code change.
+
+**`AiUsageLog` model: `idempotency_key` added to fillable + property docblock**
+
+### Added — Phase C (AgentSpawn\Pipeline)
+
+**`AgentSpawn\Pipeline` — three-phase spawn-plan orchestration**
+- New service registered as a singleton in `SuperAICoreServiceProvider`. `Pipeline::maybeRun($backend, $outputDir, $firstPass, $options)` detects `_spawn_plan.json` in the output directory after a first-pass run, fans out N child CLI processes via the existing `AgentSpawn\Orchestrator`, then re-invokes the same backend with the consolidation prompt from `BackendCapabilities::consolidationPrompt()` and returns a merged `TaskResultEnvelope` with `spawnReport` populated.
+- Lifts ~150 lines (`maybeRunSpawnPlan` + `runConsolidationPass`) that downstream hosts (SuperTeam, etc.) used to maintain themselves. Once a host upgrades and removes those methods, adding a new CLI that needs spawn-plan emulation requires zero host changes — only an upstream `BackendCapabilities` + `ChildRunner` implementation.
+- Returns null when (a) the first pass failed, (b) no plan file was found, or (c) the backend opts out of the protocol (claude/kiro/copilot/superagent return `''` from `consolidationPrompt`). In each case `TaskRunner` keeps the first-pass envelope unchanged.
+- Plan-file location: checks `$outputDir/_spawn_plan.json` first, then the cwd as fallback. Found-but-misplaced plans are moved to the canonical location before `SpawnPlan::fromFile()` reads them, so subsequent runs don't pick up a stale plan from cwd.
+- Cost / duration merge: when the consolidation pass succeeds, `costUsd` / `shadowCostUsd` / `durationMs` accumulate first pass + consolidation. `summary` is the consolidation text alone (the user-facing answer); `output` is both passes joined by `\n--- consolidation ---\n`.
+- Test seam: optional `$orchestratorFactory` constructor arg lets unit tests stub Phase 2 without spawning real CLI children. Production code defaults to `Orchestrator::forBackend()`.
+
+**`Capabilities\SpawnConsolidationPrompt` — default Phase 3 prompt template**
+- Lifted from SuperTeam's `runConsolidationPass()` so every downstream host produces identical `摘要.md` / `思维导图.md` / `流程图.md` trees regardless of which CLI ran. Used by `CodexCapabilities` + `GeminiCapabilities` `consolidationPrompt()` implementations. Hosts with different filename conventions should NOT extend this class — instead build their own consolidation prompt and feed it directly into `TaskRunner::run()` as a separate dispatch.
+
+**`BackendCapabilities::spawnPreamble()` + `consolidationPrompt()`**
+- Two new interface methods. `CodexCapabilities` + `GeminiCapabilities` return non-empty strings (the `PREAMBLE` constants `transformPrompt()` was already injecting + the consolidation template). `ClaudeCapabilities` (native sub-agents) / `KiroCapabilities` / `CopilotCapabilities` / `SuperAgentCapabilities` return `''` to opt out of the protocol.
+- `transformPrompt()` is unchanged; the new method simply exposes the same preamble text for direct callers (Pipeline, host code that wants to render the preamble separately from the user prompt).
+- **Note for hosts implementing custom `BackendCapabilities`:** this is technically an interface addition and will require those hosts to add the two methods. Returning `''` from both opts out of the protocol cleanly.
+
+**`TaskRunner` activates Pipeline transparently when `spawn_plan_dir` is set**
+- The Phase B no-op stub becomes load-bearing. Hosts that wired `spawn_plan_dir` pre-Phase-C automatically get the new behavior on upgrade.
+- `TaskRunner::__construct` now accepts an optional `Pipeline` arg (second positional). Backward-compatible: omitting it makes `spawn_plan_dir` a no-op rather than throwing, so legacy callers keep working.
+
+### Added — Phase B (TaskRunner)
+
+**`Runner\TaskRunner` — one-call task execution wrapper around Dispatcher**
+- New service registered as a singleton in `SuperAICoreServiceProvider`. `app(TaskRunner::class)->run($backend, $prompt, $options)` drives `Dispatcher::dispatch(['stream' => true, ...])`, normalizes the result into a typed `TaskResultEnvelope`, and offers two optional persistence hooks (`prompt_file`, `summary_file`) so hosts keep their on-disk debug breadcrumbs without writing the file plumbing themselves.
+- Hosts that adopted Phase A's `stream:true` flag can now collapse their `executeTask()` / `executeClaude()` bodies (typically 100–200 lines of "build prompt file → spawn → tee log → extract summary → wrap into result array") to a single `$runner->run()` call. Sample migration in `docs/task-runner-quickstart.md`.
+- Forwards every Dispatcher option transparently (model, system, provider_config, log_file, timeout, idle_timeout, mcp_mode, mcp_config_file, external_label, onChunk, task_type, capability, user_id, provider_id, metadata, scope, scope_id) and consumes only three runner-only keys: `prompt_file`, `summary_file`, `spawn_plan_dir`.
+- `spawn_plan_dir` is wired today as a no-op forward-compat hook — Phase C ships `AgentSpawn\Pipeline` and TaskRunner will activate the fan-out + consolidation transparently. Hosts can pass the option now and pick up the behavior on upgrade with no call-site change.
+- Conservative success semantics: `$envelope->success === true` requires `exit_code === 0` AND `text !== ''`. Phase A's `stream()` returns the envelope with `text=''` when the subprocess exited cleanly but the parser couldn't extract a final result event (malformed output, premature exit, model refused). Treating that as success would cause hosts to overwrite a TaskResult with a blank summary — TaskRunner conservatively fails so hosts can distinguish "the model spoke" from "the binary returned 0 but the output was unusable".
+
+**`Runner\TaskResultEnvelope` — typed result shape**
+- Public-readonly properties for `success` / `exitCode` / `output` / `summary` / `usage` / `costUsd` / `shadowCostUsd` / `billingModel` / `model` / `backend` / `durationMs` / `logFile` / `usageLogId` / `spawnReport` / `error`. Replaces the ad-hoc `['success', 'exit_code', 'output', ...]` arrays each downstream host invented.
+- `::failed()` factory for the "Dispatcher couldn't even run the prompt" path (no provider configured, CLI not signed in, backend disabled, empty prompt).
+- `toArray()` projection for hosts whose existing storage layer expects an array shape — eases incremental migration.
+
+**`Dispatcher::dispatch()` now surfaces `usage_log_id` on the result**
+- Captures the row id `UsageRecorder::record()` returns and stamps it on the dispatch envelope so downstream callers (notably `TaskRunner`) can attach the id to their own envelope without re-querying. Useful for "patch this row with extra metadata once Phase C consolidation finishes" flows and for skipping double-record on hosts that still call UsageRecorder themselves.
+- Backward compatible: `usage_log_id` is omitted when no row was written (`UsageTracker` not bound, write failed, `AI_CORE_USAGE_TRACKING=false`). Hosts that don't read the key see no change.
+
+### Added — Phase A (StreamingBackend)
 
 **`Contracts\StreamingBackend` — sibling of `Backend`**
 - New interface declaring `stream(array $options): ?array`. Same inputs as `generate()`, plus `log_file` / `timeout` / `idle_timeout` / `mcp_mode` / `mcp_config_file` / `external_label` / `onChunk` / `metadata`. Returns the same envelope `generate()` does, augmented with `log_file`, `duration_ms`, and `exit_code`.
@@ -32,16 +115,29 @@ Phase A of the **host-spawn-uplift** roadmap (`docs/host-spawn-uplift-roadmap.md
 ### Changed
 
 - `ClaudeCliBackend` / `CodexCliBackend` / `GeminiCliBackend` / `KiroCliBackend` / `CopilotCliBackend` all gained `implements StreamingBackend` + `use StreamableProcess;`. `generate()` signature / behavior unchanged — no breaking change for existing callers.
+- `Dispatcher::dispatch()` now stamps `usage_log_id` on the result envelope when `UsageTracker` writes a row. Existing callers that don't read the key see no change.
 
 ### Migration notes
 
-Hosts that currently hand-roll the spawn (build `claude -p --output-format stream-json --verbose ... > log.txt 2>&1`, manage `--mcp-config`, manage timeouts, manage tee) can replace that entire block with one `Dispatcher::dispatch(['stream' => true, ...])` call. See `docs/streaming-backends.md` for the full quickstart + options reference. Subsequent phases (B: `TaskRunner`, C: `AgentSpawn\Pipeline`) collapse this further; Phase A is the load-bearing primitive.
+Hosts that currently hand-roll the spawn (build `claude -p --output-format stream-json --verbose ... > log.txt 2>&1`, manage `--mcp-config`, manage timeouts, manage tee, manage usage recording) can replace that entire block with:
 
-No database migration required. No config change required. No host code change required — existing `generate()` callers untouched.
+- One `Dispatcher::dispatch(['stream' => true, ...])` call (Phase A primitive), OR
+- One `app(TaskRunner::class)->run($backend, $prompt, $options)` call (Phase B convenience — recommended for task-execution code paths).
+
+See `docs/streaming-backends.md` and `docs/task-runner-quickstart.md` for full quickstarts. Phase C (`AgentSpawn\Pipeline`) collapses spawn-plan handling further; Phases A + B are the load-bearing primitives.
+
+**Hosts implementing custom `BackendCapabilities`:** the Phase C interface addition (`spawnPreamble` + `consolidationPrompt`) is technically a breaking change. Add `use \SuperAICore\Capabilities\Concerns\BackendCapabilitiesDefaults;` to inherit no-op defaults — the trait keeps the host class satisfying the interface today and through any future minor-release method additions. Bundled `*Capabilities` classes don't use the trait (they provide real implementations).
+
+**Database migration:** run `php artisan migrate` to add the Phase D `idempotency_key` column + composite index. The other phases add no migrations.
 
 ### Tests
 
-- 22 new tests covering `TeeLogger` basics (7), `ClaudeCliBackend::parseStreamJson()` edge cases (5), and `StreamingBackend` contract enforcement across all 5 CLIs (10). Full suite: **298 tests / 855 assertions / 0 failures / 0 skipped** (was 276 / 812).
+- 22 new tests in Phase A: `TeeLogger` basics (7), `ClaudeCliBackend::parseStreamJson()` edge cases (5), `StreamingBackend` contract enforcement across all 5 CLIs (10).
+- 15 new tests in Phase B: `TaskResultEnvelope` shape (4), `TaskRunner` wrapping contract (11) — empty-prompt failure, dispatcher-null failure, envelope mapping, empty-text-treated-as-failure, prompt_file persistence, summary_file persistence (incl. skipped on empty text), runner-only options stripped, log_file fallback, backend fallback.
+- 24 new tests in Phase C: `BackendCapabilities` spawn-protocol contract across all 6 impls (12), `Pipeline::maybeRun` decision tree (6) with stubbed Orchestrator (no real subprocesses), TaskRunner→Pipeline activation (4) — pipeline-absent no-op, pipeline-present activation, pipeline-null first-pass-kept, pipeline-not-called-when-spawn_plan_dir-omitted, pipeline-not-called-when-first-pass-failed.
+- 10 new tests in Phase D: migration column present, no-key calls don't dedup, same-key-same-window dedups, distinct-keys-no-dedup, expired-window inserts new row, Dispatcher auto-key from external_label, no-label no-auto-key, explicit-key overrides auto-gen, `idempotency_key:false` opts out of auto-gen, key truncated to 80 chars.
+- 2 new tests in Phase E: `BackendCapabilitiesDefaults` trait satisfies the interface, host can selectively override trait defaults per method.
+- Full suite: **349 tests / 1034 assertions / 0 failures / 0 skipped** (was 276 / 812 at 0.6.5).
 
 ---
 
@@ -878,7 +974,13 @@ Initial public release. The package consolidates the AI execution stack that use
 - Process monitor is disabled by default and requires admin-only middleware wiring in the host app.
 - Model pricing table covers Claude 4.x and GPT-4o only; other models fall back to zero cost and must be added to `config.model_pricing`.
 
-[Unreleased]: https://github.com/forgeomni/SuperAICore/compare/v0.5.7...HEAD
+[0.6.6]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.6.6
+[0.6.5]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.6.5
+[0.6.2]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.6.2
+[0.6.1]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.6.1
+[0.6.0]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.6.0
+[0.5.9]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.5.9
+[0.5.8]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.5.8
 [0.5.7]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.5.7
 [0.5.6]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.5.6
 [0.5.5]: https://github.com/forgeomni/SuperAICore/releases/tag/v0.5.5

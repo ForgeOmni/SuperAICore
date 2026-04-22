@@ -23,6 +23,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property int|null $duration_ms
  * @property int|null $user_id
  * @property array|null $metadata
+ * @property string|null $idempotency_key
  */
 class AiUsageLog extends Model
 {
@@ -36,6 +37,7 @@ class AiUsageLog extends Model
         'input_tokens', 'output_tokens',
         'cost_usd', 'shadow_cost_usd', 'billing_model',
         'duration_ms', 'user_id', 'metadata',
+        'idempotency_key',
     ];
 
     protected $casts = [

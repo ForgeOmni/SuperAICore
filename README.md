@@ -46,6 +46,11 @@ The `forgeomni/superagent` entry in `composer.json` is there so the SuperAgent b
 - **`ProviderTypeRegistry` + `ProviderEnvBuilder` — one source of truth for API types** (0.6.2+) — every new provider type (Anthropic / OpenAI / Google / Kiro / …) lives in a single bundled registry carrying its label, icon, form fields, env-var name, base-url env, allowed backends, and `extra_config → env` map. `ProviderEnvBuilder::buildEnv($provider)` replaces the 7-case env switch that host apps (SuperTeam, …) used to duplicate. Host apps extend via `config/super-ai-core.php`'s `provider_types` override map — **when SuperAICore adds a new API type, hosts pick it up on `composer update` with zero code changes**. `CliStatusDetector::detectAuth()` got a generic fallback so new CLI engines get an auth readout on `/providers` the same day they land.
 - **Cache-aware shadow cost + CLI-reported `total_cost_usd`** (0.6.5+) — `CostCalculator::shadowCalculate()` now prices `cache_read_tokens` at 0.1× and `cache_write_tokens` at 1.25× the base `input` rate (falls back to explicit catalog rows when present), so heavy-cache Claude sessions match the real Anthropic invoice instead of over-reporting by ~10×. When the backend envelope carries its own `total_cost_usd` (Claude CLI does), Dispatcher uses that figure as the billed cost and marks the row with `metadata.cost_source=cli_envelope` — matters because only the CLI knows whether a given session is on a subscription or an API key.
 - **`MonitoredProcess::runMonitoredAndRecord()` runner helper** (0.6.5+) — opt-in variant of the existing `runMonitored()` trait method that buffers stdout, parses it with `CliOutputParser`, and writes an `ai_usage_logs` row through `UsageRecorder` on process exit. Host runners stop hand-rolling parser + recorder glue per call site. Parser failures never propagate (plain-text Codex / Copilot output gets a `debug`-level note instead of a row, exit code still returns). `runMonitored()` plain-text mode stays unchanged.
+- **`Runner\TaskRunner` — one-call task execution** (0.6.6+) — drop-in wrapper around `Dispatcher::dispatch(['stream' => true, ...])` that returns a typed `TaskResultEnvelope` (success / output / summary / usage / cost / log file / spawn report). Replaces ~150 lines of host-side "build prompt → spawn → tee log → extract usage → wrap result" glue with one call. Works identically across all 5 CLIs (claude / codex / gemini / kiro / copilot) — no per-backend branching in your code. See `docs/task-runner-quickstart.md`.
+- **`Contracts\StreamingBackend` — every CLI gets live tee + Process Monitor + onChunk** (0.6.6+) — new sibling of `Backend::generate()` that streams chunks through a callback while tee'ing them to disk and registering a `ai_processes` row for the Monitor UI. All 5 CLI backends implement it; `Dispatcher::dispatch(['stream' => true, ...])` opts in transparently. Honors per-call `timeout` / `idle_timeout` / `mcp_mode` (`'empty'` for claude prevents global MCPs from blocking exit). See `docs/streaming-backends.md`.
+- **`AgentSpawn\Pipeline` — spawn-plan emulation moved upstream** (0.6.6+) — the three-phase choreography (Phase 1 preamble / Phase 2 parallel fanout / Phase 3 consolidation re-call) for codex / gemini that previously lived in each downstream host now ships in SuperAICore. `TaskRunner` activates it transparently when `spawn_plan_dir` is passed. Hosts can delete their `maybeRunSpawnPlan` + `runConsolidationPass` (~150 lines). New CLIs that need the protocol implement `BackendCapabilities::spawnPreamble()` + `consolidationPrompt()` once and inherit the rest. See `docs/spawn-plan-protocol.md`.
+- **`ai_usage_logs.idempotency_key` 60s dedup window** (0.6.6+) — `EloquentUsageRepository::record()` honors an `idempotency_key`; matching keys within 60s return the existing row id instead of inserting a duplicate. `Dispatcher::dispatch()` auto-generates `"{backend}:{external_label}"` so hosts that double-record the same logical turn (e.g. `Dispatcher` writing + a host-side `UsageRecorder::record()` for the same turn) auto-collapse to one row with zero code change. Migration: `php artisan migrate` adds a nullable column + composite index. See `docs/idempotency.md`.
+- **API stability + `BackendCapabilitiesDefaults` trait** (0.6.6+) — `docs/api-stability.md` formally declares which APIs follow strict SemVer (`StreamingBackend`, `TaskRunner`, `TaskResultEnvelope`, `Pipeline`, `TeeLogger`, `BackendCapabilities`, `Dispatcher::dispatch()` / `UsageRecorder::record()` shapes, etc.) and which surfaces are intentionally evolving. Hosts implementing custom `BackendCapabilities` should `use BackendCapabilitiesDefaults;` to inherit safe no-op defaults for any methods added in future minor releases — the host class stays satisfying the interface without code changes. See `docs/api-stability.md`.
 - **Cost analytics** — per-model pricing table, USD rollups, dashboard with charts. "By Task Type" card + per-row `usage`/`sub` billing-model badge + shadow-cost column on every breakdown (0.6.2+). Dashboards hide 0-token rows and `test_connection` rows by default, and the `/providers` "Test" buttons now self-tag as `task_type=test_connection` so they no longer clutter the main view.
 - **Process monitor** — inspect running AI processes, tail logs, terminate strays.
 - **Trilingual UI** — English, Simplified Chinese, French, switchable at runtime.
@@ -163,6 +168,56 @@ Key behaviours:
 
 ## PHP quick start
 
+### Long-running task (recommended) — `TaskRunner`
+
+For task-execution code paths (anything where you want a tail-able log
+file, a Process Monitor row, live UI previews, automatic usage
+recording, and optional spawn-plan emulation for codex/gemini), drop
+in one call:
+
+```php
+use SuperAICore\Runner\TaskRunner;
+
+$envelope = app(TaskRunner::class)->run('claude_cli', $prompt, [
+    'log_file'       => $logFile,
+    'timeout'        => 7200,        // 2-hour hard cap for long task runs
+    'idle_timeout'   => 1800,
+    'mcp_mode'       => 'empty',     // claude only — see streaming-backends.md
+    'spawn_plan_dir' => $outputDir,  // codex/gemini fanout + consolidation auto-fires
+    'task_type'      => 'tasks.run',
+    'capability'     => $task->type,
+    'user_id'        => auth()->id(),
+    'external_label' => "task:{$task->id}",  // drives auto-dedup of accidental double-records
+    'metadata'       => ['task_id' => $task->id],
+    'onChunk' => fn ($chunk) => $taskResult->updateQuietly(['preview' => $chunk]),
+]);
+
+if ($envelope->success) {
+    $taskResult->update([
+        'content'    => $envelope->summary,
+        'raw_output' => $envelope->output,
+        'metadata'   => ['usage' => $envelope->usage, 'cost_usd' => $envelope->costUsd],
+    ]);
+}
+```
+
+Returns a typed `TaskResultEnvelope` with `success` / `output` /
+`summary` / `usage` / `costUsd` / `shadowCostUsd` / `billingModel` /
+`logFile` / `usageLogId` / `spawnReport` / `error`. Works identically
+for every CLI engine (claude / codex / gemini / kiro / copilot) — no
+per-backend branching in your code.
+
+See `docs/task-runner-quickstart.md` for the full options reference,
+`docs/streaming-backends.md` for `mcp_mode` and per-backend stream
+formats, `docs/spawn-plan-protocol.md` for codex/gemini agent
+emulation, `docs/idempotency.md` for the dedup window, and
+`docs/api-stability.md` for the SemVer contract.
+
+### Short call — `Dispatcher::dispatch()`
+
+For one-shot calls (test connections, vision routing, embeddings,
+anything where buffering the full response in memory is fine):
+
 ```php
 use SuperAICore\Services\BackendRegistry;
 use SuperAICore\Services\CostCalculator;
@@ -180,6 +235,10 @@ $result = $dispatcher->dispatch([
 
 echo $result['text'];
 ```
+
+`Dispatcher` also accepts `'stream' => true` to opt into the same
+streaming path `TaskRunner` uses internally — useful when you want
+the streaming benefits without `TaskRunner`'s envelope wrapping.
 
 ## Architecture
 

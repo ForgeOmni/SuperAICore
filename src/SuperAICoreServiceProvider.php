@@ -92,6 +92,32 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 $app->bound('log') ? $app->make('log') : null,
             );
         });
+
+        // Phase C: AgentSpawn\Pipeline — three-phase spawn-plan
+        // emulation (Phase 1 preamble, Phase 2 fanout, Phase 3
+        // consolidation re-call) for backends without a native sub-agent
+        // primitive. TaskRunner activates it when host passes
+        // spawn_plan_dir.
+        $this->app->singleton(\SuperAICore\AgentSpawn\Pipeline::class, function ($app) {
+            return new \SuperAICore\AgentSpawn\Pipeline(
+                $app->make(CapabilityRegistry::class),
+                $app->make(Dispatcher::class),
+                $app->make(EngineCatalog::class),
+                $app->bound('log') ? $app->make('log') : null,
+            );
+        });
+
+        // Phase B: TaskRunner — one-call task execution wrapper around
+        // Dispatcher. Hosts that adopted Phase A's stream:true flag can
+        // now collapse their executeTask() / executeClaude() bodies to
+        // a single $runner->run() call.
+        $this->app->singleton(\SuperAICore\Runner\TaskRunner::class, function ($app) {
+            return new \SuperAICore\Runner\TaskRunner(
+                $app->make(Dispatcher::class),
+                $app->make(\SuperAICore\AgentSpawn\Pipeline::class),
+                $app->bound('log') ? $app->make('log') : null,
+            );
+        });
     }
 
     public function boot(): void

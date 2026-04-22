@@ -44,4 +44,8 @@ class ClaudeCapabilities implements BackendCapabilities
         }
         return json_encode($existing, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
+
+    // Claude has a native Agent tool — no spawn-plan emulation needed.
+    public function spawnPreamble(string $outputDir): string { return ''; }
+    public function consolidationPrompt(\SuperAICore\AgentSpawn\SpawnPlan $plan, array $report, string $outputDir): string { return ''; }
 }

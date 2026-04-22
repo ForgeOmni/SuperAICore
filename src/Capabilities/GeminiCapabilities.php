@@ -79,6 +79,19 @@ class GeminiCapabilities implements BackendCapabilities
         return rtrim(getenv('HOME') ?: (getenv('USERPROFILE') ?: ''), '/\\');
     }
 
+    public function spawnPreamble(string $outputDir): string
+    {
+        // Same text transformPrompt() injects, exposed as a separate
+        // method so Pipeline / direct callers can render the preamble
+        // without going through the full transform.
+        return self::PREAMBLE;
+    }
+
+    public function consolidationPrompt(\SuperAICore\AgentSpawn\SpawnPlan $plan, array $report, string $outputDir): string
+    {
+        return SpawnConsolidationPrompt::build($plan, $report, $outputDir);
+    }
+
     const PREAMBLE = <<<'TXT'
 <!-- gemini-preamble-v1 -->
 ## Runtime: Gemini CLI — Tool Name Mapping

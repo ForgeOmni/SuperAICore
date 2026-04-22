@@ -86,4 +86,11 @@ class CopilotCapabilities implements BackendCapabilities
     {
         return rtrim(getenv('HOME') ?: (getenv('USERPROFILE') ?: ''), '/\\');
     }
+
+    // Copilot's CLI runs in headless mode without a sub-agent primitive,
+    // but its short-form workflow doesn't fit the spawn-plan emulation
+    // either — adopting it would require its own preamble + consolidation
+    // template, deferred until there's a use case.
+    public function spawnPreamble(string $outputDir): string { return ''; }
+    public function consolidationPrompt(\SuperAICore\AgentSpawn\SpawnPlan $plan, array $report, string $outputDir): string { return ''; }
 }

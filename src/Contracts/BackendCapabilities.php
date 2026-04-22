@@ -82,4 +82,59 @@ interface BackendCapabilities
      *                           'env' => [...], 'transport' => 'stdio'|'sse']
      */
     public function renderMcpConfig(array $servers): string;
+
+    // ─── Spawn-Plan protocol (Phase C) ───
+    //
+    // Three-phase agent-spawn-emulation dance for backends that don't
+    // have a native sub-agent primitive (codex, gemini today, future
+    // engines tomorrow):
+    //
+    //   Phase 1 — caller prepends `spawnPreamble()` to the user prompt
+    //             (or relies on `transformPrompt()` to do it). The
+    //             preamble instructs the model to emit `_spawn_plan.json`
+    //             listing the agents it would have spawned, then STOP.
+    //   Phase 2 — host detects the plan file and hands it to
+    //             {@see AgentSpawn\Orchestrator} to fan out N child CLI
+    //             processes in parallel.
+    //   Phase 3 — host re-invokes the parent backend with the
+    //             `consolidationPrompt()` template, pointing at every
+    //             child's output subdir. The model reads them and
+    //             produces the final summary/meta files.
+    //
+    // Backends with native sub-agent support (claude) or that don't fit
+    // this protocol (kiro/copilot/superagent) return empty strings.
+
+    /**
+     * Phase 1 preamble — instructs the model to write `_spawn_plan.json`
+     * in the run's output directory and stop. Returns '' for backends
+     * that can spawn sub-agents natively or don't fit the protocol.
+     *
+     * Implementations that DO use the protocol (codex/gemini) typically
+     * return their existing PREAMBLE constant. The `$outputDir` parameter
+     * is passed in case a future preamble wants to bake the absolute path
+     * into the instructions; current implementations ignore it.
+     */
+    public function spawnPreamble(string $outputDir): string;
+
+    /**
+     * Phase 3 consolidation prompt — re-invocation template that points
+     * at every fanned-out agent's output subdir and asks the model for
+     * the final summary/meta files. Returns '' for backends that don't
+     * use the spawn-plan protocol.
+     *
+     * Hosts are expected to pass:
+     *   - `$plan` — the SpawnPlan loaded in Phase 2 (carries agent list)
+     *   - `$report` — Phase 2 fanout report (per-agent exit code, log path,
+     *                 duration). Same shape `Orchestrator::run()` returns.
+     *   - `$outputDir` — where the consolidation pass should write its
+     *                    final files (typically the same dir Phase 1 used).
+     *
+     * The default consolidation prompt asks for `摘要.md` / `思维导图.md`
+     * / `流程图.md` (SuperTeam's convention). Hosts that want a different
+     * file set should override per-call by NOT relying on this method
+     * and building their own consolidation prompt.
+     *
+     * @param array<int,array{name:string,exit:int,log:string,duration_ms:int,error:?string}> $report
+     */
+    public function consolidationPrompt(\SuperAICore\AgentSpawn\SpawnPlan $plan, array $report, string $outputDir): string;
 }

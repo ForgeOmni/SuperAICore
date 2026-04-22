@@ -21,4 +21,9 @@ class SuperAgentCapabilities implements BackendCapabilities
     public function mcpConfigPath(): ?string { return null; }
     public function transformPrompt(string $prompt): string { return $prompt; }
     public function renderMcpConfig(array $servers): string { return ''; }
+
+    // SuperAgent has its own Agent Teams primitive — no spawn-plan
+    // emulation needed.
+    public function spawnPreamble(string $outputDir): string { return ''; }
+    public function consolidationPrompt(\SuperAICore\AgentSpawn\SpawnPlan $plan, array $report, string $outputDir): string { return ''; }
 }

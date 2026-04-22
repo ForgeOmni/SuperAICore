@@ -107,4 +107,9 @@ class KiroCapabilities implements BackendCapabilities
     {
         return rtrim(getenv('HOME') ?: (getenv('USERPROFILE') ?: ''), '/\\');
     }
+
+    // Kiro has its own routing/agents model and doesn't fit the
+    // codex/gemini spawn-plan emulation. No preamble, no consolidation.
+    public function spawnPreamble(string $outputDir): string { return ''; }
+    public function consolidationPrompt(\SuperAICore\AgentSpawn\SpawnPlan $plan, array $report, string $outputDir): string { return ''; }
 }
