@@ -21,10 +21,39 @@ use SuperAICore\Contracts\Backend;
  *   - denied_tools: string[]   filter tool surface
  *   - mcp_config_file: string  path to a `.mcp.json` to load + auto-connect
  *                              (same shape claude:mcp-sync writes)
- *   - provider_config.region   intl/cn/us/hk split for providers that
+ *   - provider_config.region   intl/cn/us/hk/code split for providers that
  *                              support it (Kimi/Qwen/GLM/MiniMax); routed
  *                              through createWithRegion() because Agent's
- *                              internal config allowlist skips 'region'
+ *                              internal config allowlist skips 'region'.
+ *                              Note: `region: 'code'` on Kimi/Qwen routes
+ *                              through OAuth bearer (KimiCodeCredentials /
+ *                              QwenCodeCredentials) before falling back
+ *                              to `api_key`.
+ *
+ * SDK 0.9.0 forwarded options (all optional, all additive):
+ *
+ *   - extra_body: array              vendor-specific fields deep-merged at
+ *                                    the top level of every
+ *                                    ChatCompletionsProvider request body
+ *                                    (Kimi / Qwen / GLM / MiniMax / OpenAI
+ *                                    / OpenRouter). Escape hatch for wire
+ *                                    fields SuperAgent has not yet exposed
+ *                                    as capability adapters.
+ *   - features: array                routed through FeatureDispatcher.
+ *                                    Useful keys:
+ *                                      - prompt_cache_key.session_id — Kimi
+ *                                        session-level prompt cache (silent
+ *                                        skip on non-Kimi providers)
+ *                                      - thinking.* — CoT dispatch with
+ *                                        graceful fallback
+ *                                      - dashscope_cache_control — Qwen
+ *                                        Anthropic-style cache markers
+ *   - loop_detection: bool|array     opt into 0.9.0 LoopDetector wrapping
+ *                                    via AgentFactory::maybeWrapWithLoopDetection.
+ *                                    `true` uses defaults; pass an array to
+ *                                    override thresholds (TOOL_LOOP /
+ *                                    STAGNATION / FILE_READ_LOOP /
+ *                                    CONTENT_LOOP / THOUGHT_LOOP).
  *
  * Envelope additions on success:
  *   - usage.cache_read_input_tokens, usage.cache_creation_input_tokens
@@ -160,6 +189,37 @@ class SuperAgentBackend implements Backend
 
         if (isset($options['max_cost_usd']) && (float) $options['max_cost_usd'] > 0) {
             $agentConfig['max_budget_usd'] = (float) $options['max_cost_usd'];
+        }
+
+        // SDK 0.9.0 forwarded options — `extra_body`, `features` (incl.
+        // `prompt_cache_key`), and `loop_detection`. Kept in Agent's
+        // internal `options` bag (consumed by the provider + engine via
+        // `withOptions()`), so downstream providers and harnesses pick
+        // them up without per-backend glue.
+        $forwardedOptions = [];
+        if (isset($options['extra_body']) && is_array($options['extra_body'])) {
+            $forwardedOptions['extra_body'] = $options['extra_body'];
+        }
+        if (isset($options['features']) && is_array($options['features'])) {
+            $forwardedOptions['features'] = $options['features'];
+        }
+        // Convenience shim: let callers pass `prompt_cache_key` directly
+        // instead of nesting it under `features.prompt_cache_key.session_id`.
+        // Accept either a string (treated as session_id) or a full array
+        // (passed through untouched).
+        if (isset($options['prompt_cache_key'])
+            && !isset($forwardedOptions['features']['prompt_cache_key'])) {
+            $pck = $options['prompt_cache_key'];
+            $forwardedOptions['features'] ??= [];
+            $forwardedOptions['features']['prompt_cache_key'] = is_array($pck)
+                ? $pck
+                : ['session_id' => (string) $pck];
+        }
+        if (array_key_exists('loop_detection', $options)) {
+            $forwardedOptions['loop_detection'] = $options['loop_detection'];
+        }
+        if ($forwardedOptions !== []) {
+            $agentConfig['options'] = $forwardedOptions;
         }
 
         $agent = $this->makeAgent($agentConfig);

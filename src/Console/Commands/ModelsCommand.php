@@ -3,6 +3,7 @@
 namespace SuperAICore\Console\Commands;
 
 use SuperAgent\Providers\ModelCatalog;
+use SuperAgent\Providers\ModelCatalogRefresher;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Helper\Table;
@@ -16,24 +17,29 @@ use Symfony\Component\Console\Output\OutputInterface;
  *
  * Subcommands:
  *   list [--provider <p>]   show the merged (bundled + user override) catalog
- *   update [--url <u>]      fetch the remote catalog to ~/.superagent/models.json
+ *   update [--url <u>]      fetch the remote bundled catalog to ~/.superagent/models.json
+ *   refresh [--provider <p>] pull each provider's live GET /models endpoint into
+ *                            the per-provider overlay cache at
+ *                            ~/.superagent/models-cache/<provider>.json
+ *                            (requires the provider's API key in env).
+ *                            Omit --provider to refresh every configured provider.
  *   status                  show source provenance + override mtime
  *   reset                   delete the user override
  *
  * Pricing and family aliases flow automatically into CostCalculator and the
- * per-engine ModelResolvers once `models update` has run — no SuperAICore
- * config publish required.
+ * per-engine ModelResolvers once `models update` or `models refresh` has run —
+ * no SuperAICore config publish required.
  */
 #[AsCommand(
     name: 'super-ai-core:models',
-    description: 'Manage the SuperAgent model catalog (list / update / status / reset)'
+    description: 'Manage the SuperAgent model catalog (list / update / refresh / status / reset)'
 )]
 final class ModelsCommand extends Command
 {
     protected function configure(): void
     {
-        $this->addArgument('action', InputArgument::OPTIONAL, 'list | update | status | reset', 'list');
-        $this->addOption('provider', null, InputOption::VALUE_REQUIRED, 'Filter `list` by provider key (anthropic|openai|gemini|…)');
+        $this->addArgument('action', InputArgument::OPTIONAL, 'list | update | refresh | status | reset', 'list');
+        $this->addOption('provider', null, InputOption::VALUE_REQUIRED, 'Filter `list` / scope `refresh` by provider key (anthropic|openai|gemini|kimi|qwen|glm|minimax|openrouter)');
         $this->addOption('url', null, InputOption::VALUE_REQUIRED, 'Override SUPERAGENT_MODELS_URL for a one-shot `update`');
         $this->addOption('yes', 'y', InputOption::VALUE_NONE, 'Skip the confirmation prompt on `reset`');
     }
@@ -41,17 +47,18 @@ final class ModelsCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         if (!class_exists(ModelCatalog::class)) {
-            $output->writeln('<error>SuperAgent\\Providers\\ModelCatalog not found. Is forgeomni/superagent ^0.8.7 installed?</error>');
+            $output->writeln('<error>SuperAgent\\Providers\\ModelCatalog not found. Is forgeomni/superagent ^0.9.0 installed?</error>');
             return Command::FAILURE;
         }
 
         $action = (string) $input->getArgument('action');
         return match ($action) {
-            'list'   => $this->runList($input, $output),
-            'update' => $this->runUpdate($input, $output),
-            'status' => $this->runStatus($output),
-            'reset'  => $this->runReset($input, $output),
-            default  => $this->unknownAction($action, $output),
+            'list'    => $this->runList($input, $output),
+            'update'  => $this->runUpdate($input, $output),
+            'refresh' => $this->runRefresh($input, $output),
+            'status'  => $this->runStatus($output),
+            'reset'   => $this->runReset($input, $output),
+            default   => $this->unknownAction($action, $output),
         };
     }
 
@@ -97,6 +104,58 @@ final class ModelsCommand extends Command
         }
     }
 
+    /**
+     * Pull each provider's live `GET /models` endpoint into the per-provider
+     * overlay cache. This is the SDK 0.9.0 `ModelCatalogRefresher` path — it
+     * overlays on top of the user-override catalog without replacing it, so
+     * bundled pricing is preserved when the vendor's `/models` response omits
+     * rates (which it usually does).
+     */
+    private function runRefresh(InputInterface $input, OutputInterface $output): int
+    {
+        if (!class_exists(ModelCatalogRefresher::class)) {
+            $output->writeln('<error>ModelCatalogRefresher requires forgeomni/superagent ^0.9.0.</error>');
+            return Command::FAILURE;
+        }
+
+        $provider = $input->getOption('provider');
+
+        if ($provider !== null && $provider !== '') {
+            try {
+                $rows = ModelCatalogRefresher::refresh((string) $provider);
+                $output->writeln("<info>Refreshed:</info> {$provider} — " . count($rows) . ' models cached at ' . ModelCatalogRefresher::cachePath((string) $provider));
+                return Command::SUCCESS;
+            } catch (\Throwable $e) {
+                $output->writeln("<error>Refresh failed:</error> {$provider}: {$e->getMessage()}");
+                $output->writeln('<comment>Hint:</comment> set the provider API key env var (e.g. KIMI_API_KEY) before running.');
+                return Command::FAILURE;
+            }
+        }
+
+        $results = ModelCatalogRefresher::refreshAll();
+        $table = new Table($output);
+        $table->setHeaders(['Provider', 'Status', 'Details']);
+        $anyOk = false;
+        foreach ($results as $p => $r) {
+            $ok = (bool) ($r['ok'] ?? false);
+            $anyOk = $anyOk || $ok;
+            $table->addRow([
+                $p,
+                $ok ? '<info>ok</info>' : '<comment>skipped</comment>',
+                $ok
+                    ? ((int) ($r['count'] ?? 0)) . ' models'
+                    : (string) ($r['error'] ?? 'unknown'),
+            ]);
+        }
+        $table->render();
+        $output->writeln('');
+        $output->writeln($anyOk
+            ? '<info>Cached overlays written under ' . ModelCatalogRefresher::cacheDir() . '</info>'
+            : '<comment>Nothing refreshed — set provider API keys in env and retry.</comment>');
+
+        return $anyOk ? Command::SUCCESS : Command::FAILURE;
+    }
+
     private function runStatus(OutputInterface $output): int
     {
         $bundled  = ModelCatalog::bundledPath();
@@ -116,6 +175,20 @@ final class ModelsCommand extends Command
                 : '<comment>not present</comment>',
         ]);
         $table->addRow(['remote URL', $remote ?? '(unset)', $remote ? 'configured' : '-']);
+        if (class_exists(ModelCatalogRefresher::class)) {
+            $cacheDir = ModelCatalogRefresher::cacheDir();
+            $cached = [];
+            if (is_dir($cacheDir)) {
+                foreach (glob(rtrim($cacheDir, '/') . '/*.json') ?: [] as $f) {
+                    $cached[] = basename($f, '.json');
+                }
+            }
+            $table->addRow([
+                'refresh cache',
+                $cacheDir,
+                $cached === [] ? '<comment>empty</comment>' : '<info>' . implode(', ', $cached) . '</info>',
+            ]);
+        }
         $table->render();
 
         $output->writeln('');
@@ -148,7 +221,7 @@ final class ModelsCommand extends Command
     private function unknownAction(string $action, OutputInterface $output): int
     {
         $output->writeln("<error>Unknown action:</error> {$action}");
-        $output->writeln('<comment>Valid actions:</comment> list, update, status, reset');
+        $output->writeln('<comment>Valid actions:</comment> list, update, refresh, status, reset');
         return Command::FAILURE;
     }
 

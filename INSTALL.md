@@ -409,6 +409,55 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
    - Per-agent `run.log` / prompt / exec script now write to `$TMPDIR/superaicore-spawn-<date>-<hex>/<agent>/` instead of `$outputRoot/<agent>/`. The user-facing output dir only holds real deliverables (`.md` / `.csv` / `.png`). Update any host tooling that previously globbed `$outputRoot/<agent>/run.log` — the path moved.
    - `Orchestrator::run()` now returns `report[N].warnings[]` on each entry. Existing callers that only read `exit` / `log` / `duration_ms` / `error` stay source-compatible (the key is optional per the PHPDoc).
 
+**0.6.9 — no migration.** Additive surface + five automatic correctness fixes you get on the SDK bump. Composer constraint is lifted `^0.8.0` → `^0.9.0`. Four things worth reviewing:
+
+1. **Qwen provider key rebind (SDK-side).** SDK 0.9.0 rebinds the `qwen` registry key to an OpenAI-compat provider (`<region>/compatible-mode/v1/chat/completions`). The legacy DashScope-native body shape lives on as `qwen-native`. If you depended on wire-level `parameters.thinking_budget` / `parameters.enable_code_interpreter` (DashScope-native fields), switch your provider config:
+   ```php
+   'provider_config' => ['provider' => 'qwen-native', 'region' => 'cn'],
+   ```
+   Both keys read the same `QWEN_API_KEY` / `DASHSCOPE_API_KEY` env. The `qwen` default is what Alibaba's own `qwen-code` CLI uses in production, so leave it alone unless you were touching those DashScope-native fields. `ApiHealthDetector::DEFAULT_PROVIDERS` now includes both keys, so `api:status` shows both endpoints side-by-side.
+
+2. **Three new `SuperAgentBackend` options.** All additive, all optional:
+   ```php
+   $dispatcher->dispatch([
+       'prompt'           => '…',
+       'backend'          => 'superagent',
+       'provider_config'  => ['provider' => 'kimi', 'region' => 'cn'],
+
+       // NEW — vendor-specific wire fields, deep-merged into the request body
+       'extra_body'       => ['custom_vendor_field' => 'value'],
+
+       // NEW — capability-routed features; silent skip on unsupported providers
+       'features'         => [
+           'prompt_cache_key' => ['session_id' => $sessionId],  // Kimi session cache
+           'thinking'         => ['budget' => 4000],             // CoT with fallback
+       ],
+       // Shorthand: `'prompt_cache_key' => $sessionId` maps to
+       // features.prompt_cache_key.session_id automatically.
+
+       // NEW — loop-detection harness on top of the streaming handler
+       'loop_detection'   => true,    // or: ['tool_loop_threshold' => 7, ...]
+   ]);
+   ```
+   `loop_detection` catches `TOOL_LOOP` (5 same tool+args in a row), `STAGNATION` (8 same name), `FILE_READ_LOOP` (8 of 15 recent read-like calls, with cold-start exemption), `CONTENT_LOOP` (50-char window 10×), and `THOUGHT_LOOP` (3× same thinking text). Violations fire as SDK wire events — the AICore envelope stays byte-exact for callers that don't opt in.
+
+3. **Live model catalog refresh.** New subcommand:
+   ```bash
+   ./bin/superaicore super-ai-core:models refresh              # refresh every provider with env credentials
+   ./bin/superaicore super-ai-core:models refresh --provider=kimi
+   php artisan super-ai-core:models refresh --provider=qwen
+   ```
+   Pulls each provider's live `GET /models` into `~/.superagent/models-cache/<provider>.json`. Overlays above the user override but below runtime `register()` calls, so bundled pricing is preserved when the vendor's `/models` omits rates. `CostCalculator` / `ModelResolver` pick it up automatically on the next call — no restart, no config publish.
+
+4. **Kimi Code / Qwen Code OAuth.** If you don't have an API key, log in interactively via the SDK CLI:
+   ```bash
+   ./vendor/bin/superagent auth login kimi-code     # RFC 8628 device flow against auth.kimi.com
+   ./vendor/bin/superagent auth login qwen-code     # device flow + PKCE S256 against chat.qwen.ai
+   ```
+   The resulting token lands at `~/.superagent/credentials/<kimi-code|qwen-code>.json`. `ApiHealthDetector::filterToConfigured()` now treats these files as "configured" for `kimi` / `qwen`, so `api:status` and `/providers` pick them up without a `KIMI_API_KEY` / `QWEN_API_KEY` env var. The Anthropic OAuth refresh path is now `flock`-serialised across processes — Laravel queue workers sharing stored OAuth creds no longer race-overwrite refresh tokens.
+
+**For MCP servers declaring an `oauth:` block in `mcp.json`** you can now call `McpManager::oauthStatus($key)` / `oauthLogin($key)` / `oauthLogout($key)` in your UI. `oauthLogin()` blocks on stdio during the device-flow poll — run it as a queued job, not inline in a request. Existing `startAuth()` / `clearAuth()` / `testConnection()` (browser-login / session-dir servers like the LinkedIn scraper) stay unchanged.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

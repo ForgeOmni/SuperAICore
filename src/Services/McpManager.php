@@ -2919,6 +2919,101 @@ class McpManager
     }
 
     /**
+     * OAuth-auth status for an MCP server that declares an `oauth` block
+     * in the user's mcp.json (SDK 0.9.0 `superagent mcp auth` path —
+     * complementary to the browser-login / session-dir flow `startAuth`
+     * handles for scraper-style servers).
+     *
+     * @return 'ok'|'needed'|'n/a'
+     *   - 'ok'     — a non-expired token is cached for this server
+     *   - 'needed' — the mcp.json entry declares OAuth but no valid token
+     *   - 'n/a'    — the server doesn't declare OAuth
+     */
+    public static function oauthStatus(string $key): string
+    {
+        $oauth = self::oauthConfigFor($key);
+        if ($oauth === null) return 'n/a';
+
+        if (!class_exists(\SuperAgent\MCP\McpOAuth::class)) {
+            return 'needed';
+        }
+        $cached = \SuperAgent\MCP\McpOAuth::cachedToken($key);
+        return $cached ? 'ok' : 'needed';
+    }
+
+    /**
+     * Run the RFC 8628 device flow against the server's OAuth endpoints,
+     * persisting the token into SuperAgent's shared token store
+     * (`~/.superagent/mcp-tokens/<server>.json`). Requires an `oauth`
+     * block in the mcp.json entry with `client_id`, `device_endpoint`,
+     * `token_endpoint` (and optional `scope`).
+     *
+     * Blocks on stdio while the user approves in the browser — callers
+     * that surface this from the UI should run it out of the request
+     * cycle (queued command or spawned process).
+     */
+    public static function oauthLogin(string $key): array
+    {
+        $oauth = self::oauthConfigFor($key);
+        if ($oauth === null) {
+            return ['success' => false, 'message' => 'oauth_not_configured'];
+        }
+        if (!class_exists(\SuperAgent\MCP\McpOAuth::class)) {
+            return ['success' => false, 'message' => 'sdk_too_old'];
+        }
+
+        try {
+            $token = \SuperAgent\MCP\McpOAuth::authenticate($key, $oauth);
+            Log::info("MCP OAuth login succeeded for {$key}");
+            return [
+                'success'    => true,
+                'message'    => 'authenticated',
+                'expires_at' => $token['expires_at'] ?? null,
+            ];
+        } catch (\Throwable $e) {
+            Log::error("MCP OAuth login failed for {$key}: {$e->getMessage()}");
+            return ['success' => false, 'message' => 'auth_failed', 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Drop the cached OAuth token for `$key`. Next use of the server
+     * triggers a fresh device-code flow.
+     */
+    public static function oauthLogout(string $key): array
+    {
+        if (!class_exists(\SuperAgent\MCP\McpOAuth::class)) {
+            return ['success' => false, 'message' => 'sdk_too_old'];
+        }
+        try {
+            \SuperAgent\MCP\McpOAuth::clearToken($key);
+            return ['success' => true, 'message' => 'token_cleared'];
+        } catch (\Throwable $e) {
+            return ['success' => false, 'message' => 'clear_failed', 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Pull the `oauth` block for server `$key` from the user's mcp.json.
+     * Returns null when the server is unknown, not configured, or its
+     * entry doesn't declare OAuth. Shape matches McpOAuth::authenticate().
+     *
+     * @return array{client_id:string, device_endpoint:string, token_endpoint:string, scope?:string}|null
+     */
+    private static function oauthConfigFor(string $key): ?array
+    {
+        $config = self::readConfig();
+        $entry = $config['mcpServers'][$key] ?? null;
+        if (!is_array($entry)) return null;
+        $oauth = $entry['oauth'] ?? null;
+        if (!is_array($oauth)) return null;
+        foreach (['client_id', 'device_endpoint', 'token_endpoint'] as $req) {
+            if (empty($oauth[$req])) return null;
+        }
+        return $oauth;
+    }
+
+    /**
      * Format seconds to human-readable age.
      */
     public static function humanAge(int $seconds): string

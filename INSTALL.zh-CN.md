@@ -405,6 +405,55 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
    - 每个 agent 的 `run.log` / 提示词 / 执行脚本现在写到 `$TMPDIR/superaicore-spawn-<date>-<hex>/<agent>/`,而不是 `$outputRoot/<agent>/`。用户可见输出目录只放真交付物(`.md` / `.csv` / `.png`)。宿主里有 glob `$outputRoot/<agent>/run.log` 的地方需要更新路径。
    - `Orchestrator::run()` 返回的每行 report 现在可能带 `warnings[]`。只读 `exit` / `log` / `duration_ms` / `error` 的旧调用方源码兼容(key 在 PHPDoc 里标了 optional)。
 
+**0.6.9 —— 无迁移。** 新增表面 + SDK bump 自带的五项自动修复。Composer 约束从 `^0.8.0` 抬到 `^0.9.0`。四点值得复核:
+
+1. **Qwen provider key 重绑（SDK 层）。** SDK 0.9.0 把 `qwen` 注册键重绑到 OpenAI-兼容 provider(`<region>/compatible-mode/v1/chat/completions`),原 DashScope 原生 body shape 搬到 `qwen-native`。如果你在 wire 层面依赖 `parameters.thinking_budget` / `parameters.enable_code_interpreter` 等 DashScope 原生字段,切换 provider 配置:
+   ```php
+   'provider_config' => ['provider' => 'qwen-native', 'region' => 'cn'],
+   ```
+   两个 key 共享 `QWEN_API_KEY` / `DASHSCOPE_API_KEY` env。新的默认 `qwen` 就是 Alibaba 自家 `qwen-code` CLI 生产里用的路径 —— 没动 DashScope 原生字段的就别改。`ApiHealthDetector::DEFAULT_PROVIDERS` 现在包含这两个 key,`api:status` 会并排显示两条线路。
+
+2. **`SuperAgentBackend` 三个新选项。** 全部增量、全部可选:
+   ```php
+   $dispatcher->dispatch([
+       'prompt'           => '…',
+       'backend'          => 'superagent',
+       'provider_config'  => ['provider' => 'kimi', 'region' => 'cn'],
+
+       // 新增 —— 厂商私有 wire 字段,深合并到请求 body
+       'extra_body'       => ['custom_vendor_field' => 'value'],
+
+       // 新增 —— capability-routed features;不支持的 provider 静默跳过
+       'features'         => [
+           'prompt_cache_key' => ['session_id' => $sessionId],  // Kimi 会话级 prompt cache
+           'thinking'         => ['budget' => 4000],             // CoT 带兜底
+       ],
+       // 便捷写法: 'prompt_cache_key' => $sessionId 自动映射到
+       // features.prompt_cache_key.session_id。
+
+       // 新增 —— 流处理 handler 外再包一层 loop-detection harness
+       'loop_detection'   => true,    // 或: ['tool_loop_threshold' => 7, ...]
+   ]);
+   ```
+   `loop_detection` 捕获 `TOOL_LOOP`(5 次同工具+同参数)、`STAGNATION`(8 次同名称)、`FILE_READ_LOOP`(最近 15 次里 8 次读取类,带冷启动豁免)、`CONTENT_LOOP`(50 字符滑窗 10 次)、`THOUGHT_LOOP`(3 次同 thinking 文本)。违规通过 SDK wire event 发出 —— 不开启的调用方 AICore envelope 字节级不变。
+
+3. **实时模型 catalog 刷新。** 新子命令:
+   ```bash
+   ./bin/superaicore super-ai-core:models refresh              # 刷新所有有 env 凭据的 provider
+   ./bin/superaicore super-ai-core:models refresh --provider=kimi
+   php artisan super-ai-core:models refresh --provider=qwen
+   ```
+   把每个 provider 的实时 `GET /models` 拉进 `~/.superagent/models-cache/<provider>.json`。overlay 在用户 override 之上、`register()` 运行时注册之下,bundled 定价在厂商 `/models` 不返回费率时保留。`CostCalculator` / `ModelResolver` 下一次调用自动接上 —— 无需重启,无需重新 publish 配置。
+
+4. **Kimi Code / Qwen Code OAuth。** 没有 API key 的话,通过 SDK CLI 交互登录:
+   ```bash
+   ./vendor/bin/superagent auth login kimi-code     # 对 auth.kimi.com 走 RFC 8628 device flow
+   ./vendor/bin/superagent auth login qwen-code     # 对 chat.qwen.ai 走 device flow + PKCE S256
+   ```
+   token 会落到 `~/.superagent/credentials/<kimi-code|qwen-code>.json`。`ApiHealthDetector::filterToConfigured()` 现在会把这两个文件也识别为 "已配置",即便没有 `KIMI_API_KEY` / `QWEN_API_KEY` env,`api:status` 和 `/providers` 依然会显示。Anthropic OAuth 刷新路径现在跨进程 `flock` 串行化,Laravel 多 worker 共用已存的 OAuth 凭据时不会再互相覆盖 refresh token。
+
+**针对 mcp.json 里声明 `oauth:` 块的 MCP 服务器**,UI 可以调用 `McpManager::oauthStatus($key)` / `oauthLogin($key)` / `oauthLogout($key)`。`oauthLogin()` 在 device-flow 轮询期间阻塞 stdio —— 放队列任务里跑,别在 request 内联。既有的 `startAuth()` / `clearAuth()` / `testConnection()`(处理 LinkedIn scraper 这类浏览器登录 / session-dir 服务器)不受影响。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

@@ -4,6 +4,59 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.9] — 2026-04-23
+
+**SuperAgent 0.9.0 uptake.** Point release tracking the SDK's two-wave post-0.8.9 block — kimi-cli-inspired Kimi Code OAuth + live `/models` refresh + prompt-cache-key adapter, then qwen-code-inspired `QwenProvider` rebuild as OpenAI-compat with the legacy DashScope shape preserved as `qwen-native`. Every public signature upstream is unchanged, so AICore's upgrade is purely additive: four surfaces extended, five correctness fixes landed for free.
+
+`forgeomni/superagent` constraint lifted from `^0.8.0` → `^0.9.0` (installed: `v0.9.0`). 0.9.0 is a two-wave post-0.8.9 SDK release driven by close reads of MoonshotAI's `kimi-cli` and Alibaba's `qwen-code`; every public signature is unchanged, so the bump lands as additive surface plus a handful of correctness fixes that AICore gets for free.
+
+### Automatic correctness fixes (no AICore code change)
+
+- **Kimi thinking wire shape.** Pre-0.9.0 the SDK sent a fabricated `kimi-k2-thinking-preview` model id on `thinking` requests — Moonshot never published that id, so every thinking call 400'd. 0.9.0 sends `reasoning_effort: low|medium|high` + `thinking: {type: enabled}` on the real model. Any AICore caller passing `features.thinking.*` to Kimi works now where it previously failed.
+- **Fragmented tool_call SSE assembly.** A single streamed tool call split across N chunks used to surface as N ContentBlocks in `AgentResult::$messages` — `SuperAgentBackend::extractSubagentProductivity()` read these as N sub-agents when only one ran. `ChatCompletionsProvider::parseSSEStream()` now accumulates per-index and emits exactly one block per tool; the envelope's `subagents[]` count becomes accurate on every OpenAI-compatible provider.
+- **`finish_reason: "error_finish"` now retryable.** DashScope compat-mode's mid-stream throttle signal is raised as `StreamContentError` (retryable, HTTP 429) instead of being silently appended to `result->text()`. AICore callers see correct 429 back-off behaviour for Qwen under load without code changes.
+- **Cached-token reads from dual shapes.** `usage.prompt_tokens_details.cached_tokens` (current OpenAI shape, used by Kimi) AND `usage.cached_tokens` (legacy) both populate `AgentResult`'s usage. `SuperAgentBackend`'s `usage.cache_read_input_tokens` envelope key becomes accurate on Kimi where pre-0.9.0 it was `0` for all runs.
+- **Anthropic OAuth refresh is now flock-serialized.** `CredentialStore::withLock()` wraps the refresh HTTP call on `anthropic` / `kimi-code` / `qwen-code`. Parallel requests using stored Anthropic OAuth creds (e.g. a Laravel queue with N workers) no longer race-overwrite each other's refresh tokens.
+
+### Added
+
+**`super-ai-core:models refresh [--provider <p>]`** — pulls each provider's live `GET /models` endpoint into the per-provider overlay cache at `~/.superagent/models-cache/<provider>.json`. Wraps SDK 0.9.0's `ModelCatalogRefresher::refresh()` / `refreshAll()`. Supports anthropic / openai / openrouter / kimi / glm / minimax / qwen. New models Moonshot / Alibaba / BigModel ship get picked up on a single CLI hit, above the user override but below runtime `register()` calls — bundled pricing is preserved when the vendor's `/models` omits rates. `status` subcommand gains a `refresh cache` row so operators can see which providers have been pulled. Error hint on failure tells the caller which env var to set. `src/Console/Commands/ModelsCommand.php`.
+
+**`SuperAgentBackend` forwards 0.9.0 provider-level options.** Three new additive plumbing keys:
+- `extra_body: array` — deep-merged at the top level of every `ChatCompletionsProvider` request body. Power-user escape hatch for vendor-specific wire fields (Kimi / Qwen / GLM / MiniMax / OpenAI / OpenRouter) before SuperAgent ships a capability adapter for them.
+- `features: array` — routed through SDK's `FeatureDispatcher`. Useful keys: `prompt_cache_key.session_id` (Kimi session prompt cache, silent skip elsewhere), `thinking.*` (CoT dispatch with graceful fallback on every provider), `dashscope_cache_control` (Qwen Anthropic-style cache markers).
+- `loop_detection: bool|array` — wraps the Agent's streaming handler in `LoopDetectionHarness`. `true` uses SDK defaults; an array overrides thresholds for `TOOL_LOOP` (5 same tool+args in a row) / `STAGNATION` (8 same name) / `FILE_READ_LOOP` (8 of 15 recent read-like calls, with cold-start exemption) / `CONTENT_LOOP` (50-char window 10×) / `THOUGHT_LOOP` (3× same thinking text). Violations fan out via the SDK's wire-event emitter without affecting callers that don't opt in.
+
+A convenience shim accepts `prompt_cache_key: string` directly as a session-id shorthand, mapped to `features.prompt_cache_key.session_id` internally.
+
+**`ApiHealthDetector` — dual-key Qwen and OAuth credential awareness.**
+- `qwen-native` joins `DEFAULT_PROVIDERS` alongside `qwen`. Both share `QWEN_API_KEY`, so hosts that want the legacy DashScope-native body shape (for `parameters.thinking_budget` or `parameters.enable_code_interpreter`) see both endpoints in the dashboard probe without re-configuring anything. Callers that need the DashScope-native shape now route via `provider_config.provider = 'qwen-native'` through `SuperAgentBackend` — composer key unchanged, provider-registry key is the only switch.
+- `filterToConfigured()` now treats an SDK 0.9.0 OAuth credential file under `~/.superagent/credentials/kimi-code.json` / `qwen-code.json` as "configured" for `kimi` / `qwen`, so a host that ran `superagent auth login kimi-code` (no API key) shows up in `api:status` instead of silently disappearing.
+
+**`McpManager` — three new helpers for mcp.json OAuth servers.**
+- `oauthStatus(key)` → `'ok' | 'needed' | 'n/a'` based on SDK 0.9.0's `McpOAuth::cachedToken()` and the server's mcp.json `oauth` block.
+- `oauthLogin(key)` → runs SDK's RFC 8628 device flow (`McpOAuth::authenticate()`) against `{client_id, device_endpoint, token_endpoint, scope?}` in the server entry, persisting the token in the SDK's shared store.
+- `oauthLogout(key)` → delegates to `McpOAuth::clearToken()`.
+
+These are complementary to the pre-existing `startAuth()` / `clearAuth()` / `testConnection()` methods (which handle browser-login / session-dir-based servers like LinkedIn scraper). A host UI can now render an OAuth button per server whose mcp.json entry declares `oauth: {...}`.
+
+### Changed
+
+- `forgeomni/superagent` bumped to **0.9.0** (from 0.8.9). Composer constraint lifted to `^0.9.0` — 0.8.x is no longer accepted because 0.9.0 rebinds the `qwen` registry key to an OpenAI-compatible provider (pre-0.9.0 was DashScope-native, now `qwen-native`), and we don't want silent behavioural drift on hosts that pin `^0.8.0` and upgrade lockfiles later.
+- `SuperAgentBackend` header docblock documents the new `extra_body` / `features` / `loop_detection` / `prompt_cache_key` options and the `region: 'code'` Kimi/Qwen OAuth path.
+- `ApiHealthDetector` header docblock documents the two-key Qwen split and the OAuth credential file check.
+- `ModelsCommand` subcommand list surfaces `refresh` alongside `list / update / status / reset`; the "SDK not found" hint updates to `^0.9.0`.
+
+### Migration notes
+
+No database changes. Hosts already on 0.6.8 upgrade cleanly.
+
+- **Qwen behaviour change in the SDK.** If your host explicitly relied on SuperAgent's `qwen` provider returning a DashScope-native body shape (i.e. reading `parameters.thinking_budget` / `parameters.enable_code_interpreter` on the wire), switch `provider_config.provider` to `'qwen-native'`. The default binding `'qwen'` now speaks OpenAI-compat `/compatible-mode/v1/chat/completions` — this is what Alibaba's own `qwen-code` CLI uses in production, and it's what AICore assumes going forward.
+- **Enabling Kimi prompt caching.** Pass `prompt_cache_key: $sessionId` (or the full `features.prompt_cache_key.session_id` shape) on `SuperAgentBackend::generate()` options when the provider is Kimi. Silent skip on non-Kimi providers, so it's safe to pass unconditionally from a shared dispatcher.
+- **Enabling loop detection for in-process runs.** Pass `loop_detection: true` on `SuperAgentBackend::generate()` options. Violations fire as wire events on the SDK's internal emitter — no AICore envelope key is added, so existing callers are byte-exact.
+- **Live model-catalog refresh.** Run `php artisan super-ai-core:models refresh` (or `./bin/superaicore super-ai-core:models refresh`) after setting provider API-key env vars. Subsequent `CostCalculator` / `ModelResolver` calls see the live catalog automatically via `ModelCatalog::overlayRefresherCache()`.
+- **MCP OAuth login flow in the UI.** `McpManager::oauthStatus()` / `oauthLogin()` / `oauthLogout()` are blocking on stdio during the device-flow poll (the SDK prints the verification URL + user code to STDERR). Host UIs that surface these should run the login out of the request cycle — a queued job or a shelled-out `superagent auth login-mcp <name>` is the right pattern. Status and logout are safe from a web request.
+
 ## [0.6.8] — 2026-04-22
 
 Fans MCP configuration out from one host-owned catalog, upgrades the in-process SuperAgent backend to actually use what the SDK ships in 0.8.8, and hardens the weak-model agent-spawn path so a Gemini Flash child that ignores its output contract gets flagged instead of silently polluting the consolidator's view. Three strands in one release:
