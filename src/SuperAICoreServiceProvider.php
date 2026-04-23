@@ -41,6 +41,7 @@ class SuperAICoreServiceProvider extends ServiceProvider
         $this->app->singleton(CapabilityRegistry::class);
         $this->app->singleton(EngineCatalog::class);
         $this->app->singleton(CostCalculator::class);
+        $this->app->singleton(\SuperAICore\Support\CliBinaryLocator::class);
         $this->app->singleton(CliProcessBuilderRegistry::class, function ($app) {
             return new CliProcessBuilderRegistry($app->make(EngineCatalog::class));
         });

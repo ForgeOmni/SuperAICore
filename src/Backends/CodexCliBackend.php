@@ -2,9 +2,12 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\BuildsScriptedProcess;
 use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\ScriptedSpawnBackend;
 use SuperAICore\Contracts\StreamingBackend;
+use SuperAICore\Models\AiProvider;
 use SuperAICore\Services\CodexModelResolver;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
@@ -17,9 +20,10 @@ use Symfony\Component\Process\Process;
  * `turn.completed.usage` object carries `input_tokens`, `output_tokens`,
  * and `cached_input_tokens`.
  */
-class CodexCliBackend implements Backend, StreamingBackend
+class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
     use StreamableProcess;
+    use BuildsScriptedProcess;
 
     public function __construct(
         protected string $binary = 'codex',
@@ -237,5 +241,122 @@ class CodexCliBackend implements Backend, StreamingBackend
             'cached_input_tokens' => $cachedInputTokens,
             'stop_reason'         => $stopReason,
         ];
+    }
+
+    // ─── ScriptedSpawnBackend ──────────────────────────────────────────
+
+    /**
+     * Codex-specific flag composition for scripted spawn. Stdin-pipes
+     * the prompt via the literal `-` sentinel codex uses. Emits a
+     * companion `<logFile>-last.txt` so the host can extract the final
+     * assistant message without re-parsing the full JSONL stream.
+     *
+     * Options honored beyond the base contract:
+     *   - `codex_extra_config_args: string[]` — array of `key=value`
+     *     strings; each gets prefixed with `-c ` in the argv.
+     *     Hosts use this to pipe in provider-specific `model_provider=`
+     *     / MCP `mcp_servers.<key>.*=` entries that can't be declared
+     *     statically (they depend on the selected AiProvider row).
+     */
+    public function prepareScriptedProcess(array $options): Process
+    {
+        $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');
+        $logFile     = $options['log_file']     ?? throw new \InvalidArgumentException('log_file required');
+        $projectRoot = $options['project_root'] ?? throw new \InvalidArgumentException('project_root required');
+        $model       = $options['model']        ?? null;
+        $env         = (array) ($options['env'] ?? []);
+
+        $lastMessageFile = str_replace('.log', '-last.txt', $logFile);
+        $configArgs = (array) ($options['codex_extra_config_args'] ?? []);
+
+        $resolvedModel = $model
+            ? CodexModelResolver::resolve($model, app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_CODEX))
+            : null;
+
+        $flags = [
+            'exec',
+            '--json',
+            '--full-auto',
+            '--skip-git-repo-check',
+            '-C', $projectRoot,
+            '-o', $lastMessageFile,
+        ];
+        if ($resolvedModel) {
+            $flags[] = '-m';
+            $flags[] = $resolvedModel;
+        }
+        foreach ($configArgs as $configArg) {
+            $flags[] = '-c';
+            $flags[] = (string) $configArg;
+        }
+        foreach ((array) ($options['extra_cli_flags'] ?? []) as $f) {
+            $flags[] = (string) $f;
+        }
+        $flags[] = '-'; // stdin sentinel
+
+        return $this->buildWrappedProcess(
+            engineKey:      AiProvider::BACKEND_CODEX,
+            promptFile:     $promptFile,
+            logFile:        $logFile,
+            projectRoot:    $projectRoot,
+            cliFlagsString: $this->escapeFlags($flags),
+            env:            $env,
+            envUnsetExtras: [],
+            timeout:        $options['timeout']      ?? null,
+            idleTimeout:    $options['idle_timeout'] ?? null,
+        );
+    }
+
+    /**
+     * One-shot chat — codex `exec --ephemeral --sandbox read-only` with
+     * tool surface disabled. Streams plain text.
+     */
+    public function streamChat(string $prompt, callable $onChunk, array $options = []): string
+    {
+        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_CODEX);
+
+        $args = [
+            $cliPath, 'exec', '--full-auto', '--skip-git-repo-check', '--ephemeral',
+            '--sandbox', 'read-only',
+            '--disable', 'plugins',
+            '--disable', 'shell_tool',
+            '--disable', 'multi_agent',
+            '--disable', 'tool_call_mcp_elicitation',
+            '--disable', 'tool_suggest',
+            '--disable', 'skill_mcp_dependency_install',
+            '-c', 'model_reasoning_effort="low"',
+        ];
+        $resolvedModel = !empty($options['model'])
+            ? CodexModelResolver::resolve($options['model'], $cliPath)
+            : null;
+        if ($resolvedModel) {
+            $args[] = '-m';
+            $args[] = $resolvedModel;
+        }
+        $args[] = '-';
+
+        $env = (array) ($options['env'] ?? []);
+        $process = new Process($args, $options['cwd'] ?? null, $env);
+        $process->setTimeout((int) ($options['timeout'] ?? 0));
+        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 300));
+        $process->setInput($prompt);
+
+        $fullResponse = '';
+        $process->start();
+        $process->wait(function (string $type, string $data) use (&$fullResponse, $onChunk) {
+            if ($type !== Process::OUT) return;
+            $fullResponse .= $data;
+            $onChunk($data);
+        });
+
+        if ($process->getExitCode() !== 0 && $fullResponse === '') {
+            $stderr = $process->getErrorOutput();
+            if ($this->logger) {
+                $this->logger->error("CodexCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
+            }
+            throw new \RuntimeException("Codex chat failed (exit {$process->getExitCode()})");
+        }
+
+        return $fullResponse;
     }
 }

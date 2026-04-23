@@ -2,9 +2,12 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\BuildsScriptedProcess;
 use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\ScriptedSpawnBackend;
 use SuperAICore\Contracts\StreamingBackend;
+use SuperAICore\Models\AiProvider;
 use SuperAICore\Services\GeminiModelResolver;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
@@ -22,9 +25,10 @@ use Symfony\Component\Process\Process;
  * We pick the model whose role is "main" (vs. "utility_router" side
  * calls that inflate counts but don't represent the user-facing answer).
  */
-class GeminiCliBackend implements Backend, StreamingBackend
+class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
     use StreamableProcess;
+    use BuildsScriptedProcess;
 
     public function __construct(
         protected string $binary = 'gemini',
@@ -259,5 +263,112 @@ class GeminiCliBackend implements Backend, StreamingBackend
             }
         }
         return $best ?: array_key_first($models);
+    }
+
+    // ─── ScriptedSpawnBackend ──────────────────────────────────────────
+
+    /**
+     * Gemini-specific scripted spawn. Gemini CLI is invoked with an
+     * empty `--prompt ''` arg plus `--yolo` (non-interactive tool
+     * approval), streams NDJSON (stream-json) output. Prompt flows on
+     * stdin like Claude/Codex. Capability transform is applied to the
+     * prompt file before spawn (handled by `buildWrappedProcess`).
+     *
+     * Hosts can defer the `superteam:gemini-sync` artisan call (lazy
+     * `.gemini/commands/*.toml` refresh) via the `pre_spawn_hook`
+     * option — the backend doesn't run it itself because it's host-
+     * specific.
+     */
+    public function prepareScriptedProcess(array $options): Process
+    {
+        $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');
+        $logFile     = $options['log_file']     ?? throw new \InvalidArgumentException('log_file required');
+        $projectRoot = $options['project_root'] ?? throw new \InvalidArgumentException('project_root required');
+        $model       = $options['model']        ?? null;
+        $env         = (array) ($options['env'] ?? []);
+
+        $resolvedModel = $model ? GeminiModelResolver::resolve($model) : null;
+
+        // Non-interactive mode: `--prompt ''` + `--yolo` auto-approves
+        // tool calls so the stdin pipe isn't blocked waiting on prompts.
+        $flags = ['--prompt', '', '--yolo', '-o', 'stream-json'];
+        if ($resolvedModel) {
+            $flags[] = '--model';
+            $flags[] = $resolvedModel;
+        }
+        foreach ((array) ($options['extra_cli_flags'] ?? []) as $f) {
+            $flags[] = (string) $f;
+        }
+
+        return $this->buildWrappedProcess(
+            engineKey:      AiProvider::BACKEND_GEMINI,
+            promptFile:     $promptFile,
+            logFile:        $logFile,
+            projectRoot:    $projectRoot,
+            cliFlagsString: $this->escapeFlags($flags),
+            env:            $env,
+            envUnsetExtras: [],
+            timeout:        $options['timeout']      ?? null,
+            idleTimeout:    $options['idle_timeout'] ?? null,
+        );
+    }
+
+    /**
+     * One-shot chat — Gemini: prompt as argv `-p <string>`, single JSON
+     * blob output (not streamed line-by-line; accumulate and parse).
+     */
+    public function streamChat(string $prompt, callable $onChunk, array $options = []): string
+    {
+        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_GEMINI);
+        $args = [$cliPath, '--output-format=json', '--yolo'];
+
+        $resolvedModel = !empty($options['model']) ? GeminiModelResolver::resolve($options['model']) : null;
+        if ($resolvedModel) {
+            $args[] = '--model';
+            $args[] = $resolvedModel;
+        }
+        $args[] = '-p';
+        $args[] = $prompt;
+
+        $env = (array) ($options['env'] ?? []);
+        $process = new Process($args, $options['cwd'] ?? null, $env);
+        $process->setTimeout((int) ($options['timeout'] ?? 0));
+        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 300));
+
+        $buffer = '';
+        $fullResponse = '';
+        $process->start();
+        $process->wait(function (string $type, string $data) use (&$buffer) {
+            if ($type === Process::OUT) $buffer .= $data;
+        });
+
+        // Parse single JSON blob (skip preamble noise like "YOLO mode
+        // is enabled." / "MCP issues detected." lines before first `{`).
+        $buffer = trim($buffer);
+        $startPos = strpos($buffer, '{');
+        if ($startPos !== false) {
+            $jsonPart = substr($buffer, $startPos);
+            $data = json_decode($jsonPart, true);
+            if (is_array($data)) {
+                // gemini JSON: response.text OR response.candidates[0].content.parts[*].text
+                $text = $data['response']['text']
+                    ?? $data['response']['candidates'][0]['content']['parts'][0]['text']
+                    ?? '';
+                if (is_string($text) && $text !== '') {
+                    $fullResponse = $text;
+                    $onChunk($text);
+                }
+            }
+        }
+
+        if ($process->getExitCode() !== 0 && $fullResponse === '') {
+            $stderr = $process->getErrorOutput();
+            if ($this->logger) {
+                $this->logger->error("GeminiCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
+            }
+            throw new \RuntimeException("Gemini chat failed (exit {$process->getExitCode()})");
+        }
+
+        return $fullResponse;
     }
 }

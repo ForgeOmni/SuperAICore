@@ -4,6 +4,43 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-04-23
+
+**ScriptedSpawnBackend contract — auto-discover new CLI engines in host integrations.** Hosts integrating AICore (SuperTeam, SuperPilot, shopify-autopilot, …) used to carry a `match ($backend) { 'claude' => buildClaudeProcess(…), 'codex' => buildCodexProcess(…), 'gemini' => buildGeminiProcess(…) }` for every task spawn, plus a second identical switch for one-shot chat paths. Every new CLI engine (kiro, copilot, kimi, future) forced a host patch. `ScriptedSpawnBackend` collapses that to a single polymorphic call: the backend class itself owns argv composition, prompt-file piping, MCP injection, capability transforms, and output parsing. New engines just implement the contract — host code stays byte-identical across engine additions.
+
+### Added
+
+- **`Contracts\ScriptedSpawnBackend` interface** — sibling of `StreamingBackend`. Two methods: `prepareScriptedProcess(array $options): Process` (configured `Symfony\Component\Process\Process` the caller can nohup/detach; wrapper script handles stdin-from-file piping, stdout+stderr log tee, cwd, env scrub, timeouts), and `streamChat(string $prompt, callable $onChunk, array $options = []): string` (blocking one-shot chat — backend owns argv, stdin-vs-argv prompt passing, output parsing, ANSI stripping).
+- **`Support\CliBinaryLocator`** — filesystem probe for CLI binaries. Moved from SuperTeam's `ClaudeRunner::findCliPath()` so every backend resolves installs the same way (`~/.npm-global/bin`, `/opt/homebrew/bin`, `~/.nvm/versions/node/<v>/bin`, Windows `%APPDATA%/npm`). Binary name from `EngineCatalog->cliBinary` — no match statement. Registered as a singleton in the service provider.
+- **`Backends\Concerns\BuildsScriptedProcess` trait** — shared wrapper-script helpers for `ScriptedSpawnBackend` implementations. `buildWrappedProcess(…)` writes sh/.bat and returns a pre-configured `Process`. `applyCapabilityTransform()` rewrites the prompt file in-place via `BackendCapabilities::transformPrompt()`. `escapeFlags([…])` wraps `escapeshellarg` across an argv list.
+- **`BackendRegistry::forEngine(string $engineKey): ?ScriptedSpawnBackend`** — engine-key (e.g. `claude`) → first registered backend on `EngineCatalog->dispatcherBackends` that implements the contract.
+
+### Changed
+
+- **Six CLI backends implement `ScriptedSpawnBackend`** in one pass (`Claude` / `Codex` / `Gemini` / `Copilot` / `Kiro` / `Kimi`). Each class carries its own per-CLI specifics: Claude's `--session-id` / `bypassPermissions` / MCP-config handling / 5-marker `CLAUDE_CODE_*` env scrub; Codex's `exec --json --full-auto -C <root> -o <last-message>` + `codex_extra_config_args` pass-through; Gemini's capability transform (tool-name rewrite) applied before spawn; Copilot / Kiro's argv prompt passing + ANSI stripping; Kimi's stream-json prompt pipe.
+- **`ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS`** public constant exposes the 5-marker scrub list (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) so hosts that still compose their own processes can share the canonical list.
+- **`SuperAICoreServiceProvider`** — registers `CliBinaryLocator` as a singleton.
+
+### Migration path
+
+Hosts currently carrying a per-backend build switch collapse to:
+
+```php
+$backend = app(BackendRegistry::class)->forEngine($engineKey);  // nullable
+$process = $backend->prepareScriptedProcess([
+    'prompt_file'  => $promptFile,
+    'log_file'     => $logFile,
+    'project_root' => $projectRoot,
+    'model'        => $model,
+    'env'          => $env,                     // host-built (reads IntegrationConfig)
+    'disable_mcp'  => $disableMcp,              // Claude primarily
+    'codex_extra_config_args' => $codexArgs,    // Codex primarily
+]);
+$process->start();
+```
+
+After this migration, future engines that ship a `ScriptedSpawnBackend` implementation show up in every host code path automatically — no match arm to add.
+
 ## [0.7.0] — 2026-04-23
 
 **SuperAgent 0.9.1 uptake + round-trip idempotency + classified provider errors + two new provider types.** Composer constraint lifted `^0.9.0` → `^0.9.1`. 0.9.1 is a two-round post-0.9.0 SDK release that reverse-ports mature primitives (filesystem auditing, declarative MCP catalog, provider health, W3C `traceparent` passthrough) and adds a dedicated OpenAI-surface upgrade (new `OpenAIResponsesProvider`, six classified `ProviderException` subclasses, layered retry + jittered backoff, LM Studio provider, Azure OpenAI auto-detection). Every public signature upstream is unchanged, so AICore's uptake is purely additive — five surfaces extended, one long-standing mapping gap fixed on the same pass, no migrations.

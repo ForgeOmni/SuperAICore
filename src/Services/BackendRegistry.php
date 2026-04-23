@@ -111,4 +111,32 @@ class BackendRegistry
     {
         return array_keys($this->backends);
     }
+
+    /**
+     * Resolve the first registered backend for an engine key that
+     * implements `ScriptedSpawnBackend` — the contract hosts use for
+     * async task runs and one-shot chat.
+     *
+     * Engine → backend mapping comes from `EngineCatalog`'s
+     * `dispatcher_backends` (e.g. `'claude' → ['claude_cli','anthropic_api']`);
+     * the CLI dispatcher is always first so it wins by construction.
+     *
+     * Returns null when the engine has no CLI backend registered
+     * (e.g. engine enabled=false in config, or superagent-only engines
+     * that don't implement scripted spawn).
+     */
+    public function forEngine(string $engineKey): ?\SuperAICore\Contracts\ScriptedSpawnBackend
+    {
+        $catalog = app(\SuperAICore\Services\EngineCatalog::class);
+        $engine = $catalog->get($engineKey);
+        if (!$engine) return null;
+
+        foreach ($engine->dispatcherBackends as $backendName) {
+            $backend = $this->get($backendName);
+            if ($backend instanceof \SuperAICore\Contracts\ScriptedSpawnBackend) {
+                return $backend;
+            }
+        }
+        return null;
+    }
 }

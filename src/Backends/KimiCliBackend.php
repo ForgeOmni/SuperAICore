@@ -2,9 +2,12 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\BuildsScriptedProcess;
 use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\ScriptedSpawnBackend;
 use SuperAICore\Contracts\StreamingBackend;
+use SuperAICore\Models\AiProvider;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 
@@ -41,9 +44,10 @@ use Symfony\Component\Process\Process;
  * The resume-session hint (`To resume this session: kimi -r <uuid>`) is
  * emitted on stderr, not stdout — it does not pollute the NDJSON stream.
  */
-class KimiCliBackend implements Backend, StreamingBackend
+class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
     use StreamableProcess;
+    use BuildsScriptedProcess;
 
     public function __construct(
         protected string $binary = 'kimi',
@@ -270,5 +274,98 @@ class KimiCliBackend implements Backend, StreamingBackend
             $lines[] = strtoupper($role) . ': ' . $content;
         }
         return implode("\n\n", $lines);
+    }
+
+    // ─── ScriptedSpawnBackend ──────────────────────────────────────────
+
+    public function prepareScriptedProcess(array $options): Process
+    {
+        $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');
+        $logFile     = $options['log_file']     ?? throw new \InvalidArgumentException('log_file required');
+        $projectRoot = $options['project_root'] ?? throw new \InvalidArgumentException('project_root required');
+        $model       = $options['model']        ?? null;
+        $env         = (array) ($options['env'] ?? []);
+
+        $promptText = @file_get_contents($promptFile);
+        if ($promptText === false) {
+            throw new \RuntimeException("Kimi: cannot read prompt file {$promptFile}");
+        }
+
+        $flags = ['--print', '--output-format', 'stream-json', '-w', $projectRoot, '--prompt', $promptText];
+        if ($model) {
+            $flags[] = '--model';
+            $flags[] = (string) $model;
+        }
+        foreach ((array) ($options['extra_cli_flags'] ?? []) as $f) {
+            $flags[] = (string) $f;
+        }
+
+        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_KIMI);
+        $escapedFlags = $this->escapeFlags($flags);
+
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        if ($isWindows) {
+            $cliPathWin    = str_replace('/', '\\', $cliPath);
+            $logFileWin    = str_replace('/', '\\', $logFile);
+            $projectRootWin = str_replace('/', '\\', $projectRoot);
+            $shellCmd = "\"{$cliPathWin}\" {$escapedFlags} > \"{$logFileWin}\" 2>&1";
+            $execScript = str_replace('.log', '-exec.bat', $logFile);
+            @file_put_contents($execScript, "@echo off\r\ncd /D \"{$projectRootWin}\"\r\n{$shellCmd}\r\n");
+            $process = new Process(['cmd', '/C', $execScript], $projectRoot);
+        } else {
+            $shellCmd = "\"{$cliPath}\" {$escapedFlags} </dev/null > \"{$logFile}\" 2>&1";
+            $execScript = str_replace('.log', '-exec.sh', $logFile);
+            @file_put_contents($execScript, "#!/bin/sh\ncd \"{$projectRoot}\"\n{$shellCmd}\n");
+            @chmod($execScript, 0755);
+            $process = new Process(['sh', $execScript], $projectRoot);
+        }
+
+        if ($env) $process->setEnv($env);
+        $process->setTimeout((int) ($options['timeout']      ?? 7200));
+        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 1800));
+        return $process;
+    }
+
+    public function streamChat(string $prompt, callable $onChunk, array $options = []): string
+    {
+        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_KIMI);
+        $args = [$cliPath, '--print', '--output-format', 'stream-json', '--prompt', $prompt];
+        if (!empty($options['model'])) {
+            $args[] = '--model';
+            $args[] = (string) $options['model'];
+        }
+
+        $env = (array) ($options['env'] ?? []);
+        $process = new Process($args, $options['cwd'] ?? null, $env);
+        $process->setTimeout((int) ($options['timeout'] ?? 0));
+        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 300));
+
+        $fullResponse = '';
+        $buffer = '';
+        $process->start();
+        $process->wait(function (string $type, string $data) use (&$buffer, &$fullResponse, $onChunk) {
+            if ($type !== Process::OUT) return;
+            $buffer .= $data;
+            while (($pos = strpos($buffer, "\n")) !== false) {
+                $line = trim(substr($buffer, 0, $pos));
+                $buffer = substr($buffer, $pos + 1);
+                if ($line === '' || $line[0] !== '{') continue;
+                $event = json_decode($line, true);
+                if (!is_array($event)) continue;
+                if (($event['role'] ?? '') === 'assistant') {
+                    foreach ((array) ($event['content'] ?? []) as $block) {
+                        if (($block['type'] ?? '') === 'text' && is_string($block['text'] ?? null)) {
+                            $fullResponse .= $block['text'];
+                            $onChunk($block['text']);
+                        }
+                    }
+                }
+            }
+        });
+
+        if ($process->getExitCode() !== 0 && $fullResponse === '') {
+            throw new \RuntimeException("Kimi chat failed (exit {$process->getExitCode()})");
+        }
+        return $fullResponse;
     }
 }

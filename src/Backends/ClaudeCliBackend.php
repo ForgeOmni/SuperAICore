@@ -2,9 +2,12 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\BuildsScriptedProcess;
 use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\ScriptedSpawnBackend;
 use SuperAICore\Contracts\StreamingBackend;
+use SuperAICore\Models\AiProvider;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 
@@ -18,9 +21,23 @@ use Symfony\Component\Process\Process;
  *   - Google Vertex (CLAUDE_CODE_USE_VERTEX=1 + project vars)
  *   - Built-in (local claude login — no env vars)
  */
-class ClaudeCliBackend implements Backend, StreamingBackend
+class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
     use StreamableProcess;
+    use BuildsScriptedProcess;
+
+    /**
+     * Env marker names to wipe before spawning a child `claude`. See
+     * `buildEnv()` for context — PHP-FPM workers inheriting a parent
+     * Claude Code session's vars trip the CLI's recursion guards.
+     */
+    public const CLAUDE_SESSION_ENV_MARKERS = [
+        'CLAUDECODE',
+        'CLAUDE_CODE_ENTRYPOINT',
+        'CLAUDE_CODE_SSE_PORT',
+        'CLAUDE_CODE_EXECPATH',
+        'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+    ];
 
     public function __construct(
         protected string $binary = 'claude',
@@ -478,5 +495,198 @@ class ClaudeCliBackend implements Backend, StreamingBackend
             $parts[] = "{$role}: {$content}";
         }
         return implode("\n\n", $parts);
+    }
+
+    // ─── ScriptedSpawnBackend ──────────────────────────────────────────
+
+    /**
+     * Claude-specific flag composition for scripted spawn:
+     *   - `-p --output-format stream-json --verbose` (async task mode)
+     *   - `--session-id <uuid>` (either supplied by caller or generated)
+     *   - `--permission-mode bypassPermissions` (default — caller may override)
+     *   - `--allowedTools "Read,Glob,Grep,Write,WebSearch,WebFetch,Agent"` (default)
+     *   - `--mcp-config <empty.json> --strict-mcp-config` when
+     *     `disable_mcp === true` (prevents Claude from auto-loading every
+     *     globally-registered MCP server at startup)
+     *   - `--model <x>` when model supplied
+     */
+    public function prepareScriptedProcess(array $options): Process
+    {
+        $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');
+        $logFile     = $options['log_file']     ?? throw new \InvalidArgumentException('log_file required');
+        $projectRoot = $options['project_root'] ?? throw new \InvalidArgumentException('project_root required');
+        $model       = $options['model']        ?? null;
+        $env         = (array) ($options['env'] ?? []);
+
+        $sessionId      = (string) ($options['session_id'] ?? $this->uuid());
+        $permissionMode = (string) ($options['permission_mode'] ?? 'bypassPermissions');
+        $allowedTools   = $options['allowed_tools'] ?? 'Read,Glob,Grep,Write,WebSearch,WebFetch,Agent';
+        if (is_array($allowedTools)) {
+            $allowedTools = implode(',', $allowedTools);
+        }
+
+        $flags = [
+            '-p',
+            '--session-id', $sessionId,
+            '--permission-mode', $permissionMode,
+            '--allowedTools', $allowedTools,
+            '--output-format', 'stream-json',
+            '--verbose',
+        ];
+        if ($model) {
+            $flags[] = '--model';
+            $flags[] = $model;
+        }
+
+        // MCP handling: 'empty' → write a minimal mcp.json and pass
+        // --strict-mcp-config. Also supports legacy `disable_mcp => true`
+        // from the host migration. 'file' uses a caller-supplied config.
+        $mcpMode = $options['mcp_mode'] ?? (($options['disable_mcp'] ?? false) ? 'empty' : 'inherit');
+        if ($mcpMode === 'empty') {
+            $emptyMcp = dirname($logFile) . '/mcp-empty.json';
+            if (!file_exists($emptyMcp)) {
+                @file_put_contents($emptyMcp, '{"mcpServers":{}}');
+            }
+            $flags[] = '--mcp-config';
+            $flags[] = $emptyMcp;
+            $flags[] = '--strict-mcp-config';
+        } elseif ($mcpMode === 'file' && !empty($options['mcp_config_file'])) {
+            $flags[] = '--mcp-config';
+            $flags[] = (string) $options['mcp_config_file'];
+            $flags[] = '--strict-mcp-config';
+        }
+
+        foreach ((array) ($options['extra_cli_flags'] ?? []) as $f) {
+            $flags[] = (string) $f;
+        }
+
+        return $this->buildWrappedProcess(
+            engineKey:       AiProvider::BACKEND_CLAUDE,
+            promptFile:      $promptFile,
+            logFile:         $logFile,
+            projectRoot:     $projectRoot,
+            cliFlagsString:  $this->escapeFlags($flags),
+            env:             $env,
+            envUnsetExtras:  self::CLAUDE_SESSION_ENV_MARKERS,
+            timeout:         $options['timeout']      ?? null,
+            idleTimeout:     $options['idle_timeout'] ?? null,
+        );
+    }
+
+    /**
+     * One-shot chat — Claude CLI: stdin-pipe prompt, stream-json output,
+     * read-only tool allowlist (Read/Glob/Grep), empty MCP config,
+     * bypass permissions.
+     */
+    public function streamChat(string $prompt, callable $onChunk, array $options = []): string
+    {
+        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_CLAUDE);
+        $allowedTools = $options['allowed_tools'] ?? ['Read', 'Glob', 'Grep'];
+        if (is_array($allowedTools)) {
+            $allowedTools = implode(',', $allowedTools);
+        }
+
+        $args = [
+            $cliPath, '-p',
+            '--output-format', 'stream-json', '--verbose',
+            '--permission-mode', 'bypassPermissions',
+            '--tools', (string) $allowedTools,
+            '--mcp-config', '{"mcpServers":{}}',
+            '--strict-mcp-config',
+        ];
+
+        $resolvedModel = null;
+        if (!empty($options['model']) && class_exists(\SuperAICore\Services\ClaudeModelResolver::class)) {
+            $resolvedModel = \SuperAICore\Services\ClaudeModelResolver::resolve($options['model']);
+        }
+        if ($resolvedModel) {
+            $args[] = '--model';
+            $args[] = $resolvedModel;
+        }
+
+        $env = (array) ($options['env'] ?? []);
+        foreach (self::CLAUDE_SESSION_ENV_MARKERS as $marker) {
+            if (!array_key_exists($marker, $env)) $env[$marker] = false;
+        }
+
+        $process = new Process($args, $options['cwd'] ?? null, $env);
+        $process->setTimeout((int) ($options['timeout'] ?? 0));
+        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 300));
+        $process->setInput($prompt);
+
+        $fullResponse = '';
+        $buffer = '';
+
+        $process->start();
+        $process->wait(function (string $type, string $data) use (&$buffer, &$fullResponse, $onChunk) {
+            if ($type !== Process::OUT) return;
+            $buffer .= $data;
+            while (($pos = strpos($buffer, "\n")) !== false) {
+                $line = trim(substr($buffer, 0, $pos));
+                $buffer = substr($buffer, $pos + 1);
+                if ($line === '') continue;
+                $this->emitClaudeStreamChunk($line, $fullResponse, $onChunk);
+            }
+        });
+        if (trim($buffer) !== '') {
+            $this->emitClaudeStreamChunk(trim($buffer), $fullResponse, $onChunk);
+        }
+
+        if ($process->getExitCode() !== 0 && $fullResponse === '') {
+            $stderr = $process->getErrorOutput();
+            if ($this->logger) {
+                $this->logger->error("ClaudeCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
+            }
+            throw new \RuntimeException("Claude chat failed (exit {$process->getExitCode()})");
+        }
+
+        return $fullResponse;
+    }
+
+    /**
+     * Parse one stream-json line from Claude's chat output — shared
+     * between streaming task spawn and chat one-shot. Emits any
+     * text deltas via `$onChunk` and appends to `$fullResponse`.
+     */
+    protected function emitClaudeStreamChunk(string $line, string &$fullResponse, callable $onChunk): void
+    {
+        if ($line === '' || $line[0] !== '{') return;
+        $event = json_decode($line, true);
+        if (!is_array($event)) return;
+
+        $type = $event['type'] ?? null;
+        if ($type === 'assistant' && isset($event['message']['content'])) {
+            foreach ((array) $event['message']['content'] as $block) {
+                if (($block['type'] ?? '') === 'text') {
+                    $text = (string) ($block['text'] ?? '');
+                    if ($text !== '') {
+                        $fullResponse .= $text;
+                        $onChunk($text);
+                    }
+                }
+            }
+        } elseif ($type === 'result' && isset($event['result']) && is_string($event['result'])) {
+            // Final `result` event — some Claude builds emit the full
+            // text here instead of (or in addition to) per-turn deltas.
+            // Append only the tail we didn't already stream.
+            $final = (string) $event['result'];
+            if ($final !== '' && !str_ends_with($fullResponse, $final)) {
+                $delta = str_starts_with($final, $fullResponse)
+                    ? substr($final, strlen($fullResponse))
+                    : $final;
+                if ($delta !== '') {
+                    $fullResponse .= $delta;
+                    $onChunk($delta);
+                }
+            }
+        }
+    }
+
+    protected function uuid(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+        $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 }

@@ -2,10 +2,13 @@
 
 namespace SuperAICore\Backends;
 
+use SuperAICore\Backends\Concerns\BuildsScriptedProcess;
 use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\ScriptedSpawnBackend;
 use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Models\AiProvider;
+use SuperAICore\Services\KiroModelResolver;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 
@@ -33,9 +36,10 @@ use Symfony\Component\Process\Process;
  * glm-5, qwen3-coder-next, auto, …). Omitting --model lets Kiro's
  * router pick based on the subscription tier.
  */
-class KiroCliBackend implements Backend, StreamingBackend
+class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
     use StreamableProcess;
+    use BuildsScriptedProcess;
 
     public function __construct(
         protected string $binary = 'kiro-cli',
@@ -293,5 +297,107 @@ class KiroCliBackend implements Backend, StreamingBackend
             $parts[] = "{$role}: {$content}";
         }
         return implode("\n\n", $parts);
+    }
+
+    // ─── ScriptedSpawnBackend ──────────────────────────────────────────
+
+    /**
+     * Kiro scripted spawn. Kiro CLI `chat` takes the prompt as the
+     * positional argument (not stdin, not `-p`). Reads the prompt file
+     * content and passes it inline. Output is plain text.
+     */
+    public function prepareScriptedProcess(array $options): Process
+    {
+        $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');
+        $logFile     = $options['log_file']     ?? throw new \InvalidArgumentException('log_file required');
+        $projectRoot = $options['project_root'] ?? throw new \InvalidArgumentException('project_root required');
+        $model       = $options['model']        ?? null;
+        $env         = array_merge(['NO_COLOR' => '1', 'TERM' => 'dumb'], (array) ($options['env'] ?? []));
+
+        $promptText = @file_get_contents($promptFile);
+        if ($promptText === false) {
+            throw new \RuntimeException("Kiro: cannot read prompt file {$promptFile}");
+        }
+
+        $resolvedModel = $model && class_exists(KiroModelResolver::class)
+            ? KiroModelResolver::resolve($model)
+            : null;
+
+        $flags = ['chat', '--no-interactive', '--trust-all-tools'];
+        if ($resolvedModel) {
+            $flags[] = '--model';
+            $flags[] = $resolvedModel;
+        }
+        foreach ((array) ($options['extra_cli_flags'] ?? []) as $f) {
+            $flags[] = (string) $f;
+        }
+        $flags[] = $promptText;
+
+        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_KIRO);
+        $escapedFlags = $this->escapeFlags($flags);
+
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        if ($isWindows) {
+            $cliPathWin    = str_replace('/', '\\', $cliPath);
+            $logFileWin    = str_replace('/', '\\', $logFile);
+            $projectRootWin = str_replace('/', '\\', $projectRoot);
+            $shellCmd = "\"{$cliPathWin}\" {$escapedFlags} > \"{$logFileWin}\" 2>&1";
+            $execScript = str_replace('.log', '-exec.bat', $logFile);
+            @file_put_contents($execScript, "@echo off\r\ncd /D \"{$projectRootWin}\"\r\n{$shellCmd}\r\n");
+            $process = new Process(['cmd', '/C', $execScript], $projectRoot);
+        } else {
+            $shellCmd = "\"{$cliPath}\" {$escapedFlags} </dev/null > \"{$logFile}\" 2>&1";
+            $execScript = str_replace('.log', '-exec.sh', $logFile);
+            @file_put_contents($execScript, "#!/bin/sh\ncd \"{$projectRoot}\"\n{$shellCmd}\n");
+            @chmod($execScript, 0755);
+            $process = new Process(['sh', $execScript], $projectRoot);
+        }
+
+        $process->setEnv($env);
+        $process->setTimeout((int) ($options['timeout']      ?? 7200));
+        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 1800));
+        return $process;
+    }
+
+    /**
+     * One-shot chat — Kiro: `kiro-cli chat --no-interactive <prompt>`.
+     */
+    public function streamChat(string $prompt, callable $onChunk, array $options = []): string
+    {
+        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_KIRO);
+        $args = [$cliPath, 'chat', '--no-interactive'];
+
+        $resolvedModel = !empty($options['model']) && class_exists(KiroModelResolver::class)
+            ? KiroModelResolver::resolve($options['model'])
+            : null;
+        if ($resolvedModel) {
+            $args[] = '--model';
+            $args[] = $resolvedModel;
+        }
+        $args[] = $prompt;
+
+        $env = array_merge(['NO_COLOR' => '1', 'TERM' => 'dumb'], (array) ($options['env'] ?? []));
+        $process = new Process($args, $options['cwd'] ?? null, $env);
+        $process->setTimeout((int) ($options['timeout'] ?? 0));
+        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 300));
+
+        $fullResponse = '';
+        $process->start();
+        $process->wait(function (string $type, string $data) use (&$fullResponse, $onChunk) {
+            if ($type !== Process::OUT) return;
+            $clean = preg_replace('/\x1B\[[0-9;?]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][0-9A-Z]/', '', $data) ?? $data;
+            $fullResponse .= $clean;
+            $onChunk($clean);
+        });
+
+        if ($process->getExitCode() !== 0 && $fullResponse === '') {
+            $stderr = $process->getErrorOutput();
+            if ($this->logger) {
+                $this->logger->error("KiroCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
+            }
+            throw new \RuntimeException("Kiro chat failed (exit {$process->getExitCode()})");
+        }
+
+        return $fullResponse;
     }
 }
