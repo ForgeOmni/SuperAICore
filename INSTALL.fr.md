@@ -463,6 +463,53 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 **Pour les serveurs MCP déclarant un bloc `oauth:` dans `mcp.json`** vous pouvez désormais appeler `McpManager::oauthStatus($key)` / `oauthLogin($key)` / `oauthLogout($key)` dans votre UI. `oauthLogin()` bloque sur stdio pendant le poll device-flow — lancez-le en job queue, pas en ligne dans une requête. Les `startAuth()` / `clearAuth()` / `testConnection()` existants (serveurs browser-login / session-dir, ex. scraper LinkedIn) restent inchangés.
 
+**0.7.0 — aucune migration.** Surface additive + un correctif de mapping de longue date. Contrainte Composer remontée `^0.9.0` → `^0.9.1`. Cinq points à revoir :
+
+1. **Deux nouveaux types de provider : `openai-responses` et `lmstudio`.** Les deux routent via le backend `superagent` (clés SDK `openai-responses` / `lmstudio`).
+   - **API OpenAI Responses** — mode facturé : ajoutez une ligne provider avec `type = openai-responses` et une clé API. Mode abonnement ChatGPT : laissez `api_key` vide et stockez `access_token` dans `extra_config.access_token` (depuis le flux OAuth ChatGPT de votre hôte) — le SDK bascule automatiquement la base URL sur `chatgpt.com/backend-api/codex`. Azure OpenAI : définissez `base_url` à `https://<nom>.openai.azure.com/openai/deployments/<deployment>` — le SDK ajoute automatiquement la query `api-version=2025-04-01-preview` (surchargez via `extra_config.azure_api_version`).
+   - **LM Studio** — pointez `base_url` vers votre serveur LM Studio local (défaut `http://localhost:1234/v1`). Aucune clé API requise ; le SDK synthétise un header `Authorization` de substitution. Utile pour les charges déconnectées / on-prem.
+
+2. **Round-trip de la clé d'idempotence via le SDK.** Si vous passiez déjà `idempotency_key` dans les options de `Dispatcher::dispatch()`, aucun changement de code — mais la valeur voyage maintenant avec l'`AgentResult` du SDK au lieu de passer latéralement via UsageRecorder. Les hôtes dont le Dispatcher tourne sur un autre process que l'écriture n'ont plus besoin de recalculer la clé côté écriture. Même principe pour la clé auto dérivée d'`external_label` : `Dispatcher::dispatch()` pré-calcule le même `"{backend}:{external_label}"`, le transmet à `Agent::run()`, et préfère la valeur echoée lors de l'écriture dans `ai_usage_logs`.
+
+3. **Passthrough de trace context W3C.** Si votre hôte a un middleware qui capture le header `traceparent` entrant, transmettez-le au Dispatcher :
+   ```php
+   $dispatcher->dispatch([
+       'prompt'       => '…',
+       'backend'      => 'superagent',
+       'provider_config' => ['type' => 'openai-responses', 'api_key' => env('OPENAI_API_KEY')],
+       'traceparent'  => $request->header('traceparent'),  // no-op silencieux si null
+       'tracestate'   => $request->header('tracestate'),
+   ]);
+   ```
+   Le SDK les projette sur l'enveloppe `client_metadata` de l'API Responses, donc les logs OpenAI corrèlent avec la trace distribuée de l'hôte. Drop silencieux sur chaînes invalides — passage inconditionnel sûr.
+
+4. **Sous-classes `ProviderException` classifiées.** L'échelle de catch de `SuperAgentBackend` se scinde maintenant en six sous-classes SDK spécifiques (`ContextWindowExceeded`, `QuotaExceeded`, `UsageNotIncluded`, `CyberPolicy`, `ServerOverloaded`, `InvalidPrompt`) avant le `\Throwable` générique, chacune loggée avec un tag `error_class` stable + flag `retryable`. Contrat inchangé — toujours `null` en échec — donc aucun site d'appel ne casse. Les hôtes voulant un routage plus intelligent sous-classent `SuperAgentBackend` et surchargent la seam `logProviderError(\Throwable $e, string $code)`.
+
+5. **Headers HTTP déclaratifs par type de provider.** Deux nouveaux champs sur le descripteur — `http_headers` (header → valeur littérale) et `env_http_headers` (header → nom de variable d'env, lue à la requête) — permettent d'injecter `OpenAI-Project`, `LangSmith-Project`, `OpenRouter-App` etc. sur chaque appel SDK d'un type de provider, sans toucher au code du package. Exemple :
+   ```php
+   // config/super-ai-core.php
+   'provider_types' => [
+       // Tag chaque appel OpenAI avec votre propre app id + reprend la
+       // variable OPENAI_PROJECT (le SDK omet silencieusement le header
+       // quand la variable n'est pas définie, donc c'est sûr sur les hôtes
+       // qui n'ont pas configuré de clés project-scoped).
+       \SuperAICore\Models\AiProvider::TYPE_OPENAI => [
+           'http_headers'     => ['X-App' => 'my-host-app'],
+           'env_http_headers' => ['OpenAI-Project' => 'OPENAI_PROJECT'],
+       ],
+
+       // Idem pour le nouveau type Responses API — injecte un header
+       // LangSmith project, tracing cross-provider sans wrapper.
+       \SuperAICore\Models\AiProvider::TYPE_OPENAI_RESPONSES => [
+           'env_http_headers' => ['Langsmith-Project' => 'LANGSMITH_PROJECT'],
+       ],
+   ],
+   ```
+
+**Lignes `openai-compatible` / `anthropic-proxy` préexistantes.** Avant 0.7.0 ces lignes routaient silencieusement via le provider `anthropic` du SDK quand `provider_config.provider` n'était pas défini à la main — `anthropic-proxy` fonctionnait par coïncidence, `openai-compatible` échouait. Après 0.7.0 le `sdk_provider` du descripteur fait le mapping correct (`anthropic` / `openai`). Si votre hôte définissait explicitement `provider_config.provider`, rien ne change. Si vous dépendiez de ce fallback cassé, les lignes `openai-compatible` commencent enfin à fonctionner comme prévu.
+
+Voir `docs/advanced-usage.fr.md` pour les recettes approfondies — Responses multi-tours, tracing LangSmith, LM Studio sur LAN, routage d'exception niveau hôte, surcharges HTTP-header par provider.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

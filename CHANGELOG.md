@@ -4,6 +4,62 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-04-23
+
+**SuperAgent 0.9.1 uptake + round-trip idempotency + classified provider errors + two new provider types.** Composer constraint lifted `^0.9.0` → `^0.9.1`. 0.9.1 is a two-round post-0.9.0 SDK release that reverse-ports mature primitives (filesystem auditing, declarative MCP catalog, provider health, W3C `traceparent` passthrough) and adds a dedicated OpenAI-surface upgrade (new `OpenAIResponsesProvider`, six classified `ProviderException` subclasses, layered retry + jittered backoff, LM Studio provider, Azure OpenAI auto-detection). Every public signature upstream is unchanged, so AICore's uptake is purely additive — five surfaces extended, one long-standing mapping gap fixed on the same pass, no migrations.
+
+### Added
+
+**Round-trip `idempotency_key` through the SDK.** `Dispatcher::dispatch()` now pre-computes the idempotency key via `resolveIdempotencyKey()` *before* `generate()` and injects it onto `$callOptions['idempotency_key']`. `SuperAgentBackend::generate()` forwards it to `Agent::run($prompt, ['idempotency_key' => $key])` — SDK 0.9.1 merges per-call options into the agent's stored options (pre-0.9.1 silently dropped them on the non-auto path) and echoes the (80-char-truncated) key back as `AgentResult::$idempotencyKey`. The backend surfaces it on the envelope as `idempotency_key`, and Dispatcher's write to `ai_usage_logs` prefers the envelope-echoed value over its own pre-computed one. Net effect: hosts whose Dispatcher runs on a different PHP process than the UsageRecorder write-through still observe the same key the SDK saw, and no code has to thread the value sideways.
+
+**Classified `ProviderException` subclasses in `SuperAgentBackend`.** The generic `catch (\Throwable)` is now preceded by six typed catches matching SDK 0.9.1's `Exceptions\Provider\*` subclasses — `ContextWindowExceededException` / `QuotaExceededException` / `UsageNotIncludedException` / `CyberPolicyException` / `ServerOverloadedException` / `InvalidPromptException` — plus a `ProviderException` fallback. Each emits a structured log entry carrying a stable `error_class` tag (`context_window_exceeded`, `quota_exceeded`, …) and the SDK's `isRetryable()` verdict, so operators grepping telemetry see distinct failure modes instead of one "SuperAgentBackend error" bucket. The contract (`generate(): ?array`) still returns `null` on failure — no caller breaks — and a `logProviderError(\Throwable, string)` seam is exposed to subclasses so a host that wants to pivot `$result` onto a classified envelope key can do so in one override. Tests pin two representative classifications.
+
+**Two new provider types: `openai-responses` and `lmstudio`.** `AiProvider::TYPE_OPENAI_RESPONSES` + `AiProvider::TYPE_LMSTUDIO` land as constants, flow into the `TYPES` map, and register as routable types on the `superagent` backend via `BACKEND_TYPES[BACKEND_SUPERAGENT]`. `ProviderTypeRegistry::bundled()` ships full descriptors (icon, form fields, allowed backends, env-key map). Both are routed through the `superagent` dispatcher adapter — `openai-responses` (SDK registry key `openai-responses`) hits OpenAI's `/v1/responses` API and auto-detects Azure deployments from the base-URL pattern; when the provider row stores an `access_token` (from a host-app ChatGPT-OAuth flow) rather than an API key, the SDK flips the base URL to `chatgpt.com/backend-api/codex` so Plus/Pro/Business subscribers hit their subscription quota. `lmstudio` (SDK registry key `lmstudio`) targets a local LM Studio server (default `http://localhost:1234`) with a synthesised placeholder `Authorization` header so no API-key row needs to carry a real secret. The `ProviderTypeRegistry::forBackend('superagent')` count goes from 4 to 6; every host picker that iterates it (`/providers` modal, CLI modes, etc.) surfaces the new types without code changes.
+
+**`http_headers` + `env_http_headers` on `ProviderTypeDescriptor`.** Two new optional fields ship declarative HTTP-header injection for the SDK's `ChatCompletionsProvider`:
+- `http_headers: array<string,string>` — literal header name → value. For `X-App-Id: myhost` and similar static identification headers.
+- `env_http_headers: array<string,string>` — header name → env var name. The SDK reads the env var at request time and only injects the header when it's set + non-empty (so setting `OPENAI_PROJECT` once lights up an `OpenAI-Project` header on every call, and clearing the var quietly drops it).
+
+Fields default to `[]` (byte-exact behaviour for existing descriptors). `SuperAgentBackend::buildAgent()` projects them onto the llmConfig passed to `ProviderRegistry::createWithRegion()` / `Agent::initialize()` so the SDK applies them uniformly across Chat Completions providers. Host apps extend via the existing `super-ai-core.provider_types.<type>.http_headers` / `env_http_headers` override keys — no package code change needed to inject a new LangSmith / Langfuse / OpenAI-Project / OpenRouter-App header.
+
+**`sdkProvider` on `ProviderTypeDescriptor` — and a fix for a long-standing mapping gap.** A new optional `sdkProvider: ?string` field declares which SDK `ProviderRegistry` key a UI type should route to. The two BYO-base-url wrappers (`anthropic-proxy`, `openai-compatible`) now explicitly declare their SDK provider as `anthropic` / `openai` respectively; `SuperAgentBackend::buildAgent()` consults `resolveSdkProvider($providerConfig)` (via the DI-registered `ProviderTypeRegistry`) when `provider_config.provider` is absent, and falls back to the type string when the descriptor doesn't declare a mapping. Pre-0.7.0 every non-explicit provider silently defaulted to `'anthropic'` — the mapping fix means `openai-compatible` and `anthropic-proxy` rows now actually route to the intended SDK provider when operators haven't hand-set `provider_config.provider`. New types (`openai-responses`, `lmstudio`) declare the mapping from day one. Bundled `anthropic` / `openai` types don't set the field — they already matched.
+
+**W3C `traceparent` / `tracestate` / `trace_context` passthrough.** `SuperAgentBackend::buildPerCallOptions()` forwards three trace-related options to `Agent::run()`:
+- `traceparent: string` — canonical W3C `00-<trace-id>-<span-id>-<flags>` string. Usually the inbound `traceparent` HTTP header, propagated by host middleware.
+- `tracestate: string` — paired vendor-specific state.
+- `trace_context: TraceContext|mixed` — a pre-built `SuperAgent\Support\TraceContext` instance, for callers that already minted one.
+
+Empty-string values are filtered so hosts without a trace middleware don't ship `traceparent: ""` on every request. The SDK projects these into the Responses API's `client_metadata` envelope (`openai-responses` provider) so OpenAI-side logs correlate with the host's distributed trace out of the box; other providers silently ignore. No envelope key is added — existing callers are byte-exact.
+
+### Changed
+
+- `forgeomni/superagent` bumped to **0.9.1** (from 0.9.0). Composer constraint lifted to `^0.9.1`.
+- `SuperAgentBackend::generate()` restructured: one-line `$agent->run($prompt)` becomes `$agent->run($prompt, $perCallOptions)`; the envelope carries `idempotency_key` on success; the exception ladder adds six typed catches before the generic `\Throwable`.
+- `SuperAgentBackend::buildAgent()` gains `resolveSdkProvider()` + `resolveHttpHeaderKnobs()` helpers + calls `lookupDescriptor()` (new protected seam) to read the type descriptor from the DI container. All three fall back gracefully when the container isn't booted (early CLI, unit tests).
+- `Dispatcher::dispatch()` computes the idempotency key early (moves `resolveIdempotencyKey()` above the generate() call) and prefers the envelope-echoed `idempotency_key` over the pre-computed one when writing `ai_usage_logs`.
+- `ProviderTypeDescriptor` gains three optional readonly properties (`sdkProvider`, `httpHeaders`, `envHttpHeaders`) with `null` / `[]` defaults. `fromArray()` + `toArray()` + `mergedWith()` thread them through. Every existing construction path compiles unchanged.
+- `AiProvider::TYPES` + `AiProvider::BACKEND_TYPES[BACKEND_SUPERAGENT]` grow from 10 → 12 entries and 4 → 6 entries respectively.
+- `tests/Unit/SuperAgentBackendTest.php` grows by 6 tests (idempotency forward + echo, 80-char truncation, traceparent forward + empty-drop, two classified-exception paths); `CapturingSuperAgentBackend` gains `lastRunOptions` / `lastErrorClass` capture fields. `tests/Unit/ProviderTypeRegistryTest.php` grows by 5 tests (`openai-responses`, `lmstudio`, `anthropic-proxy`/`openai-compatible` SDK-provider mapping, default empty http-headers, host-config http_headers override). `tests/Feature/UsageIdempotencyTest.php` grows by 2 tests (Dispatcher forwards key onto backend options, Dispatcher prefers envelope-echoed key).
+
+### Migration notes
+
+No database changes. Hosts on 0.6.9 upgrade cleanly.
+
+- **Using `openai-responses` or `lmstudio`?** Add a row on `/providers` with the new type. For `openai-responses`: set `api_key` for metered OpenAI usage, or leave it blank and store an `access_token` in `extra_config.access_token` for a ChatGPT-subscription route — the SDK auto-detects. For Azure OpenAI: point `base_url` at your deployment (e.g. `https://<name>.openai.azure.com/openai/deployments/<deployment>`); the SDK adds the `api-version` query string automatically (override via `extra_config.azure_api_version` if your deployment lags).
+- **Want custom headers per provider type?** Override `super-ai-core.provider_types.<type>.http_headers` or `.env_http_headers` in your published `config/super-ai-core.php`. Example:
+  ```php
+  'provider_types' => [
+      'openai' => [
+          'http_headers' => ['X-App' => 'my-host-app'],
+          'env_http_headers' => ['OpenAI-Project' => 'OPENAI_PROJECT'],
+      ],
+  ],
+  ```
+  No package code change required.
+- **Exception classification for smarter routing.** No action needed — default behaviour still returns `null` on every failure. Hosts that want to react to specific failure modes (e.g. compact-then-retry on `ContextWindowExceeded`, cycle providers on `QuotaExceeded`) subclass `SuperAgentBackend` and override `logProviderError()` to surface the `error_class` onto the envelope, then read it in their `Dispatcher` wrapper.
+- **Distributed tracing.** If your host has an HTTP middleware that reads the inbound `traceparent` header and stashes it (e.g. on a request scope), pass it through to `Dispatcher::dispatch(['traceparent' => $headerValue, ...])`. Silent no-op when empty. See `docs/advanced-usage.md`.
+- **`anthropic-proxy` / `openai-compatible` providers whose `provider_config.provider` was empty.** Pre-0.7.0 these routed through the SDK's `anthropic` provider by default (a pre-existing bug — `anthropic-proxy` matched, but `openai-compatible` silently went to `anthropic` and failed). After 0.7.0 the descriptor's `sdk_provider` drives the mapping correctly. Hosts that explicitly set `provider_config.provider` see no change; hosts that relied on the accidental fallback see their `openai-compatible` rows now route where they were meant to.
+
 ## [0.6.9] — 2026-04-23
 
 **SuperAgent 0.9.0 uptake.** Point release tracking the SDK's two-wave post-0.8.9 block — kimi-cli-inspired Kimi Code OAuth + live `/models` refresh + prompt-cache-key adapter, then qwen-code-inspired `QwenProvider` rebuild as OpenAI-compat with the legacy DashScope shape preserved as `qwen-native`. Every public signature upstream is unchanged, so AICore's upgrade is purely additive: four surfaces extended, five correctness fixes landed for free.

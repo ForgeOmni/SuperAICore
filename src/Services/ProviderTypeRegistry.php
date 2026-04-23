@@ -145,6 +145,9 @@ class ProviderTypeRegistry
                 'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT, AiProvider::BACKEND_CLAUDE],
                 'env_key'          => 'ANTHROPIC_API_KEY',
                 'base_url_env'     => 'ANTHROPIC_BASE_URL',
+                // BYO-base-url wrapper — same SDK provider as `anthropic`,
+                // just with `base_url` routed at a customer-owned proxy.
+                'sdk_provider'     => 'anthropic',
             ],
 
             AiProvider::TYPE_BEDROCK => [
@@ -209,6 +212,38 @@ class ProviderTypeRegistry
                 'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT, AiProvider::BACKEND_CODEX],
                 'env_key'          => 'OPENAI_API_KEY',
                 'base_url_env'     => 'OPENAI_BASE_URL',
+                // BYO-base-url wrapper around the `openai` SDK provider.
+                'sdk_provider'     => 'openai',
+            ],
+
+            // 0.9.1 additions — OpenAI Responses API + LM Studio.
+            AiProvider::TYPE_OPENAI_RESPONSES => [
+                'icon'             => 'bi-chat-square-dots',
+                // `api_key` is optional here — ChatGPT OAuth flow stores an
+                // `access_token` instead, and the SDK's Responses provider
+                // auto-routes to chatgpt.com/backend-api/codex in that case.
+                // Azure OpenAI callers set `base_url` to their deployment.
+                'fields'           => ['base_url', 'api_key'],
+                'default_backend'  => AiProvider::BACKEND_SUPERAGENT,
+                'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT],
+                'env_key'          => 'OPENAI_API_KEY',
+                'base_url_env'     => 'OPENAI_BASE_URL',
+                'needs_api_key'    => false,
+                'sdk_provider'     => 'openai-responses',
+            ],
+
+            AiProvider::TYPE_LMSTUDIO => [
+                'icon'             => 'bi-pc-display',
+                // LM Studio runs a local OpenAI-compat server; the placeholder
+                // Authorization header is synthesised by the SDK, so the api_key
+                // field is optional cosmetics for users who want to mirror it.
+                'fields'           => ['base_url', 'api_key'],
+                'default_backend'  => AiProvider::BACKEND_SUPERAGENT,
+                'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT],
+                'base_url_env'     => 'LMSTUDIO_BASE_URL',
+                'needs_api_key'    => false,
+                'needs_base_url'   => false,
+                'sdk_provider'     => 'lmstudio',
             ],
 
             AiProvider::TYPE_KIRO_API => [

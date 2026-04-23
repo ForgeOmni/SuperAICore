@@ -181,6 +181,73 @@ class UsageIdempotencyTest extends TestCase
         $this->assertNull(AiUsageLog::first()->idempotency_key);
     }
 
+    public function test_dispatcher_forwards_idempotency_key_to_backend_options(): void
+    {
+        // SDK 0.9.1 contract: backends that wrap Agent::run() can forward the
+        // key so AgentResult echoes it back. We can't touch the SDK here, but
+        // we can verify Dispatcher places the key onto $options before the
+        // backend's generate() fires — which is the enabling plumbing.
+        $captured = null;
+        $registry = new BackendRegistry(null, []);
+        $registry->register(new class($captured) implements Backend {
+            public function __construct(public ?array &$captured) {}
+            public function name(): string { return 'stub_fwd'; }
+            public function isAvailable(array $providerConfig = []): bool { return true; }
+            public function generate(array $options): ?array
+            {
+                $this->captured = $options;
+                return ['text' => 'ok', 'model' => 'claude-sonnet-4-5-20241022', 'usage' => ['input_tokens' => 1, 'output_tokens' => 1], 'stop_reason' => null];
+            }
+        });
+
+        $dispatcher = new Dispatcher(
+            $registry,
+            new CostCalculator(),
+            new UsageTracker(new EloquentUsageRepository()),
+        );
+        $dispatcher->dispatch([
+            'prompt' => 'p',
+            'backend' => 'stub_fwd',
+            'idempotency_key' => 'task:42',
+        ]);
+
+        $this->assertSame('task:42', $captured['idempotency_key']);
+    }
+
+    public function test_dispatcher_prefers_echoed_key_from_result_envelope(): void
+    {
+        // When the backend rewrites the key on the envelope (e.g. the SDK
+        // normalised it), the Dispatcher's usage write follows the envelope
+        // so the ai_usage_logs row binds the authoritative observed value.
+        $registry = new BackendRegistry(null, []);
+        $registry->register(new class implements Backend {
+            public function name(): string { return 'stub_echo'; }
+            public function isAvailable(array $providerConfig = []): bool { return true; }
+            public function generate(array $options): ?array
+            {
+                return [
+                    'text' => 'ok',
+                    'model' => 'claude-sonnet-4-5-20241022',
+                    'usage' => ['input_tokens' => 1, 'output_tokens' => 1],
+                    'stop_reason' => null,
+                    'idempotency_key' => 'sdk-normalised',
+                ];
+            }
+        });
+
+        $dispatcher = new Dispatcher(
+            $registry,
+            new CostCalculator(),
+            new UsageTracker(new EloquentUsageRepository()),
+        );
+        $dispatcher->dispatch([
+            'prompt' => 'p', 'backend' => 'stub_echo',
+            'idempotency_key' => 'raw-client-key',
+        ]);
+
+        $this->assertSame('sdk-normalised', AiUsageLog::first()->idempotency_key);
+    }
+
     public function test_key_truncated_to_80_chars(): void
     {
         $registry = new BackendRegistry(null, []);

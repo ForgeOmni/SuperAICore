@@ -4,9 +4,17 @@ namespace SuperAICore\Backends;
 
 use Psr\Log\LoggerInterface;
 use SuperAgent\Agent;
+use SuperAgent\Exceptions\Provider\ContextWindowExceededException;
+use SuperAgent\Exceptions\Provider\CyberPolicyException;
+use SuperAgent\Exceptions\Provider\InvalidPromptException;
+use SuperAgent\Exceptions\Provider\QuotaExceededException;
+use SuperAgent\Exceptions\Provider\ServerOverloadedException;
+use SuperAgent\Exceptions\Provider\UsageNotIncludedException;
+use SuperAgent\Exceptions\ProviderException;
 use SuperAgent\MCP\MCPManager;
 use SuperAgent\Providers\ProviderRegistry;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Services\ProviderTypeRegistry;
 
 /**
  * In-process LLM + tool-use loop via forgeomni/superagent.
@@ -90,7 +98,19 @@ class SuperAgentBackend implements Backend
                 $agent->withSystemPrompt((string) $options['system']);
             }
 
-            $result = $agent->run((string) ($options['prompt'] ?? ''));
+            // SDK 0.9.1+ per-call options. The SDK merges these into the
+            // agent's stored options before dispatch (pre-0.9.1 silently
+            // dropped them on the non-auto path), which lets hosts:
+            //   - carry an `idempotency_key` through to `AgentResult` for
+            //     dedup on write (UsageRecorder reads it back off the result
+            //     so the round-trip stays consistent even when the Dispatcher
+            //     runs on a different PHP process than the write-through).
+            //   - propagate a W3C `traceparent` / `tracestate` onto OpenAI
+            //     Responses-API logs via `client_metadata`, correlating
+            //     host-side traces with provider-side logs.
+            $perCallOptions = $this->buildPerCallOptions($options);
+            $result = $agent->run((string) ($options['prompt'] ?? ''), $perCallOptions);
+
             $text = $result->text();
             if ($text === '') return null;
 
@@ -111,6 +131,12 @@ class SuperAgentBackend implements Backend
                 'stop_reason' => null,
             ];
 
+            // 0.9.1: echo the idempotency key back off AgentResult so the
+            // Dispatcher's usage write binds the same key the SDK observed.
+            if (property_exists($result, 'idempotencyKey') && $result->idempotencyKey !== null) {
+                $envelope['idempotency_key'] = $result->idempotencyKey;
+            }
+
             // SDK 0.8.9+ AgentTool productivity (only emitted when the caller
             // opted into `load_tools: ['agent']` or similar — AgentTool isn't
             // in the default set). Key is omitted when no sub-agent ran, so
@@ -122,6 +148,27 @@ class SuperAgentBackend implements Backend
             }
 
             return $envelope;
+        } catch (ContextWindowExceededException $e) {
+            $this->logProviderError($e, 'context_window_exceeded');
+            return null;
+        } catch (QuotaExceededException $e) {
+            $this->logProviderError($e, 'quota_exceeded');
+            return null;
+        } catch (UsageNotIncludedException $e) {
+            $this->logProviderError($e, 'usage_not_included');
+            return null;
+        } catch (CyberPolicyException $e) {
+            $this->logProviderError($e, 'cyber_policy');
+            return null;
+        } catch (ServerOverloadedException $e) {
+            $this->logProviderError($e, 'server_overloaded');
+            return null;
+        } catch (InvalidPromptException $e) {
+            $this->logProviderError($e, 'invalid_prompt');
+            return null;
+        } catch (ProviderException $e) {
+            $this->logProviderError($e, 'provider_error');
+            return null;
         } catch (\Throwable $e) {
             if ($this->logger) {
                 $this->logger->warning('SuperAgentBackend error: ' . $e->getMessage());
@@ -135,6 +182,57 @@ class SuperAgentBackend implements Backend
     }
 
     /**
+     * Build per-call options forwarded to `Agent::run($prompt, $options)`.
+     * Extracted so tests can assert the exact shape without a running SDK.
+     *
+     * Requires SDK 0.9.1+ for the option-merge fix (pre-0.9.1 silently
+     * dropped the second arg on the non-auto path).
+     *
+     * @param array<string,mixed> $options
+     * @return array<string,mixed>
+     */
+    protected function buildPerCallOptions(array $options): array
+    {
+        $perCall = [];
+
+        if (isset($options['idempotency_key']) && is_string($options['idempotency_key']) && $options['idempotency_key'] !== '') {
+            $perCall['idempotency_key'] = $options['idempotency_key'];
+        }
+
+        // Trace context — either a full W3C traceparent string or a TraceContext
+        // instance the caller already built. Host middleware typically forwards
+        // the inbound `traceparent` header here.
+        if (isset($options['traceparent']) && is_string($options['traceparent']) && $options['traceparent'] !== '') {
+            $perCall['traceparent'] = $options['traceparent'];
+        }
+        if (isset($options['tracestate']) && is_string($options['tracestate']) && $options['tracestate'] !== '') {
+            $perCall['tracestate'] = $options['tracestate'];
+        }
+        if (isset($options['trace_context'])) {
+            $perCall['trace_context'] = $options['trace_context'];
+        }
+
+        return $perCall;
+    }
+
+    /**
+     * Log a classified `ProviderException` with a stable error-class tag so
+     * operators can grep telemetry for a specific failure mode. Current
+     * contract (Backend::generate) still returns null on failure — the
+     * classification only enriches the log; routing logic reading the class
+     * tag is future work. Override in tests to assert the classification.
+     */
+    protected function logProviderError(\Throwable $e, string $code): void
+    {
+        if ($this->logger) {
+            $this->logger->warning('SuperAgentBackend error [' . $code . ']: ' . $e->getMessage(), [
+                'error_class' => $code,
+                'retryable'   => method_exists($e, 'isRetryable') ? $e->isRetryable() : null,
+            ]);
+        }
+    }
+
+    /**
      * Build and configure the Agent. Protected so tests can subclass and
      * swap in an Agent backed by a canned LLMProvider.
      *
@@ -143,7 +241,7 @@ class SuperAgentBackend implements Backend
      */
     protected function buildAgent(array $options, array $providerConfig): Agent
     {
-        $providerName = (string) ($providerConfig['provider'] ?? 'anthropic');
+        $providerName = (string) ($providerConfig['provider'] ?? $this->resolveSdkProvider($providerConfig) ?? 'anthropic');
         $region       = $providerConfig['region'] ?? null;
 
         $llmConfig = [];
@@ -153,6 +251,17 @@ class SuperAgentBackend implements Backend
             'base_url' => $providerConfig['base_url'] ?? null,
         ] as $k => $v) {
             if ($v !== null && $v !== '') {
+                $llmConfig[$k] = $v;
+            }
+        }
+
+        // 0.9.1: descriptor-declared HTTP headers. `http_headers` are static
+        // (literal header → value); `env_http_headers` read from env at
+        // request time (header → env var name), and are silently dropped
+        // when the env var is unset, so nothing surprising ships on hosts
+        // that didn't set them.
+        foreach ($this->resolveHttpHeaderKnobs($providerConfig) as $k => $v) {
+            if ($v !== [] && $v !== null) {
                 $llmConfig[$k] = $v;
             }
         }
@@ -241,6 +350,70 @@ class SuperAgentBackend implements Backend
     protected function makeAgent(array $agentConfig): Agent
     {
         return new Agent($agentConfig);
+    }
+
+    /**
+     * Pick the SDK `ProviderRegistry` key for this provider_config. Returns
+     * null when the type is unknown (or the service container isn't booted,
+     * e.g. early in a CLI run) — callers fall back to the legacy default.
+     *
+     * The UI type doesn't always match the SDK key: `anthropic-proxy` and
+     * `openai-compatible` are BYO-base-url wrappers whose SDK key is the
+     * base provider (`anthropic` / `openai`). Descriptors declare the
+     * mapping so the two stay in sync.
+     *
+     * @param array<string,mixed> $providerConfig
+     */
+    protected function resolveSdkProvider(array $providerConfig): ?string
+    {
+        $type = $providerConfig['type'] ?? null;
+        if (!is_string($type) || $type === '') return null;
+
+        $descriptor = $this->lookupDescriptor($type);
+        if ($descriptor === null) return null;
+
+        return $descriptor->sdkProvider ?? $descriptor->type;
+    }
+
+    /**
+     * Project the descriptor's `http_headers` + `env_http_headers` onto the
+     * llmConfig keys that `ChatCompletionsProvider` recognises (0.9.1+).
+     * Returns empty arrays when there's no descriptor or nothing to inject.
+     *
+     * @param array<string,mixed> $providerConfig
+     * @return array{http_headers: array<string,string>, env_http_headers: array<string,string>}
+     */
+    protected function resolveHttpHeaderKnobs(array $providerConfig): array
+    {
+        $type = $providerConfig['type'] ?? null;
+        if (!is_string($type) || $type === '') {
+            return ['http_headers' => [], 'env_http_headers' => []];
+        }
+        $descriptor = $this->lookupDescriptor($type);
+        if ($descriptor === null) {
+            return ['http_headers' => [], 'env_http_headers' => []];
+        }
+        return [
+            'http_headers'     => $descriptor->httpHeaders,
+            'env_http_headers' => $descriptor->envHttpHeaders,
+        ];
+    }
+
+    /**
+     * Fetch a provider-type descriptor from the DI container. Returns null
+     * when the container isn't booted (early CLI, unit tests without a
+     * Laravel app) so callers can gracefully fall back.
+     */
+    protected function lookupDescriptor(string $type): ?\SuperAICore\Support\ProviderTypeDescriptor
+    {
+        if (!function_exists('app')) return null;
+        try {
+            /** @var ProviderTypeRegistry $registry */
+            $registry = app(ProviderTypeRegistry::class);
+            return $registry->get($type);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

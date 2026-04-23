@@ -85,6 +85,16 @@ class Dispatcher
             $options['provider_config'] ?? [],
         );
 
+        // Compute the idempotency key BEFORE dispatch so backends that
+        // forward it to the SDK (SuperAgentBackend → Agent::run options
+        // → AgentResult::$idempotencyKey on 0.9.1+) observe the same key
+        // that UsageRecorder later writes. Pre-computation is free — the
+        // same inputs flow into resolveIdempotencyKey().
+        $idempotencyKey = $this->resolveIdempotencyKey($options, $backend->name());
+        if ($idempotencyKey !== null) {
+            $callOptions['idempotency_key'] = $idempotencyKey;
+        }
+
         // Streaming opt-in. When the caller asks for stream:true and the
         // resolved backend implements StreamingBackend, prefer stream() so
         // the host gets a live tee log + Process Monitor row + onChunk
@@ -153,7 +163,17 @@ class Dispatcher
         // want NO dedup (rare — every call legitimately distinct) can
         // pass `idempotency_key => false` to skip auto-gen.
         if ($this->usage) {
-            $idempotencyKey = $this->resolveIdempotencyKey($options, $backend->name());
+            // Prefer the key the backend echoed off `AgentResult::$idempotencyKey`
+            // (SDK 0.9.1+ round-trip) — it's authoritative because the SDK
+            // is where the dedup observation actually happened. Fall back
+            // to the pre-computed key from $callOptions, which matches
+            // for deterministic derivation paths (the common case).
+            $idempotencyKey = null;
+            if (isset($result['idempotency_key']) && is_string($result['idempotency_key']) && $result['idempotency_key'] !== '') {
+                $idempotencyKey = $result['idempotency_key'];
+            } elseif (isset($callOptions['idempotency_key']) && is_string($callOptions['idempotency_key'])) {
+                $idempotencyKey = $callOptions['idempotency_key'];
+            }
 
             $usageLogId = $this->usage->record([
                 'backend' => $backend->name(),

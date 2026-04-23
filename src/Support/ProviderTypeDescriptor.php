@@ -93,6 +93,33 @@ class ProviderTypeDescriptor
          * @var array<string,array<string,string>>
          */
         public readonly array $backendEnvFlags = [],
+
+        /**
+         * SDK `ProviderRegistry` key this type maps to when routed through
+         * the superagent backend. Null means "same as $type". Explicit
+         * mapping matters when the UI type is a wrapper (e.g.
+         * `anthropic-proxy` and `openai-compatible` are BYO-base-url
+         * wrappers around the `anthropic` / `openai` SDK providers).
+         */
+        public readonly ?string $sdkProvider = null,
+
+        /**
+         * Static HTTP headers to inject on every request made through this
+         * provider type (0.9.1+ `http_headers` feature). Keys are header
+         * names, values are literal strings.
+         *
+         * @var array<string,string>
+         */
+        public readonly array $httpHeaders = [],
+
+        /**
+         * Env-driven HTTP headers (0.9.1+ `env_http_headers` feature). Keys
+         * are header names; values are env var names. When the env var is
+         * set + non-empty at spawn time, the header is injected.
+         *
+         * @var array<string,string>
+         */
+        public readonly array $envHttpHeaders = [],
     ) {}
 
     public static function fromArray(string $type, array $data): self
@@ -111,6 +138,9 @@ class ProviderTypeDescriptor
             baseUrlEnv:      $data['base_url_env'] ?? null,
             envExtras:       (array) ($data['env_extras'] ?? []),
             backendEnvFlags: (array) ($data['backend_env_flags'] ?? []),
+            sdkProvider:     isset($data['sdk_provider']) ? (string) $data['sdk_provider'] : null,
+            httpHeaders:     (array) ($data['http_headers'] ?? []),
+            envHttpHeaders:  (array) ($data['env_http_headers'] ?? []),
         );
     }
 
@@ -138,6 +168,9 @@ class ProviderTypeDescriptor
             'base_url_env'      => $this->baseUrlEnv,
             'env_extras'        => $this->envExtras,
             'backend_env_flags' => $this->backendEnvFlags,
+            'sdk_provider'      => $this->sdkProvider,
+            'http_headers'      => $this->httpHeaders,
+            'env_http_headers'  => $this->envHttpHeaders,
         ];
     }
 

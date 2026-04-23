@@ -454,6 +454,52 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 **针对 mcp.json 里声明 `oauth:` 块的 MCP 服务器**,UI 可以调用 `McpManager::oauthStatus($key)` / `oauthLogin($key)` / `oauthLogout($key)`。`oauthLogin()` 在 device-flow 轮询期间阻塞 stdio —— 放队列任务里跑,别在 request 内联。既有的 `startAuth()` / `clearAuth()` / `testConnection()`(处理 LinkedIn scraper 这类浏览器登录 / session-dir 服务器)不受影响。
 
+**0.7.0 —— 无迁移。** 新增接口 + 修复一处长期存在的映射问题。Composer 约束从 `^0.9.0` 抬到 `^0.9.1`。五件事值得留意:
+
+1. **两个新 provider 类型:`openai-responses` 和 `lmstudio`。** 都走 `superagent` 后端（SDK 键分别为 `openai-responses` / `lmstudio`）。
+   - **OpenAI Responses API** —— 按量模式:添加一个 `type = openai-responses` 且带 API key 的 provider 行。ChatGPT 订阅模式:把 `api_key` 留空，将 `access_token`（来自宿主 ChatGPT OAuth 流程）存进 `extra_config.access_token` —— SDK 会自动把 base URL 切到 `chatgpt.com/backend-api/codex`。Azure OpenAI:`base_url` 填成 `https://<name>.openai.azure.com/openai/deployments/<deployment>` —— SDK 自动追加 `api-version=2025-04-01-preview` query（通过 `extra_config.azure_api_version` 覆盖）。
+   - **LM Studio** —— `base_url` 指向本地 LM Studio 服务（默认 `http://localhost:1234/v1`）。无需真 API key；SDK 自动合成占位 `Authorization` 头。适合断网 / on-prem 场景。
+
+2. **幂等 key 通过 SDK 往返。** 如果原本就在 `Dispatcher::dispatch()` 选项里传 `idempotency_key`，业务代码不用改 —— 但值现在会随 SDK 的 `AgentResult` 流转，而不是旁路经 UsageRecorder。Dispatcher 和 UsageRecorder 即便跑在不同进程上，写入侧也无需重算 key。基于 `external_label` 派生的 auto-key 同样适用:Dispatcher 先算出 `"{backend}:{external_label}"` 转发给 `Agent::run()`，写 `ai_usage_logs` 时优先采用 envelope 回显值。
+
+3. **W3C trace context 透传。** 宿主若有中间件读取入站 `traceparent` 头，转发给 Dispatcher 即可:
+   ```php
+   $dispatcher->dispatch([
+       'prompt'       => '…',
+       'backend'      => 'superagent',
+       'provider_config' => ['type' => 'openai-responses', 'api_key' => env('OPENAI_API_KEY')],
+       'traceparent'  => $request->header('traceparent'),  // null 时静默跳过
+       'tracestate'   => $request->header('tracestate'),
+   ]);
+   ```
+   SDK 把这些投影到 Responses API 的 `client_metadata`，OpenAI 侧日志就能和宿主分布式 trace 对上。非法字符串静默丢弃 —— 无条件传也安全。
+
+4. **分类的 `ProviderException` 子类。** `SuperAgentBackend` 的 catch 阶梯现在在通用 `\Throwable` 之前先分 SDK 的六个子类（`ContextWindowExceeded` / `QuotaExceeded` / `UsageNotIncluded` / `CyberPolicy` / `ServerOverloaded` / `InvalidPrompt`），每个都以稳定的 `error_class` tag + `retryable` 标记记日志。契约不变 —— 失败仍然返回 `null` —— 调用点不破。需要更聪明路由的宿主继承 `SuperAgentBackend` 并 override `logProviderError(\Throwable $e, string $code)` seam。
+
+5. **按 provider 类型声明 HTTP 头。** descriptor 新增两个字段 —— `http_headers`（字面量 header → value）和 `env_http_headers`（header → env 变量名，请求时读），无需改代码就能给某个类型的每次 SDK 调用注入 `OpenAI-Project`、`LangSmith-Project`、`OpenRouter-App` 等头。示例:
+   ```php
+   // config/super-ai-core.php
+   'provider_types' => [
+       // 每次 OpenAI 调用都打上自己的 app id，同时识别 OPENAI_PROJECT 环境变量
+       // （SDK 在 env 变量未设时静默跳过这个 header，没配置 project-scoped key
+       // 的宿主也不会出错）。
+       \SuperAICore\Models\AiProvider::TYPE_OPENAI => [
+           'http_headers'     => ['X-App' => 'my-host-app'],
+           'env_http_headers' => ['OpenAI-Project' => 'OPENAI_PROJECT'],
+       ],
+
+       // 新 Responses API 类型同理 —— 注入 LangSmith project 头，跨 provider 追踪
+       // 不需要额外的 wrapper 层。
+       \SuperAICore\Models\AiProvider::TYPE_OPENAI_RESPONSES => [
+           'env_http_headers' => ['Langsmith-Project' => 'LANGSMITH_PROJECT'],
+       ],
+   ],
+   ```
+
+**已经存在的 `openai-compatible` / `anthropic-proxy` provider。** 0.7.0 之前，这类行在 `provider_config.provider` 没手工设时会静默路由到 SDK 的 `anthropic` provider —— `anthropic-proxy` 恰好对，`openai-compatible` 就会失败。0.7.0 开始，descriptor 的 `sdk_provider` 负责正确映射（`anthropic` / `openai`）。如果宿主显式设了 `provider_config.provider`，没变化。如果你依赖过那个 bug 默认，`openai-compatible` 行现在开始按正确路由工作。
+
+深入示例（多轮 Responses、LangSmith 追踪、LAN 内 LM Studio、宿主级异常路由、per-provider HTTP 头覆盖）见 `docs/advanced-usage.zh-CN.md`。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

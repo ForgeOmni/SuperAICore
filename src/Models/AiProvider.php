@@ -54,6 +54,13 @@ class AiProvider extends Model
     // from the BYO-API-key Moonshot path, which routes through the
     // superagent backend (SDK's KimiProvider) against api.moonshot.ai.
     const TYPE_MOONSHOT_BUILTIN  = 'moonshot-builtin';
+    // OpenAI Responses API (SDK 0.9.1+). Accepts api_key for metered use,
+    // or an `access_token` stored via host-app OAuth for ChatGPT Plus/Pro
+    // subscribers — SDK flips base_url to chatgpt.com/backend-api/codex.
+    // Azure OpenAI deployments are auto-detected from the base_url markers.
+    const TYPE_OPENAI_RESPONSES  = 'openai-responses';
+    // Local LM Studio server (SDK 0.9.1+). Defaults to http://localhost:1234.
+    const TYPE_LMSTUDIO          = 'lmstudio';
 
     const TYPES = [
         self::TYPE_BUILTIN           => 'builtin',
@@ -63,6 +70,8 @@ class AiProvider extends Model
         self::TYPE_VERTEX            => 'vertex',
         self::TYPE_OPENAI            => 'openai',
         self::TYPE_OPENAI_COMPATIBLE => 'openai-compatible',
+        self::TYPE_OPENAI_RESPONSES  => 'openai-responses',
+        self::TYPE_LMSTUDIO          => 'lmstudio',
         self::TYPE_GOOGLE_AI         => 'google-ai',
         self::TYPE_KIRO_API          => 'kiro-api',
         self::TYPE_MOONSHOT_BUILTIN  => 'moonshot-builtin',
@@ -97,6 +106,8 @@ class AiProvider extends Model
             self::TYPE_ANTHROPIC_PROXY,
             self::TYPE_OPENAI,
             self::TYPE_OPENAI_COMPATIBLE,
+            self::TYPE_OPENAI_RESPONSES,
+            self::TYPE_LMSTUDIO,
         ],
         self::BACKEND_GEMINI => [
             self::TYPE_BUILTIN,

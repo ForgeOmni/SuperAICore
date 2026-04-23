@@ -191,6 +191,102 @@ final class SuperAgentBackendTest extends TestCase
         $this->assertNull($r);
     }
 
+    public function test_idempotency_key_reaches_agent_options_and_echoes_on_envelope(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $r = $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'idempotency_key' => 'task:42',
+        ]);
+
+        // Agent::run($prompt, ['idempotency_key' => ...]) — SDK 0.9.1 merges
+        // into $this->options, and AgentResult echoes it back on completion.
+        $this->assertSame('task:42', $b->lastRunOptions['idempotency_key']);
+        $this->assertSame('task:42', $r['idempotency_key']);
+    }
+
+    public function test_idempotency_key_truncates_to_80_chars_via_sdk(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $long = str_repeat('a', 200);
+        $r = $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'idempotency_key' => $long,
+        ]);
+
+        // The backend forwards the raw 200-char value; the SDK (AgentResult
+        // constructor) is responsible for the 80-char truncation.
+        $this->assertSame($long, $b->lastRunOptions['idempotency_key']);
+        $this->assertSame(80, strlen($r['idempotency_key']));
+    }
+
+    public function test_traceparent_is_forwarded_as_per_call_option(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'traceparent' => '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+            'tracestate'  => 'congo=t61rcWkgMzE',
+        ]);
+
+        $this->assertSame(
+            '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+            $b->lastRunOptions['traceparent']
+        );
+        $this->assertSame('congo=t61rcWkgMzE', $b->lastRunOptions['tracestate']);
+    }
+
+    public function test_empty_traceparent_is_not_forwarded(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'traceparent' => '',
+        ]);
+
+        $this->assertArrayNotHasKey('traceparent', $b->lastRunOptions);
+    }
+
+    public function test_classified_provider_exception_returns_null_with_classification(): void
+    {
+        TestSuperAgentProvider::$throw = new \SuperAgent\Exceptions\Provider\ContextWindowExceededException(
+            message: 'context too long',
+            provider: 'sa-test',
+            statusCode: 400,
+        );
+        $b = new CapturingSuperAgentBackend();
+        $r = $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+        ]);
+
+        $this->assertNull($r);
+        $this->assertSame('context_window_exceeded', $b->lastErrorClass);
+    }
+
+    public function test_quota_exceeded_classification_matches_sdk_subclass(): void
+    {
+        TestSuperAgentProvider::$throw = new \SuperAgent\Exceptions\Provider\QuotaExceededException(
+            message: 'out of quota',
+            provider: 'sa-test',
+            statusCode: 429,
+        );
+        $b = new CapturingSuperAgentBackend();
+        $this->assertNull($b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+        ]));
+        $this->assertSame('quota_exceeded', $b->lastErrorClass);
+    }
+
     public function test_envelope_omits_subagents_key_when_no_agent_tool_result_present(): void
     {
         TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
@@ -298,11 +394,24 @@ final class SuperAgentBackendTest extends TestCase
 final class CapturingSuperAgentBackend extends SuperAgentBackend
 {
     public ?array $lastAgentConfig = null;
+    public ?array $lastRunOptions = null;
+    public ?string $lastErrorClass = null;
 
     protected function makeAgent(array $agentConfig): \SuperAgent\Agent
     {
         $this->lastAgentConfig = $agentConfig;
         return parent::makeAgent($agentConfig);
+    }
+
+    protected function buildPerCallOptions(array $options): array
+    {
+        return $this->lastRunOptions = parent::buildPerCallOptions($options);
+    }
+
+    protected function logProviderError(\Throwable $e, string $code): void
+    {
+        $this->lastErrorClass = $code;
+        parent::logProviderError($e, $code);
     }
 
     /** Test accessor for the protected extractor. */

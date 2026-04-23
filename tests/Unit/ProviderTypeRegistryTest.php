@@ -22,9 +22,11 @@ final class ProviderTypeRegistryTest extends TestCase
             AiProvider::TYPE_BUILTIN,
             AiProvider::TYPE_GOOGLE_AI,
             AiProvider::TYPE_KIRO_API,
+            AiProvider::TYPE_LMSTUDIO,
             AiProvider::TYPE_MOONSHOT_BUILTIN,
             AiProvider::TYPE_OPENAI,
             AiProvider::TYPE_OPENAI_COMPATIBLE,
+            AiProvider::TYPE_OPENAI_RESPONSES,
             AiProvider::TYPE_VERTEX,
         ];
         sort($expected);
@@ -134,6 +136,60 @@ final class ProviderTypeRegistryTest extends TestCase
         $this->assertFalse($registry->requiresApiKey(AiProvider::TYPE_BUILTIN));
         $this->assertFalse($registry->requiresApiKey(AiProvider::TYPE_BEDROCK));
         $this->assertFalse($registry->requiresApiKey(AiProvider::TYPE_VERTEX));
+    }
+
+    public function test_openai_responses_descriptor_maps_to_sdk_provider(): void
+    {
+        $registry = new ProviderTypeRegistry();
+        $descriptor = $registry->get(AiProvider::TYPE_OPENAI_RESPONSES);
+
+        $this->assertInstanceOf(ProviderTypeDescriptor::class, $descriptor);
+        $this->assertSame('openai-responses', $descriptor->sdkProvider);
+        // api_key optional — ChatGPT OAuth routes on access_token, Azure
+        // detection relies on base_url patterns the SDK inspects.
+        $this->assertFalse($descriptor->needsApiKey);
+        $this->assertSame([AiProvider::BACKEND_SUPERAGENT], $descriptor->allowedBackends);
+    }
+
+    public function test_lmstudio_descriptor_maps_to_local_server(): void
+    {
+        $registry = new ProviderTypeRegistry();
+        $descriptor = $registry->get(AiProvider::TYPE_LMSTUDIO);
+
+        $this->assertSame('lmstudio', $descriptor->sdkProvider);
+        $this->assertFalse($descriptor->needsApiKey);
+        $this->assertFalse($descriptor->needsBaseUrl);
+    }
+
+    public function test_anthropic_proxy_sdk_provider_is_anthropic(): void
+    {
+        // `anthropic-proxy` is a BYO-base-url wrapper — SDK key is the base
+        // provider. Previously SuperAgentBackend defaulted to 'anthropic'
+        // regardless; the descriptor now makes the mapping explicit.
+        $registry = new ProviderTypeRegistry();
+        $this->assertSame('anthropic', $registry->get(AiProvider::TYPE_ANTHROPIC_PROXY)->sdkProvider);
+        $this->assertSame('openai',    $registry->get(AiProvider::TYPE_OPENAI_COMPATIBLE)->sdkProvider);
+    }
+
+    public function test_http_headers_descriptor_fields_default_to_empty(): void
+    {
+        $registry = new ProviderTypeRegistry();
+        $this->assertSame([], $registry->get(AiProvider::TYPE_OPENAI)->httpHeaders);
+        $this->assertSame([], $registry->get(AiProvider::TYPE_OPENAI)->envHttpHeaders);
+    }
+
+    public function test_host_config_can_declare_http_headers(): void
+    {
+        $registry = new ProviderTypeRegistry([
+            AiProvider::TYPE_OPENAI => [
+                'http_headers'     => ['X-App' => 'superaicore'],
+                'env_http_headers' => ['OpenAI-Project' => 'OPENAI_PROJECT'],
+            ],
+        ]);
+        $descriptor = $registry->get(AiProvider::TYPE_OPENAI);
+
+        $this->assertSame(['X-App' => 'superaicore'], $descriptor->httpHeaders);
+        $this->assertSame(['OpenAI-Project' => 'OPENAI_PROJECT'], $descriptor->envHttpHeaders);
     }
 
     public function test_toarray_preserves_legacy_blade_shape(): void
