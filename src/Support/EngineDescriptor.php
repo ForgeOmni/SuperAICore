@@ -76,17 +76,22 @@ final class EngineDescriptor
 
     /**
      * True when this engine can run without an AiProvider row — i.e.
-     * at least one of its allowed `provider_types` doesn't need an API
-     * key (builtin OAuth: `claude`'s `builtin` / `kimi`'s `moonshot-builtin`
-     * / `copilot`'s `builtin` / etc.).
+     * at least one of its allowed `provider_types` is a pure "builtin"
+     * variant (empty `fields` array: user has nothing to fill in, auth
+     * lives in the CLI's own keychain / OAuth store / subscription).
      *
-     * Hosts use this to decide whether to render a "Built-in (<engine>)"
-     * execution-target row: engines without a builtin auth channel
-     * (e.g. `superagent`) always require a user-configured provider.
+     * Covers Claude's `builtin` (macOS Keychain OAuth), Kimi's
+     * `moonshot-builtin` (`~/.kimi/credentials/`), Copilot's `builtin`
+     * (`gh auth`), Kiro's `builtin` (`kiro-cli login`), and any future
+     * engine that ships its own credential store behind a fields-free
+     * provider type.
      *
-     * Data-driven via the SuperAICore ProviderTypeRegistry — new engines
-     * that declare a `needs_api_key: false` variant type become "builtin-
-     * capable" without any host code change.
+     * NOTE: `needs_api_key: false` is NOT sufficient — Bedrock,
+     * OpenAI-Responses (ChatGPT OAuth), and LMStudio all declare
+     * `needs_api_key: false` but still require a user-configured row
+     * (non-empty `fields`). The empty-fields signal is what separates
+     * "nothing to configure" from "configure something other than a
+     * plain API key".
      */
     public function hasBuiltinAuth(): bool
     {
@@ -101,7 +106,7 @@ final class EngineDescriptor
 
         foreach ($this->providerTypes as $typeKey) {
             $desc = $registry->get((string) $typeKey);
-            if ($desc && $desc->needsApiKey === false) {
+            if ($desc && empty($desc->fields)) {
                 return true;
             }
         }

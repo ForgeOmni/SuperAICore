@@ -19,6 +19,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 9. [Feature dispatcher SDK — `extra_body` / `features` / `loop_detection`](#9-feature-dispatcher-sdk)
 10. [Prompt-cache keys (Kimi)](#10-prompt-cache-keys-kimi)
 11. [Étendre le registre de types de provider](#11-étendre-le-registre-de-types-de-provider)
+12. [Spawn CLI hôte via `ScriptedSpawnBackend`](#12-spawn-cli-hôte-via-scriptedspawnbackend)
 
 ---
 
@@ -458,6 +459,117 @@ return [
 Le registre est adressable à `app(ProviderTypeRegistry::class)`. L'UI `/providers`, `ProviderEnvBuilder`, `AiProvider::requiresApiKey()`, et chaque backend qui s'intéresse aux types de provider reprennent automatiquement la nouvelle entrée.
 
 Pour la shape complète du descripteur, voir `src/Support/ProviderTypeDescriptor.php`.
+
+---
+
+## 12. Spawn CLI hôte via `ScriptedSpawnBackend`
+
+*Depuis 0.7.1.*
+
+Les hôtes qui intègrent AICore (SuperTeam, SuperPilot, shopify-autopilot, …) portaient jusqu'ici un `match ($backend) { 'claude' => buildClaudeProcess(…), 'codex' => buildCodexProcess(…), 'gemini' => buildGeminiProcess(…) }` sur chaque spawn de tâche, plus une deuxième copie identique pour le chat one-shot. Chaque nouvel engine CLI (kiro, copilot, kimi, futurs) forçait un patch côté hôte. 0.7.1 introduit le contrat `Contracts\ScriptedSpawnBackend` — sibling de `StreamingBackend` — qui collapse les deux switches en un appel polymorphe. Les six backends CLI (`Claude` / `Codex` / `Gemini` / `Copilot` / `Kiro` / `Kimi`) l'implémentent dans la même release.
+
+### Avant (match par backend, ~150 lignes dans le runner hôte)
+
+```php
+// Glu task-runner pré-0.7.1 côté hôte
+$process = match ($engineKey) {
+    'claude'  => $this->buildClaudeProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'codex'   => $this->buildCodexProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'gemini'  => $this->buildGeminiProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'copilot' => $this->buildCopilotProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'kiro'    => $this->buildKiroProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'kimi'    => $this->buildKimiProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    default   => throw new \InvalidArgumentException("unknown engine: {$engineKey}"),
+};
+$process->start();
+```
+
+Chaque `buildXxxProcess()` traite sa propre composition d'argv, les flags `--output-format stream-json` et similaires, l'injection de config MCP, le scrub d'env (les 5 marqueurs `CLAUDE_CODE_*` de Claude, le passthrough `--config` de Codex), les capability transforms (renommage d'outils Gemini), le pipage wrapper-script et le cwd.
+
+### Après (appel polymorphe unique)
+
+```php
+use SuperAICore\Services\BackendRegistry;
+
+$backend = app(BackendRegistry::class)->forEngine($engineKey);  // nullable — null quand l'engine est désactivé en config
+if ($backend === null) {
+    throw new \RuntimeException("engine {$engineKey} has no scripted-spawn backend registered");
+}
+
+$process = $backend->prepareScriptedProcess([
+    'prompt_file'             => $promptFile,
+    'log_file'                => $logFile,
+    'project_root'            => $projectRoot,
+    'model'                   => $model,
+    'env'                     => $env,          // construit côté hôte — lit IntegrationConfig
+    'disable_mcp'             => $disableMcp,   // surtout Claude
+    'codex_extra_config_args' => $codexArgs,    // surtout Codex
+    'timeout'                 => 7200,
+    'idle_timeout'            => 1800,
+]);
+$process->start();
+```
+
+`BackendRegistry::forEngine($engineKey)` itère les `dispatcher_backends` de l'engine dans l'ordre (le CLI d'abord par construction, ex. `claude → ['claude_cli', 'anthropic_api']`) et retourne le premier qui implémente `ScriptedSpawnBackend`. Retourne `null` quand l'engine n'a pas de backend CLI enregistré — soit désactivé via `AI_CORE_CLAUDE_CLI_ENABLED=false`, soit un engine superagent-only qui n'implémente pas le scripted spawn.
+
+### Sibling one-shot chat — `streamChat()`
+
+Tour de chat bloquant one-shot (texte prêt à afficher via `onChunk`, réponse accumulée renvoyée à la sortie). Le backend possède argv, passage prompt-vs-argv, parsing de sortie et strip ANSI (Kiro / Copilot émettent des codes couleur qui fuiraient sinon dans les UI hôtes) :
+
+```php
+$response = $backend->streamChat(
+    $prompt,
+    function (string $chunk) use ($ui) {
+        $ui->append($chunk);
+    },
+    [
+        'cwd'           => $projectRoot,
+        'model'         => $model,
+        'env'           => $env,
+        'timeout'       => 0,            // 0 = pas de cap dur ; idle_timeout s'applique toujours
+        'idle_timeout'  => 300,
+        'allowed_tools' => ['Read', 'Bash'],  // Claude uniquement ; les autres CLI l'ignorent
+    ]
+);
+```
+
+### Helpers wrapper-script pour les implémenteurs
+
+Si vous implémentez `ScriptedSpawnBackend` pour un nouveau CLI engine, le trait `Backends\Concerns\BuildsScriptedProcess` fournit la plomberie partagée :
+
+- `buildWrappedProcess(…)` — écrit un script wrapper sh ou .bat qui pipe `prompt_file` via stdin, tee stdout+stderr vers `log_file`, applique cwd + env et retourne un `Symfony\Component\Process\Process` pré-configuré.
+- `applyCapabilityTransform()` — réécrit le prompt file en place via `BackendCapabilities::transformPrompt()` (pour les backends qui ont besoin de renommer des outils ou d'injecter un préambule).
+- `escapeFlags([…])` — enveloppe `escapeshellarg` sur une liste argv.
+
+### Localisation du binaire CLI
+
+`Support\CliBinaryLocator` est enregistré en singleton dans le service provider. Il centralise la sonde filesystem des binaires CLI dans les emplacements typiques macOS / Linux / Windows :
+
+- `~/.npm-global/bin` (préfixe global npm)
+- `/opt/homebrew/bin` et `/usr/local/bin` (Homebrew arm64 / x86_64)
+- `~/.nvm/versions/node/<v>/bin` (chaque version nvm installée)
+- `%APPDATA%/npm` Windows
+
+Le nom du binaire vient de `EngineCatalog->cliBinary` — pas de `match`. Les hôtes qui veulent réutiliser les mêmes sondes pour leurs propres chemins CLI côté hôte peuvent injecter le locator :
+
+```php
+$locator = app(\SuperAICore\Support\CliBinaryLocator::class);
+$claudePath = $locator->locate('claude');   // chemin absolu ou null
+```
+
+### Liste d'env-scrub Claude (pour les hôtes composant encore leurs propres processus `claude`)
+
+`ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS` est exposée en constante publique listant les 5 marqueurs d'env (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) à scrub de l'env enfant pour que le garde de récursion parent-session de Claude ne refuse pas de démarrer. Les hôtes qui gardent leur propre composition de processus lisent la constante plutôt que de re-dériver la liste :
+
+```php
+use SuperAICore\Backends\ClaudeCliBackend;
+
+$env = array_diff_key($parentEnv, array_flip(ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS));
+```
+
+### Pourquoi le contrat compte à long terme
+
+Après adoption de `ScriptedSpawnBackend`, un nouveau CLI engine landé en amont apparaît automatiquement dans les runners hôtes — pas de patch hôte, pas de branche `match` à ajouter. C'est tout l'intérêt du contrat : chaque nouvel engine depuis 0.7.1 (Kimi de Moonshot, futur Qwen d'Alibaba, futur Mistral `le-chat`, …) devient visible dans les code paths hôtes dès que SuperAICore enregistre son backend. Voir [docs/host-spawn-uplift-roadmap.md](host-spawn-uplift-roadmap.md) pour le contexte complet — les 700 lignes de glu par backend qu'il remplace, le plan de migration par phases et le pre-soak caveat.
 
 ---
 
