@@ -246,17 +246,17 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     // ─── ScriptedSpawnBackend ──────────────────────────────────────────
 
     /**
-     * Codex-specific flag composition for scripted spawn. Stdin-pipes
-     * the prompt via the literal `-` sentinel codex uses. Emits a
-     * companion `<logFile>-last.txt` so the host can extract the final
-     * assistant message without re-parsing the full JSONL stream.
+     * Codex scripted spawn. Stdin-pipes the prompt via codex's literal
+     * `-` sentinel. Emits a companion `<logFile>-last.txt` so the host
+     * can extract the final assistant message without re-parsing the
+     * full JSONL stream.
      *
-     * Options honored beyond the base contract:
-     *   - `codex_extra_config_args: string[]` — array of `key=value`
-     *     strings; each gets prefixed with `-c ` in the argv.
-     *     Hosts use this to pipe in provider-specific `model_provider=`
-     *     / MCP `mcp_servers.<key>.*=` entries that can't be declared
-     *     statically (they depend on the selected AiProvider row).
+     * Consumes `engine_extra_args: string[]` — each string becomes a
+     * separate `-c <kv>` pair. Hosts use this for provider-specific
+     * `model_provider=...` / MCP `mcp_servers.<k>.*` entries that
+     * depend on the selected AiProvider row. The legacy
+     * `codex_extra_config_args` key is still accepted for backwards
+     * compatibility.
      */
     public function prepareScriptedProcess(array $options): Process
     {
@@ -267,7 +267,9 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $env         = (array) ($options['env'] ?? []);
 
         $lastMessageFile = str_replace('.log', '-last.txt', $logFile);
-        $configArgs = (array) ($options['codex_extra_config_args'] ?? []);
+        $configArgs = (array) ($options['engine_extra_args']
+            ?? $options['codex_extra_config_args']
+            ?? []);
 
         $resolvedModel = $model
             ? CodexModelResolver::resolve($model, app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_CODEX))
@@ -349,14 +351,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             $onChunk($data);
         });
 
-        if ($process->getExitCode() !== 0 && $fullResponse === '') {
-            $stderr = $process->getErrorOutput();
-            if ($this->logger) {
-                $this->logger->error("CodexCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
-            }
-            throw new \RuntimeException("Codex chat failed (exit {$process->getExitCode()})");
-        }
-
+        $this->assertChatExit($process, $fullResponse, 'Codex');
         return $fullResponse;
     }
 }

@@ -632,14 +632,7 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
             $this->emitClaudeStreamChunk(trim($buffer), $fullResponse, $onChunk);
         }
 
-        if ($process->getExitCode() !== 0 && $fullResponse === '') {
-            $stderr = $process->getErrorOutput();
-            if ($this->logger) {
-                $this->logger->error("ClaudeCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
-            }
-            throw new \RuntimeException("Claude chat failed (exit {$process->getExitCode()})");
-        }
-
+        $this->assertChatExit($process, $fullResponse, 'Claude');
         return $fullResponse;
     }
 

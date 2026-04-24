@@ -75,25 +75,32 @@ final class EngineDescriptor
     }
 
     /**
-     * True when this engine can run without an AiProvider row — i.e.
-     * at least one of its allowed `provider_types` is a pure "builtin"
-     * variant (empty `fields` array: user has nothing to fill in, auth
+     * True when this engine can run without an AiProvider row — at
+     * least one of its `provider_types` is a pure "builtin" variant
+     * (empty `fields` array: nothing for the user to fill in, auth
      * lives in the CLI's own keychain / OAuth store / subscription).
      *
-     * Covers Claude's `builtin` (macOS Keychain OAuth), Kimi's
-     * `moonshot-builtin` (`~/.kimi/credentials/`), Copilot's `builtin`
-     * (`gh auth`), Kiro's `builtin` (`kiro-cli login`), and any future
-     * engine that ships its own credential store behind a fields-free
-     * provider type.
+     * Covers Claude's `builtin` (Keychain), Kimi's `moonshot-builtin`
+     * (~/.kimi/credentials), Copilot's `builtin` (gh auth), Kiro's
+     * `builtin` (kiro-cli login).
      *
      * NOTE: `needs_api_key: false` is NOT sufficient — Bedrock,
-     * OpenAI-Responses (ChatGPT OAuth), and LMStudio all declare
-     * `needs_api_key: false` but still require a user-configured row
-     * (non-empty `fields`). The empty-fields signal is what separates
-     * "nothing to configure" from "configure something other than a
-     * plain API key".
+     * OpenAI-Responses, LMStudio all set it but still require user
+     * configuration (non-empty `fields`). The empty-fields signal
+     * separates "nothing to configure" from "configure something
+     * other than a plain API key".
      */
     public function hasBuiltinAuth(): bool
+    {
+        if ($this->builtinAuthCache !== null) {
+            return $this->builtinAuthCache;
+        }
+        return $this->builtinAuthCache = $this->computeHasBuiltinAuth();
+    }
+
+    private ?bool $builtinAuthCache = null;
+
+    private function computeHasBuiltinAuth(): bool
     {
         if (!$this->providerTypes) return false;
         if (!function_exists('app')) return false;

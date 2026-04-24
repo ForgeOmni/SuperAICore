@@ -283,8 +283,6 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');
         $logFile     = $options['log_file']     ?? throw new \InvalidArgumentException('log_file required');
         $projectRoot = $options['project_root'] ?? throw new \InvalidArgumentException('project_root required');
-        $model       = $options['model']        ?? null;
-        $env         = (array) ($options['env'] ?? []);
 
         $promptText = @file_get_contents($promptFile);
         if ($promptText === false) {
@@ -292,38 +290,26 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         }
 
         $flags = ['--print', '--output-format', 'stream-json', '-w', $projectRoot, '--prompt', $promptText];
-        if ($model) {
+        if (!empty($options['model'])) {
             $flags[] = '--model';
-            $flags[] = (string) $model;
+            $flags[] = (string) $options['model'];
         }
         foreach ((array) ($options['extra_cli_flags'] ?? []) as $f) {
             $flags[] = (string) $f;
         }
 
-        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_KIMI);
-        $escapedFlags = $this->escapeFlags($flags);
-
-        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-        if ($isWindows) {
-            $cliPathWin    = str_replace('/', '\\', $cliPath);
-            $logFileWin    = str_replace('/', '\\', $logFile);
-            $projectRootWin = str_replace('/', '\\', $projectRoot);
-            $shellCmd = "\"{$cliPathWin}\" {$escapedFlags} > \"{$logFileWin}\" 2>&1";
-            $execScript = str_replace('.log', '-exec.bat', $logFile);
-            @file_put_contents($execScript, "@echo off\r\ncd /D \"{$projectRootWin}\"\r\n{$shellCmd}\r\n");
-            $process = new Process(['cmd', '/C', $execScript], $projectRoot);
-        } else {
-            $shellCmd = "\"{$cliPath}\" {$escapedFlags} </dev/null > \"{$logFile}\" 2>&1";
-            $execScript = str_replace('.log', '-exec.sh', $logFile);
-            @file_put_contents($execScript, "#!/bin/sh\ncd \"{$projectRoot}\"\n{$shellCmd}\n");
-            @chmod($execScript, 0755);
-            $process = new Process(['sh', $execScript], $projectRoot);
-        }
-
-        if ($env) $process->setEnv($env);
-        $process->setTimeout((int) ($options['timeout']      ?? 7200));
-        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 1800));
-        return $process;
+        return $this->buildWrappedProcess(
+            engineKey:      AiProvider::BACKEND_KIMI,
+            promptFile:     $promptFile,
+            logFile:        $logFile,
+            projectRoot:    $projectRoot,
+            cliFlagsString: $this->escapeFlags($flags),
+            env:            (array) ($options['env'] ?? []),
+            envUnsetExtras: [],
+            timeout:        $options['timeout']      ?? null,
+            idleTimeout:    $options['idle_timeout'] ?? null,
+            stdinMode:      'devnull',
+        );
     }
 
     public function streamChat(string $prompt, callable $onChunk, array $options = []): string
@@ -363,9 +349,7 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             }
         });
 
-        if ($process->getExitCode() !== 0 && $fullResponse === '') {
-            throw new \RuntimeException("Kimi chat failed (exit {$process->getExitCode()})");
-        }
+        $this->assertChatExit($process, $fullResponse, 'Kimi');
         return $fullResponse;
     }
 }

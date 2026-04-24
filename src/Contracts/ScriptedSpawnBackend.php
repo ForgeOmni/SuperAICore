@@ -63,7 +63,7 @@ use Symfony\Component\Process\Process;
  *   session_id?: string,
  *   allowed_tools?: string|string[],
  *   permission_mode?: string,
- *   codex_extra_config_args?: string[],
+ *   engine_extra_args?: string[],
  *   extra_cli_flags?: string[],
  * }
  */

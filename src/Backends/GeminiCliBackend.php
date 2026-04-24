@@ -287,6 +287,16 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $model       = $options['model']        ?? null;
         $env         = (array) ($options['env'] ?? []);
 
+        // Gemini CLI env auto-fallback: when the caller passed neither
+        // GEMINI_API_KEY nor GOOGLE_API_KEY, flip `GOOGLE_GENAI_USE_GCA`
+        // so the CLI reaches for gcloud ADC / OAuth login file instead
+        // of failing with "no API key". Was previously in host's
+        // `applyBackendSpecificEnv` — lives here so any host that
+        // doesn't carry that post-processor still gets the fallback.
+        if (empty($env['GEMINI_API_KEY']) && empty($env['GOOGLE_API_KEY'])) {
+            $env['GOOGLE_GENAI_USE_GCA'] = 'true';
+        }
+
         $resolvedModel = $model ? GeminiModelResolver::resolve($model) : null;
 
         // Non-interactive mode: `--prompt ''` + `--yolo` auto-approves
@@ -361,14 +371,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
             }
         }
 
-        if ($process->getExitCode() !== 0 && $fullResponse === '') {
-            $stderr = $process->getErrorOutput();
-            if ($this->logger) {
-                $this->logger->error("GeminiCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
-            }
-            throw new \RuntimeException("Gemini chat failed (exit {$process->getExitCode()})");
-        }
-
+        $this->assertChatExit($process, $fullResponse, 'Gemini');
         return $fullResponse;
     }
 }

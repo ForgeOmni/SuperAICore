@@ -302,25 +302,23 @@ class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     // ─── ScriptedSpawnBackend ──────────────────────────────────────────
 
     /**
-     * Kiro scripted spawn. Kiro CLI `chat` takes the prompt as the
-     * positional argument (not stdin, not `-p`). Reads the prompt file
-     * content and passes it inline. Output is plain text.
+     * Kiro scripted spawn. `kiro-cli chat` takes the prompt as a
+     * positional argv argument (not stdin, not `-p`). Inlines the prompt
+     * file and invokes the trait with `stdinMode: 'devnull'`.
      */
     public function prepareScriptedProcess(array $options): Process
     {
         $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');
         $logFile     = $options['log_file']     ?? throw new \InvalidArgumentException('log_file required');
         $projectRoot = $options['project_root'] ?? throw new \InvalidArgumentException('project_root required');
-        $model       = $options['model']        ?? null;
-        $env         = array_merge(['NO_COLOR' => '1', 'TERM' => 'dumb'], (array) ($options['env'] ?? []));
 
         $promptText = @file_get_contents($promptFile);
         if ($promptText === false) {
             throw new \RuntimeException("Kiro: cannot read prompt file {$promptFile}");
         }
 
-        $resolvedModel = $model && class_exists(KiroModelResolver::class)
-            ? KiroModelResolver::resolve($model)
+        $resolvedModel = !empty($options['model']) && class_exists(KiroModelResolver::class)
+            ? KiroModelResolver::resolve($options['model'])
             : null;
 
         $flags = ['chat', '--no-interactive', '--trust-all-tools'];
@@ -333,30 +331,18 @@ class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         }
         $flags[] = $promptText;
 
-        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_KIRO);
-        $escapedFlags = $this->escapeFlags($flags);
-
-        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-        if ($isWindows) {
-            $cliPathWin    = str_replace('/', '\\', $cliPath);
-            $logFileWin    = str_replace('/', '\\', $logFile);
-            $projectRootWin = str_replace('/', '\\', $projectRoot);
-            $shellCmd = "\"{$cliPathWin}\" {$escapedFlags} > \"{$logFileWin}\" 2>&1";
-            $execScript = str_replace('.log', '-exec.bat', $logFile);
-            @file_put_contents($execScript, "@echo off\r\ncd /D \"{$projectRootWin}\"\r\n{$shellCmd}\r\n");
-            $process = new Process(['cmd', '/C', $execScript], $projectRoot);
-        } else {
-            $shellCmd = "\"{$cliPath}\" {$escapedFlags} </dev/null > \"{$logFile}\" 2>&1";
-            $execScript = str_replace('.log', '-exec.sh', $logFile);
-            @file_put_contents($execScript, "#!/bin/sh\ncd \"{$projectRoot}\"\n{$shellCmd}\n");
-            @chmod($execScript, 0755);
-            $process = new Process(['sh', $execScript], $projectRoot);
-        }
-
-        $process->setEnv($env);
-        $process->setTimeout((int) ($options['timeout']      ?? 7200));
-        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 1800));
-        return $process;
+        return $this->buildWrappedProcess(
+            engineKey:      AiProvider::BACKEND_KIRO,
+            promptFile:     $promptFile,
+            logFile:        $logFile,
+            projectRoot:    $projectRoot,
+            cliFlagsString: $this->escapeFlags($flags),
+            env:            array_merge(['NO_COLOR' => '1', 'TERM' => 'dumb'], (array) ($options['env'] ?? [])),
+            envUnsetExtras: [],
+            timeout:        $options['timeout']      ?? null,
+            idleTimeout:    $options['idle_timeout'] ?? null,
+            stdinMode:      'devnull',
+        );
     }
 
     /**
@@ -385,19 +371,12 @@ class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $process->start();
         $process->wait(function (string $type, string $data) use (&$fullResponse, $onChunk) {
             if ($type !== Process::OUT) return;
-            $clean = preg_replace('/\x1B\[[0-9;?]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][0-9A-Z]/', '', $data) ?? $data;
+            $clean = $this->stripAnsi($data);
             $fullResponse .= $clean;
             $onChunk($clean);
         });
 
-        if ($process->getExitCode() !== 0 && $fullResponse === '') {
-            $stderr = $process->getErrorOutput();
-            if ($this->logger) {
-                $this->logger->error("KiroCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
-            }
-            throw new \RuntimeException("Kiro chat failed (exit {$process->getExitCode()})");
-        }
-
+        $this->assertChatExit($process, $fullResponse, 'Kiro');
         return $fullResponse;
     }
 }

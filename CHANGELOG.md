@@ -4,6 +4,91 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-04-24
+
+**Consolidates the 0.7.1 + 0.7.2 arc and lands cleanup from a three-agent review pass.** The theme is *host integrations auto-discover new CLI engines*: everything needed to surface a built-in CLI engine — from argv composition down to "Built-in (Engine)" rows in the task-create picker — is now either shipped inside the engine's `ScriptedSpawnBackend` implementation or derived from its `EngineDescriptor`. Host apps that carried per-backend `match` statements in three places (spawn, chat, target-list filtering) collapse to single polymorphic calls. Adding a new CLI engine means writing a `ScriptedSpawnBackend` + seeding `EngineCatalog` + registering on `BackendRegistry`; host code stays byte-identical.
+
+### Added
+
+#### `ScriptedSpawnBackend` contract — detached spawn + one-shot chat
+- **`Contracts\ScriptedSpawnBackend` interface** (sibling of `StreamingBackend`) with two methods:
+  - `prepareScriptedProcess(array $options): Process` — build a configured `Symfony\Component\Process\Process` the caller nohups / detaches; wrapper script handles stdin-from-file piping (or argv-inline for CLIs without stdin), stdout+stderr log tee, cwd, env scrub, timeouts.
+  - `streamChat(string $prompt, callable $onChunk, array $options = []): string` — blocking one-shot chat; backend owns argv construction, prompt-channel (stdin vs argv), output parser (stream-json / plain text / single-blob JSON), and ANSI stripping.
+- **Options shape** documented in a PHPStan typedef at the top of the interface file. Codex-specific `-c` extras ride through as a generic `engine_extra_args: string[]` (legacy alias `codex_extra_config_args` still accepted).
+- **Six CLI backends implement the contract in one pass**: `ClaudeCliBackend`, `CodexCliBackend`, `GeminiCliBackend`, `CopilotCliBackend`, `KiroCliBackend`, `KimiCliBackend`. Each carries its own per-CLI specifics (session-id + permission-mode + allowedTools + MCP modes for Claude; `exec --json --full-auto` + last-message companion file + config-args for Codex; `--prompt '' --yolo` for Gemini; argv-inline `-p <text>` for Copilot; `chat --no-interactive <text>` for Kiro; `--print --output-format stream-json --prompt <text>` for Kimi).
+
+#### Shared concerns
+- **`Backends\Concerns\BuildsScriptedProcess` trait**:
+  - `buildWrappedProcess(…, string $stdinMode = 'pipe')` — single wrapper-script emitter covering both stdin-pipe engines (Claude/Codex/Gemini) and argv-prompt engines (Copilot/Kiro/Kimi) via the `stdinMode: 'pipe'|'devnull'` parameter.
+  - `applyCapabilityTransform(engineKey, promptFile)` — rewrites prompt in place via `BackendCapabilities::transformPrompt()`, fast-paths out when the capability has an empty `toolNameMap` so Claude/SuperAgent spawns skip MB-scale read+write.
+  - `stripAnsi(string)` — CSI + OSC + bare-ESC aware. Shared between Copilot and Kiro `streamChat`.
+  - `assertChatExit(Process, response, label)` — collapses the six near-identical non-zero-exit-with-empty-output guards into one helper.
+  - `escapeFlags(array)` — `array_map(escapeshellarg)` wrapper.
+- **`Support\CliBinaryLocator`** — filesystem probe for CLI binaries. Binary name from `EngineCatalog->cliBinary`. Probes `~/.npm-global/bin`, `~/.local/bin`, `/usr/local/bin`, `/usr/bin`, `/opt/homebrew/bin`, and `~/.nvm/versions/node/<v>/bin` (via `node -v`); Windows variant probes `%APPDATA%/npm` + `%LOCALAPPDATA%/npm`. Result is cached in-memory for the process lifetime — typical spawn resolves 2-3 times, and each uncached call otherwise shells out `node -v` (~20-40ms cold on NVM systems).
+- **`BackendRegistry::forEngine(string $engineKey): ?ScriptedSpawnBackend`** — engine-key → first registered backend on `EngineCatalog->dispatcherBackends` that implements the contract.
+
+#### Engine descriptor fields
+- **`EngineDescriptor::hasBuiltinAuth(): bool`** — derived from `provider_types` that declare empty `fields` (i.e. "nothing for the user to fill in"). Memoized per descriptor instance. Covers Claude's `builtin` (Keychain), Kimi's `moonshot-builtin` (`~/.kimi/credentials/`), Copilot's `builtin` (`gh auth`), Kiro's `builtin` (`kiro-cli login`).
+- **`EngineDescriptor::$authProbeReliable: bool`** (default `true`) — declares whether the CLI has a non-interactive login-status probe. Gemini sets `auth_probe_reliable: false` in its seed because `gemini login status` doesn't exist and `gemini login` drops into a TTY. Hosts that gate built-in targets on `auth.loggedIn` skip the check for engines with an unreliable probe.
+- **`ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS`** — public `const` array of five `CLAUDE_CODE_*` markers the backend scrubs before spawn (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`). Hosts that still prepare their own env read from this const rather than hand-mirroring.
+- **`EngineDescriptor::toArray()`** gains `has_builtin_auth` and `auth_probe_reliable` keys.
+
+### Changed
+
+- **`SuperAICoreServiceProvider`** registers `CliBinaryLocator` as a singleton.
+- **`EngineCatalog::__construct`** honors `auth_probe_reliable` from the host's `config('super-ai-core.engines')` override map.
+- **`gemini` seed** now sets `auth_probe_reliable: false`.
+- **`GeminiCliBackend::prepareScriptedProcess`** auto-sets `GOOGLE_GENAI_USE_GCA=true` when neither `GEMINI_API_KEY` nor `GOOGLE_API_KEY` is in the passed env — previously lived in host's post-processor. Now every host that spawns via Gemini picks up the OAuth fallback.
+- **Copilot / Kiro / Kimi `prepareScriptedProcess`** reuse the trait instead of hand-writing their wrapper scripts (review Reuse #1, Quality #2). Net -60 duplicated lines across three backends.
+- **All six `streamChat()` methods** now delegate the exit-check/log/throw to `assertChatExit()`, and Copilot/Kiro use `stripAnsi()` from the trait.
+
+### Fixed
+
+- **`ClaudeRunner::findCliPath` in host integrations was not cache-backed**; the SDK-side `CliBinaryLocator` now memoizes so spawn-heavy code paths (task runners, cron dispatchers) save ~60-100ms per spawn across repeated lookups.
+- **`hasBuiltinAuth()` is memoized** on the descriptor so `TaskController::availableExecutionTargets` (called up to 3× per render, each iterating all engines) stops making redundant container lookups.
+- **Capability-transform read-write-skip** for Claude / SuperAgent prompts — empty tool-name map short-circuits the I/O before the file read.
+
+### Migration path
+
+Hosts currently doing:
+
+```php
+$process = match ($backend) {
+    BACKEND_CODEX  => $this->buildCodexProcess(...),
+    BACKEND_GEMINI => $this->buildGeminiProcess(...),
+    default        => $this->buildClaudeProcess(...),
+};
+// …
+
+$streamChat = match ($backend) { /* 4-arm branch */ };
+// …
+
+if (!in_array(TYPE_BUILTIN, $engine->providerTypes, true)) return true;
+if ($backend === BACKEND_GEMINI) return true;
+```
+
+collapse to:
+
+```php
+$process = app(BackendRegistry::class)->forEngine($backend)
+    ->prepareScriptedProcess([
+        'prompt_file'  => $promptFile,
+        'log_file'     => $logFile,
+        'project_root' => $projectRoot,
+        'model'        => $model,
+        'env'          => $env,
+        'engine_extra_args' => $engineExtras,  // codex: -c pairs
+    ]);
+
+$response = app(BackendRegistry::class)->forEngine($backend)
+    ->streamChat($prompt, $onChunk, ['model' => $runModel, 'env' => $env]);
+
+if (!$engine->hasBuiltinAuth())   return true;
+if (!$engine->authProbeReliable) return true;
+```
+
+After this migration, a new CLI engine that ships a `ScriptedSpawnBackend` implementation + a `needs_api_key: false, fields: []` provider type shows up in every host code path — task create, task run, ResultChat, provider list, model dropdown — without a host-code patch.
+
 ## [0.7.2] — 2026-04-23
 
 **EngineDescriptor auth metadata — surface "builtin-capable" + "reliable auth probe" so hosts don't hardcode per-engine exceptions.** Two descriptor fields added: `hasBuiltinAuth(): bool` method (derived from provider-type `needs_api_key: false`) and `authProbeReliable: bool` (default true; gemini declares false). Host integrations that used to guard built-in execution targets with `in_array(TYPE_BUILTIN, providerTypes)` and `$backend === BACKEND_GEMINI` special-cases now read descriptor fields directly — new CLI engines pick up both behaviors from their seed entry, no host-side match to patch.

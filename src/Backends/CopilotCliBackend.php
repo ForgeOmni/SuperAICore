@@ -277,30 +277,22 @@ class CopilotCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacke
     // ─── ScriptedSpawnBackend ──────────────────────────────────────────
 
     /**
-     * Copilot scripted spawn — argv-passes prompt via `-p` (no stdin).
-     * Because `prepareScriptedProcess` is stdin-based by contract, the
-     * caller's prompt file gets cat'd and piped, but Copilot CLI doesn't
-     * listen on stdin. Host integrations that use Copilot for async task
-     * runs should either feed the prompt via `extra_cli_flags => ['-p',
-     * $prompt]` directly, or use `streamChat()` for short requests.
-     *
-     * For now we keep it simple: read the prompt file, pass as `-p` arg,
-     * and pipe `</dev/null` in the wrapper script so stdin is closed.
+     * Copilot scripted spawn — Copilot CLI passes the prompt as `-p
+     * <text>` (argv, not stdin), so we inline the prompt file's body
+     * and invoke the trait with `stdinMode: 'devnull'`.
      */
     public function prepareScriptedProcess(array $options): Process
     {
         $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');
         $logFile     = $options['log_file']     ?? throw new \InvalidArgumentException('log_file required');
         $projectRoot = $options['project_root'] ?? throw new \InvalidArgumentException('project_root required');
-        $model       = $options['model']        ?? null;
-        $env         = (array) ($options['env'] ?? []);
 
         $promptText = @file_get_contents($promptFile);
         if ($promptText === false) {
             throw new \RuntimeException("Copilot: cannot read prompt file {$promptFile}");
         }
 
-        $resolvedModel = $model ? CopilotModelResolver::resolve($model) : null;
+        $resolvedModel = !empty($options['model']) ? CopilotModelResolver::resolve($options['model']) : null;
 
         $flags = ['-p', $promptText, '--allow-all-tools', '--output-format', 'json'];
         if ($resolvedModel) {
@@ -311,35 +303,18 @@ class CopilotCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacke
             $flags[] = (string) $f;
         }
 
-        // Copilot reads prompt from argv; use empty stdin via /dev/null.
-        // buildWrappedProcess still pipes cat promptfile | cli — but
-        // Copilot ignores stdin, so it's harmless. We suppress it by
-        // adding `</dev/null` via extra_cli_flags? No — simpler: write a
-        // trivial wrapper here that ignores stdin.
-        $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_COPILOT);
-        $escapedFlags = $this->escapeFlags($flags);
-
-        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-        if ($isWindows) {
-            $cliPathWin    = str_replace('/', '\\', $cliPath);
-            $logFileWin    = str_replace('/', '\\', $logFile);
-            $projectRootWin = str_replace('/', '\\', $projectRoot);
-            $shellCmd = "\"{$cliPathWin}\" {$escapedFlags} > \"{$logFileWin}\" 2>&1";
-            $execScript = str_replace('.log', '-exec.bat', $logFile);
-            @file_put_contents($execScript, "@echo off\r\ncd /D \"{$projectRootWin}\"\r\n{$shellCmd}\r\n");
-            $process = new Process(['cmd', '/C', $execScript], $projectRoot);
-        } else {
-            $shellCmd = "\"{$cliPath}\" {$escapedFlags} </dev/null > \"{$logFile}\" 2>&1";
-            $execScript = str_replace('.log', '-exec.sh', $logFile);
-            @file_put_contents($execScript, "#!/bin/sh\ncd \"{$projectRoot}\"\n{$shellCmd}\n");
-            @chmod($execScript, 0755);
-            $process = new Process(['sh', $execScript], $projectRoot);
-        }
-
-        if ($env) $process->setEnv($env);
-        $process->setTimeout((int) ($options['timeout']      ?? 7200));
-        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 1800));
-        return $process;
+        return $this->buildWrappedProcess(
+            engineKey:      AiProvider::BACKEND_COPILOT,
+            promptFile:     $promptFile,
+            logFile:        $logFile,
+            projectRoot:    $projectRoot,
+            cliFlagsString: $this->escapeFlags($flags),
+            env:            (array) ($options['env'] ?? []),
+            envUnsetExtras: [],
+            timeout:        $options['timeout']      ?? null,
+            idleTimeout:    $options['idle_timeout'] ?? null,
+            stdinMode:      'devnull',
+        );
     }
 
     /**
@@ -365,19 +340,12 @@ class CopilotCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacke
         $process->start();
         $process->wait(function (string $type, string $data) use (&$fullResponse, $onChunk) {
             if ($type !== Process::OUT) return;
-            $clean = preg_replace('/\x1B\[[0-9;?]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B[()][0-9A-Z]/', '', $data) ?? $data;
+            $clean = $this->stripAnsi($data);
             $fullResponse .= $clean;
             $onChunk($clean);
         });
 
-        if ($process->getExitCode() !== 0 && $fullResponse === '') {
-            $stderr = $process->getErrorOutput();
-            if ($this->logger) {
-                $this->logger->error("CopilotCliBackend chat failed (exit {$process->getExitCode()}): {$stderr}");
-            }
-            throw new \RuntimeException("Copilot chat failed (exit {$process->getExitCode()})");
-        }
-
+        $this->assertChatExit($process, $fullResponse, 'Copilot');
         return $fullResponse;
     }
 }

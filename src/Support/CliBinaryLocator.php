@@ -27,13 +27,24 @@ use SuperAICore\Services\EngineCatalog;
  */
 class CliBinaryLocator
 {
+    /** @var array<string,string> */
+    protected array $cache = [];
+
     public function __construct(protected EngineCatalog $catalog) {}
 
     /**
      * Full path to the engine's binary, or its bare name when unresolvable.
+     * Cached in-memory for the process lifetime — a single spawn typically
+     * resolves 2-3 times (host dispatch + backend trait call) and each
+     * uncached call walks 5-6 `file_exists` probes plus shell-execs
+     * `node -v` (~20-40ms cold on NVM-managed installs).
      */
     public function find(string $engineKey): string
     {
+        if (isset($this->cache[$engineKey])) {
+            return $this->cache[$engineKey];
+        }
+
         $engine = $this->catalog->get($engineKey);
         $binary = $engine?->cliBinary ?: $engineKey;
 
@@ -65,11 +76,24 @@ class CliBinaryLocator
 
         foreach ($paths as $path) {
             if ($path && file_exists($path)) {
-                return $path;
+                return $this->cache[$engineKey] = $path;
             }
         }
 
-        return $binary;
+        return $this->cache[$engineKey] = $binary;
+    }
+
+    /**
+     * Drop cached resolutions — useful in tests and after on-the-fly
+     * CLI install/uninstall flows.
+     */
+    public function forget(?string $engineKey = null): void
+    {
+        if ($engineKey === null) {
+            $this->cache = [];
+            return;
+        }
+        unset($this->cache[$engineKey]);
     }
 
     protected function isWindows(): bool
