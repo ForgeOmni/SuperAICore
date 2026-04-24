@@ -505,6 +505,33 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 See `docs/advanced-usage.md` for deeper recipes — multi-turn Responses, LangSmith tracing, LM Studio over LAN, host-level exception routing, per-provider HTTP header overrides.
 
+**0.7.1 — no migration.** Additive contract only — `Contracts\ScriptedSpawnBackend` lands alongside (not replacing) `StreamingBackend`. All six CLI backends (`Claude` / `Codex` / `Gemini` / `Copilot` / `Kiro` / `Kimi`) implement it in the same release. Hosts currently carrying a per-backend `match ($backend) { 'claude' => buildClaudeProcess(…), 'codex' => buildCodexProcess(…), … }` for task spawns + a second copy for one-shot chat can collapse both into one polymorphic call:
+
+```php
+use SuperAICore\Services\BackendRegistry;
+
+$backend = app(BackendRegistry::class)->forEngine($engineKey);  // nullable — null when engine disabled
+$process = $backend->prepareScriptedProcess([
+    'prompt_file'  => $promptFile,
+    'log_file'     => $logFile,
+    'project_root' => $projectRoot,
+    'model'        => $model,
+    'env'          => $env,                     // host-built (reads IntegrationConfig)
+    'disable_mcp'  => $disableMcp,              // Claude primarily
+    'codex_extra_config_args' => $codexArgs,    // Codex primarily
+]);
+$process->start();
+
+// One-shot chat sibling — backend owns argv + output parsing + ANSI strip:
+$response = $backend->streamChat($prompt, function (string $chunk) {
+    echo $chunk;
+});
+```
+
+After this migration, future engines that ship a `ScriptedSpawnBackend` implementation light up automatically in every host code path — no `match` arm to add. `Support\CliBinaryLocator` is registered as a singleton the service provider so host-side CLI-path resolution uses the same `~/.npm-global/bin` / `/opt/homebrew/bin` / nvm / Windows `%APPDATA%/npm` probes the package's own backends use. `ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS` is exposed as a public constant so hosts still composing their own `claude` processes can share the canonical 5-marker scrub list.
+
+See `docs/advanced-usage.md` §12 for the full before/after migration pattern and `docs/host-spawn-uplift-roadmap.md` for the context.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

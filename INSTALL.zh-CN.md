@@ -500,6 +500,33 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 深入示例（多轮 Responses、LangSmith 追踪、LAN 内 LM Studio、宿主级异常路由、per-provider HTTP 头覆盖）见 `docs/advanced-usage.zh-CN.md`。
 
+**0.7.1 —— 无迁移。** 纯增量契约 —— `Contracts\ScriptedSpawnBackend` 和 `StreamingBackend` 并列（不是替代）。同一版本里六个 CLI 后端（`Claude` / `Codex` / `Gemini` / `Copilot` / `Kiro` / `Kimi`）全部实现之。宿主里此前为每个后端写的 `match ($backend) { 'claude' => buildClaudeProcess(…), 'codex' => buildCodexProcess(…), … }`（任务 spawn 一份、one-shot chat 再一份）可以整体塌缩成一次多态调用:
+
+```php
+use SuperAICore\Services\BackendRegistry;
+
+$backend = app(BackendRegistry::class)->forEngine($engineKey);  // 可空 —— 引擎关掉时返回 null
+$process = $backend->prepareScriptedProcess([
+    'prompt_file'  => $promptFile,
+    'log_file'     => $logFile,
+    'project_root' => $projectRoot,
+    'model'        => $model,
+    'env'          => $env,                     // 宿主构造（读 IntegrationConfig）
+    'disable_mcp'  => $disableMcp,              // 主要是 Claude 用
+    'codex_extra_config_args' => $codexArgs,    // 主要是 Codex 用
+]);
+$process->start();
+
+// 一次性 chat 的兄弟方法 —— argv 组装、输出解析、ANSI 去色都在 backend 自己做:
+$response = $backend->streamChat($prompt, function (string $chunk) {
+    echo $chunk;
+});
+```
+
+迁移完成后，未来新增的 CLI 引擎只要实现 `ScriptedSpawnBackend` 契约，就会在宿主每条代码路径里自动出现 —— 再无需要加新 `match` 分支。`Support\CliBinaryLocator` 在 service provider 注册为单例，宿主侧 CLI 路径探测与包内各 backend 走一套（`~/.npm-global/bin` / `/opt/homebrew/bin` / nvm 路径 / Windows `%APPDATA%/npm`）。`ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS` 现在是公开常量，仍自行组装 `claude` 进程的宿主可以直接拿规范的五标记 scrub 列表。
+
+完整 before/after 迁移模式见 `docs/advanced-usage.zh-CN.md` §12；上下文见 `docs/host-spawn-uplift-roadmap.md`。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

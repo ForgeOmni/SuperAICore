@@ -93,6 +93,7 @@
 - **`AgentSpawn\Pipeline` —— codex/gemini 的 spawn-plan 协议**（0.6.6+）—— 三阶段编排（preamble → 并行 fanout → consolidation 复调）内置在 SuperAICore。`TaskRunner` 见到 `spawn_plan_dir` 自动激活。新 CLI 实现 `BackendCapabilities::spawnPreamble()` + `consolidationPrompt()` 一次即可继承。详见 `docs/spawn-plan-protocol.md`。
 - **每个 CLI 的 per-call `cwd`**（0.6.7+）—— 宿主 PHP 从 `web/public` 起也能 spawn 到能正确找到项目根下 `artisan` + `.claude/` 的 `claude`。Claude 专属选项（`permission_mode`、`allowed_tools`、`session_id`）让 headless 调用方绕过交互审批、限制工具面、显式传会话 id。
 - **PHP-FPM 里起 Claude CLI 现在可用**（0.6.7+）—— `ClaudeCliBackend` 在子进程 env 里主动移除 `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / … 以免触发 claude 的递归守卫。macOS 上 `builtin` 登录新增 fallback:通过 `security find-generic-password` 读出 OAuth token 注入成 `ANTHROPIC_API_KEY` —— 这是 Web worker 唯一能走通的路径。
+- **`Contracts\ScriptedSpawnBackend`**（0.7.1+）—— `StreamingBackend` 的兄弟契约，为 nohup / 后台 job 把子进程 detach 出去、然后轮询 log 的宿主服务。`prepareScriptedProcess([...])` 返回一个配置好的 `Symfony\Component\Process\Process`：把 `prompt_file` 通过 stdin 喂进 CLI、合并 stdout+stderr 落到 `log_file`、做 env scrub + capability transform（Gemini 工具名重写）、遵守 `timeout` / `idle_timeout`。`streamChat($prompt, $onChunk, $options)` 是阻塞式的 one-shot 对照实现 —— argv 组装、prompt 走 stdin 还是 argv、输出解析、ANSI 去色（Kiro / Copilot）都由 backend 自己负责。0.7.1 起六个 CLI 后端（claude / codex / gemini / copilot / kiro / kimi）全部实现该契约；宿主通过 `BackendRegistry::forEngine($engineKey)` 一次多态调用替掉 per-backend 的 `match` 语句。`Support\CliBinaryLocator`（单例）统一处理 CLI 二进制的文件系统探测（`~/.npm-global/bin`、`/opt/homebrew/bin`、nvm 路径、Windows 的 `%APPDATA%/npm`）。`Backends\Concerns\BuildsScriptedProcess` trait 为实现者提供共享的 wrapper 脚本构建工具。详见 [docs/host-spawn-uplift-roadmap.md](docs/host-spawn-uplift-roadmap.md)。
 
 ### 模型目录
 
@@ -338,10 +339,11 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移。
 - **[Task runner 快速入门](docs/task-runner-quickstart.md)** —— 完整 `TaskRunner` 选项参考。
 - **[Streaming backends](docs/streaming-backends.md)** —— `mcp_mode`、每后端流格式、`onChunk`。
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** —— codex/gemini agent 模拟。
+- **[Host spawn uplift roadmap](docs/host-spawn-uplift-roadmap.md)** —— `ScriptedSpawnBackend` 为什么存在 + 它替掉了宿主里 700 行胶水。
 - **[Idempotency](docs/idempotency.md)** —— 60 秒去重窗口、key 自动派生。
 - **[MCP sync](docs/mcp-sync.md)** —— catalog + host map → 每个后端。
 - **[API stability](docs/api-stability.md)** —— SemVer 契约。

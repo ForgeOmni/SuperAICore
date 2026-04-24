@@ -40,6 +40,19 @@ final class EngineDescriptor
         public readonly ?string $defaultModel = null,
         public readonly string $billingModel = 'usage',
         public readonly ?ProcessSpec $processSpec = null,
+        /**
+         * False when the CLI has no reliable login-status probe a host
+         * can run without blocking or producing false negatives (gemini:
+         * `gemini login` is interactive and has no `--status`
+         * counterpart; oauth may live in env / gcloud ADC). Hosts that
+         * gate builtin execution on `auth.loggedIn` should skip the
+         * check for these engines and surface auth failures in the run
+         * log instead.
+         *
+         * Default true — engines assert they have a reliable probe unless
+         * their descriptor sets this to false.
+         */
+        public readonly bool $authProbeReliable = true,
     ) {}
 
     public function toArray(): array
@@ -56,6 +69,42 @@ final class EngineDescriptor
             'default_model'       => $this->defaultModel,
             'billing_model'       => $this->billingModel,
             'process_spec'        => $this->processSpec?->toArray(),
+            'has_builtin_auth'    => $this->hasBuiltinAuth(),
+            'auth_probe_reliable' => $this->authProbeReliable,
         ];
+    }
+
+    /**
+     * True when this engine can run without an AiProvider row — i.e.
+     * at least one of its allowed `provider_types` doesn't need an API
+     * key (builtin OAuth: `claude`'s `builtin` / `kimi`'s `moonshot-builtin`
+     * / `copilot`'s `builtin` / etc.).
+     *
+     * Hosts use this to decide whether to render a "Built-in (<engine>)"
+     * execution-target row: engines without a builtin auth channel
+     * (e.g. `superagent`) always require a user-configured provider.
+     *
+     * Data-driven via the SuperAICore ProviderTypeRegistry — new engines
+     * that declare a `needs_api_key: false` variant type become "builtin-
+     * capable" without any host code change.
+     */
+    public function hasBuiltinAuth(): bool
+    {
+        if (!$this->providerTypes) return false;
+        if (!function_exists('app')) return false;
+
+        try {
+            $registry = app(\SuperAICore\Services\ProviderTypeRegistry::class);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        foreach ($this->providerTypes as $typeKey) {
+            $desc = $registry->get((string) $typeKey);
+            if ($desc && $desc->needsApiKey === false) {
+                return true;
+            }
+        }
+        return false;
     }
 }

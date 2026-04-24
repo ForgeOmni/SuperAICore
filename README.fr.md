@@ -93,6 +93,7 @@ Chaque fonctionnalité ci-dessous est marquée par la version où elle a été i
 - **`AgentSpawn\Pipeline` — protocole spawn-plan codex/gemini** (depuis 0.6.6) — chorégraphie en trois phases (préambule → fanout parallèle → ré-invocation de consolidation) remontée upstream dans SuperAICore. `TaskRunner` l'active quand `spawn_plan_dir` est passé. Les nouveaux CLI qui ont besoin du protocole implémentent `BackendCapabilities::spawnPreamble()` + `consolidationPrompt()` une seule fois. Voir `docs/spawn-plan-protocol.md`.
 - **`cwd` par appel sur chaque CLI** (depuis 0.6.7) — les hôtes dont le processus PHP tourne depuis `web/public` peuvent quand même spawner un `claude` qui trouve `artisan` + `.claude/` à la racine. Les options Claude-only (`permission_mode`, `allowed_tools`, `session_id`) permettent de contourner les prompts d'approbation interactifs et de restreindre la surface d'outils.
 - **Claude headless depuis PHP-FPM fonctionne** (depuis 0.6.7) — `ClaudeCliBackend` retire `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / … de l'env enfant, pour qu'un serveur Laravel lancé depuis un shell parent `claude` ne déclenche plus le garde de récursion. Sur macOS, l'auth `builtin` bascule sur `security find-generic-password` pour lire le token OAuth et l'injecter comme `ANTHROPIC_API_KEY` — seule voie qui marche pour les workers web.
+- **`Contracts\ScriptedSpawnBackend`** (depuis 0.7.1) — frère de `StreamingBackend` pour les hôtes qui détachent l'enfant (nohup / job de fond) et sondent le log en asynchrone. `prepareScriptedProcess([...])` retourne un `Symfony\Component\Process\Process` configuré qui lit `prompt_file` en stdin, tee combiné stdout+stderr vers `log_file`, applique le scrub d'env + capability transform (renommage d'outils Gemini) et honore `timeout` / `idle_timeout`. `streamChat($prompt, $onChunk, $options)` est le jumeau bloquant one-shot — le backend possède la composition d'argv, le passage prompt-vs-argv, le parsing de sortie et le strip ANSI (Kiro / Copilot). Les six backends CLI (claude / codex / gemini / copilot / kiro / kimi) implémentent le contrat en 0.7.1 ; les hôtes collapsent un `match` par backend en un appel polymorphe via `BackendRegistry::forEngine($engineKey)`. `Support\CliBinaryLocator` (singleton) centralise la sonde filesystem des binaires CLI (`~/.npm-global/bin`, `/opt/homebrew/bin`, chemins nvm, `%APPDATA%/npm` Windows). Le trait `Backends\Concerns\BuildsScriptedProcess` fournit les helpers de script wrapper pour les implémenteurs. Voir [docs/host-spawn-uplift-roadmap.md](docs/host-spawn-uplift-roadmap.md).
 
 ### Catalogue de modèles
 
@@ -338,10 +339,11 @@ Tous les repositories sont des interfaces. Le service provider lie automatiqueme
 
 ## Usage avancé
 
-- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`).
+- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`.
 - **[Démarrage Task runner](docs/task-runner-quickstart.md)** — référence d'options complète de `TaskRunner`.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, formats de stream par backend, `onChunk`.
 - **[Protocole spawn plan](docs/spawn-plan-protocol.md)** — émulation agent codex/gemini.
+- **[Feuille de route uplift spawn hôte](docs/host-spawn-uplift-roadmap.md)** — pourquoi `ScriptedSpawnBackend` existe + les 700 lignes de glu qu'il remplace.
 - **[Idempotence](docs/idempotency.md)** — fenêtre de dédup 60s, dérivation auto de clé.
 - **[Sync MCP](docs/mcp-sync.md)** — catalogue + host map → chaque backend.
 - **[Stabilité d'API](docs/api-stability.md)** — le contrat SemVer.

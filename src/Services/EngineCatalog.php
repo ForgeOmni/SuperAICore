@@ -67,6 +67,7 @@ class EngineCatalog
                 defaultModel:       $merged['default_model'] ?? null,
                 billingModel:       (string) ($merged['billing_model'] ?? 'usage'),
                 processSpec:        $this->resolveProcessSpec($merged['process_spec'] ?? null),
+                authProbeReliable:  (bool)   ($merged['auth_probe_reliable'] ?? true),
             );
         }
 
@@ -86,6 +87,7 @@ class EngineCatalog
                 defaultModel:       $cfg['default_model'] ?? null,
                 billingModel:       (string) ($cfg['billing_model'] ?? 'usage'),
                 processSpec:        $this->resolveProcessSpec($cfg['process_spec'] ?? null),
+                authProbeReliable:  (bool)   ($cfg['auth_probe_reliable'] ?? true),
             );
         }
     }
@@ -364,6 +366,11 @@ class EngineCatalog
                 'cli_binary'          => 'gemini',
                 'default_model'       => 'gemini-2.5-pro',
                 'billing_model'       => 'usage',
+                // gemini-cli has no `login status` subcommand; `gemini login`
+                // drops into an interactive TTY. OAuth may also live in env,
+                // OAuth file, or gcloud ADC. Hosts should skip the loggedIn
+                // gate for this engine.
+                'auth_probe_reliable' => false,
                 'available_models'    => [
                     'gemini-3-pro-preview',
                     'gemini-2.5-pro',

@@ -4,6 +4,39 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-04-23
+
+**EngineDescriptor auth metadata — surface "builtin-capable" + "reliable auth probe" so hosts don't hardcode per-engine exceptions.** Two descriptor fields added: `hasBuiltinAuth(): bool` method (derived from provider-type `needs_api_key: false`) and `authProbeReliable: bool` (default true; gemini declares false). Host integrations that used to guard built-in execution targets with `in_array(TYPE_BUILTIN, providerTypes)` and `$backend === BACKEND_GEMINI` special-cases now read descriptor fields directly — new CLI engines pick up both behaviors from their seed entry, no host-side match to patch.
+
+### Added
+
+- **`EngineDescriptor::hasBuiltinAuth(): bool`** — returns true when at least one of the engine's `provider_types` declares `needs_api_key: false`. Covers every OAuth/keychain/self-auth channel: Claude's `builtin`, Kimi's `moonshot-builtin`, Copilot's `builtin`, future engines that ship their own credential store under a custom provider type.
+- **`EngineDescriptor::$authProbeReliable: bool`** (default true) — declares whether the CLI has a non-interactive login-status probe. Gemini-cli has no `gemini login status` subcommand and `gemini login` drops into a TTY, so `auth_probe_reliable: false` on its seed. Hosts that gate built-in execution on `auth.loggedIn` skip the check for engines with an unreliable probe and surface auth failures in the run log instead.
+- Both fields round-trip through `toArray()` as `has_builtin_auth` / `auth_probe_reliable`.
+
+### Changed
+
+- `EngineCatalog::__construct` honors `auth_probe_reliable` override from `config('super-ai-core.engines')` — hosts can correct the default per-engine without a catalog patch.
+- `gemini` seed sets `auth_probe_reliable: false` (historical behavior, moved here from SuperTeam's `TaskController::isBuiltinExecutionTargetAvailable`).
+
+### Migration path
+
+Hosts currently doing:
+
+```php
+if (!in_array(AiProvider::TYPE_BUILTIN, $engine->providerTypes, true)) return true;
+if ($backend === AiProvider::BACKEND_GEMINI) return true;
+```
+
+collapse to:
+
+```php
+if (!$engine->hasBuiltinAuth()) return true;
+if (!$engine->authProbeReliable) return true;
+```
+
+After this migration, new engines that ship with their own `<engine>-builtin` provider type (declared `needs_api_key: false`) and/or `auth_probe_reliable: false` get first-class "Built-in (<engine>)" rows in every host picker without a host patch.
+
 ## [0.7.1] — 2026-04-23
 
 **ScriptedSpawnBackend contract — auto-discover new CLI engines in host integrations.** Hosts integrating AICore (SuperTeam, SuperPilot, shopify-autopilot, …) used to carry a `match ($backend) { 'claude' => buildClaudeProcess(…), 'codex' => buildCodexProcess(…), 'gemini' => buildGeminiProcess(…) }` for every task spawn, plus a second identical switch for one-shot chat paths. Every new CLI engine (kiro, copilot, kimi, future) forced a host patch. `ScriptedSpawnBackend` collapses that to a single polymorphic call: the backend class itself owns argv composition, prompt-file piping, MCP injection, capability transforms, and output parsing. New engines just implement the contract — host code stays byte-identical across engine additions.

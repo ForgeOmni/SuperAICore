@@ -93,6 +93,7 @@ Each feature below is tagged with the version it landed in. Features without a t
 - **`AgentSpawn\Pipeline` — spawn-plan protocol for codex/gemini** *(since 0.6.6)* — three-phase choreography (preamble → parallel fanout → consolidation re-call) upstream in SuperAICore. `TaskRunner` activates it when `spawn_plan_dir` is passed. New CLIs that need the protocol implement `BackendCapabilities::spawnPreamble()` + `consolidationPrompt()` once and inherit the rest. See `docs/spawn-plan-protocol.md`.
 - **Per-call `cwd` on every CLI** *(since 0.6.7)* — hosts whose PHP process runs from `web/public` can still spawn a `claude` that finds `artisan` + `.claude/` at the project root. Claude-only options (`permission_mode`, `allowed_tools`, `session_id`) let headless callers bypass interactive approval prompts and restrict the tool surface.
 - **Headless Claude from PHP-FPM now works** *(since 0.6.7)* — `ClaudeCliBackend` scrubs `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / … from the child env so a Laravel server launched from a parent `claude` shell no longer trips claude's recursion guard. On macOS, `builtin` auth falls back to reading the OAuth token via `security find-generic-password` and injecting it as `ANTHROPIC_API_KEY` — the only path that works for web workers.
+- **`Contracts\ScriptedSpawnBackend`** *(since 0.7.1)* — sibling of `StreamingBackend` for hosts that detach the child (nohup/background job) and poll the log asynchronously. `prepareScriptedProcess([...])` returns a configured `Symfony\Component\Process\Process` that reads `prompt_file` via stdin, tees combined stdout+stderr to `log_file`, applies env scrub + capability transforms (Gemini tool-name rewrite), and honours `timeout`/`idle_timeout`. `streamChat($prompt, $onChunk, $options)` is the blocking one-shot sibling — backend owns argv composition, prompt-vs-argv passing, output parsing, and ANSI stripping (Kiro/Copilot). All six CLI backends (claude/codex/gemini/copilot/kiro/kimi) implement the contract on 0.7.1; hosts collapse a per-backend `match` statement into one polymorphic call via `BackendRegistry::forEngine($engineKey)`. `Support\CliBinaryLocator` (singleton) centralises filesystem probing for CLI binaries (`~/.npm-global/bin`, `/opt/homebrew/bin`, nvm paths, Windows `%APPDATA%/npm`). `Backends\Concerns\BuildsScriptedProcess` trait supplies shared wrapper-script helpers for implementers. See [docs/host-spawn-uplift-roadmap.md](docs/host-spawn-uplift-roadmap.md).
 
 ### Model catalog
 
@@ -338,10 +339,11 @@ All repositories are interfaces. The service provider auto-binds Eloquent implem
 
 ## Advanced usage
 
-- **[Advanced usage guide](docs/advanced-usage.md)** — idempotency round-trip, W3C trace context, classified provider exceptions, `openai-responses` + Azure OpenAI + ChatGPT OAuth, LM Studio, `http_headers` / `env_http_headers` overrides, SDK features (`extra_body` / `features` / `loop_detection`).
+- **[Advanced usage guide](docs/advanced-usage.md)** — idempotency round-trip, W3C trace context, classified provider exceptions, `openai-responses` + Azure OpenAI + ChatGPT OAuth, LM Studio, `http_headers` / `env_http_headers` overrides, SDK features (`extra_body` / `features` / `loop_detection`), `ScriptedSpawnBackend` host migration.
 - **[Task runner quickstart](docs/task-runner-quickstart.md)** — full `TaskRunner` option reference.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, per-backend stream formats, `onChunk`.
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** — codex/gemini agent emulation.
+- **[Host spawn uplift roadmap](docs/host-spawn-uplift-roadmap.md)** — why `ScriptedSpawnBackend` exists + the 700-line glue it replaces.
 - **[Idempotency](docs/idempotency.md)** — 60s dedup window, auto-key derivation.
 - **[MCP sync](docs/mcp-sync.md)** — catalog + host map → every backend.
 - **[API stability](docs/api-stability.md)** — the SemVer contract.

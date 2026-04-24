@@ -19,6 +19,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 9. [SDK feature dispatcher —— `extra_body` / `features` / `loop_detection`](#9-sdk-feature-dispatcher)
 10. [Prompt-cache keys（Kimi）](#10-prompt-cache-keyskimi)
 11. [扩展 provider type 注册表](#11-扩展-provider-type-注册表)
+12. [通过 `ScriptedSpawnBackend` 接管宿主 CLI spawn](#12-通过-scriptedspawnbackend-接管宿主-cli-spawn)
 
 ---
 
@@ -457,6 +458,117 @@ return [
 注册表可从 `app(ProviderTypeRegistry::class)` 取。`/providers` UI、`ProviderEnvBuilder`、`AiProvider::requiresApiKey()`、以及每个在意 provider type 的 backend 都会自动看到新条目。
 
 完整 descriptor shape 见 `src/Support/ProviderTypeDescriptor.php`。
+
+---
+
+## 12. 通过 `ScriptedSpawnBackend` 接管宿主 CLI spawn
+
+*自 0.7.1 起。*
+
+对接 AICore 的宿主（SuperTeam、SuperPilot、shopify-autopilot 等）过去在 task spawn 路径上维护着一份 `match ($backend) { 'claude' => buildClaudeProcess(…), 'codex' => buildCodexProcess(…), 'gemini' => buildGeminiProcess(…) }`，one-shot chat 路径还要再抄一份。每加一个 CLI 引擎（kiro、copilot、kimi、以及未来的新引擎）都要求宿主打补丁。0.7.1 引入 `Contracts\ScriptedSpawnBackend` 契约 —— 和 `StreamingBackend` 并列，把两处 switch 压缩成一次多态调用。同一版本里六个 CLI 后端（`Claude` / `Codex` / `Gemini` / `Copilot` / `Kiro` / `Kimi`）全部实现之。
+
+### 改造前（per-backend match，宿主 runner 里约 150 行）
+
+```php
+// 宿主 0.7.1 之前的 task-runner 胶水
+$process = match ($engineKey) {
+    'claude'  => $this->buildClaudeProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'codex'   => $this->buildCodexProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'gemini'  => $this->buildGeminiProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'copilot' => $this->buildCopilotProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'kiro'    => $this->buildKiroProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    'kimi'    => $this->buildKimiProcess($promptFile, $logFile, $projectRoot, $model, $env),
+    default   => throw new \InvalidArgumentException("unknown engine: {$engineKey}"),
+};
+$process->start();
+```
+
+每个 `buildXxxProcess()` 自己处理 argv 组装、`--output-format stream-json` 等 flag、MCP config 注入、env scrub（Claude 的 5 个 `CLAUDE_CODE_*` 标记、Codex 的 `--config` 透传）、capability transform（Gemini 工具名重写）、wrapper 脚本管道、cwd。
+
+### 改造后（单次多态调用）
+
+```php
+use SuperAICore\Services\BackendRegistry;
+
+$backend = app(BackendRegistry::class)->forEngine($engineKey);  // 可空 —— config 里引擎被关时返回 null
+if ($backend === null) {
+    throw new \RuntimeException("engine {$engineKey} has no scripted-spawn backend registered");
+}
+
+$process = $backend->prepareScriptedProcess([
+    'prompt_file'             => $promptFile,
+    'log_file'                => $logFile,
+    'project_root'            => $projectRoot,
+    'model'                   => $model,
+    'env'                     => $env,          // 宿主构造 —— 读 IntegrationConfig
+    'disable_mcp'             => $disableMcp,   // 主要 Claude 在用
+    'codex_extra_config_args' => $codexArgs,    // 主要 Codex 在用
+    'timeout'                 => 7200,
+    'idle_timeout'            => 1800,
+]);
+$process->start();
+```
+
+`BackendRegistry::forEngine($engineKey)` 按引擎 `dispatcher_backends` 顺序（CLI 天然在前，例如 `claude → ['claude_cli', 'anthropic_api']`）遍历，返回第一个实现 `ScriptedSpawnBackend` 的后端。引擎没有注册 CLI 后端时返回 `null` —— 要么被 `AI_CORE_CLAUDE_CLI_ENABLED=false` 关掉，要么是不实现 scripted spawn 的 superagent-only 引擎。
+
+### One-shot chat 兄弟方法 —— `streamChat()`
+
+阻塞式一次性 chat（可显示文本通过 `onChunk` 出来，退出时返回累积响应）。argv、prompt 走 stdin 还是 argv、输出解析、ANSI 去色（Kiro / Copilot 输出带 ANSI，不去色会直接漏进宿主 UI）都由 backend 自己负责:
+
+```php
+$response = $backend->streamChat(
+    $prompt,
+    function (string $chunk) use ($ui) {
+        $ui->append($chunk);
+    },
+    [
+        'cwd'           => $projectRoot,
+        'model'         => $model,
+        'env'           => $env,
+        'timeout'       => 0,            // 0 = 不设硬上限；idle_timeout 仍生效
+        'idle_timeout'  => 300,
+        'allowed_tools' => ['Read', 'Bash'],  // 仅 Claude 用；其它 CLI 忽略
+    ]
+);
+```
+
+### 实现新 backend 时的 wrapper-script 助手
+
+要给新 CLI 引擎实现 `ScriptedSpawnBackend`，`Backends\Concerns\BuildsScriptedProcess` trait 提供共享的底座:
+
+- `buildWrappedProcess(…)` —— 生成 sh 或 .bat wrapper 脚本,把 `prompt_file` 通过 stdin 喂进去、stdout+stderr tee 到 `log_file`、应用 cwd + env,返回配置好的 `Symfony\Component\Process\Process`。
+- `applyCapabilityTransform()` —— 通过 `BackendCapabilities::transformPrompt()` 在 spawn 前原地重写 prompt file（后端需要工具名重写或 preamble 注入时用）。
+- `escapeFlags([…])` —— 在 argv 列表上批量套 `escapeshellarg`。
+
+### CLI 二进制定位
+
+`Support\CliBinaryLocator` 在 service provider 注册为单例。它统一处理 CLI 二进制在 macOS / Linux / Windows 常见安装目录里的探测:
+
+- `~/.npm-global/bin`（npm global prefix）
+- `/opt/homebrew/bin` 和 `/usr/local/bin`（arm64 / x86_64 Homebrew）
+- `~/.nvm/versions/node/<v>/bin`（每个已装的 nvm 版本）
+- Windows `%APPDATA%/npm`
+
+二进制名取自 `EngineCatalog->cliBinary` —— 无需 `match`。宿主若要复用同样的探测给自己管的 CLI 路径,注入这个 locator 即可:
+
+```php
+$locator = app(\SuperAICore\Support\CliBinaryLocator::class);
+$claudePath = $locator->locate('claude');   // 绝对路径或 null
+```
+
+### Claude env-scrub 列表（仍自组 `claude` 进程的宿主）
+
+`ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS` 以公开常量列出 5 个 env 标记（`CLAUDECODE`、`CLAUDE_CODE_ENTRYPOINT`、`CLAUDE_CODE_SSE_PORT`、`CLAUDE_CODE_EXECPATH`、`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`）—— 这些必须从子进程 env 里 scrub 掉,否则 Claude 的父会话递归守卫会直接拒绝启动。仍然自己组装进程的宿主,直接读这个常量就好,不用再自己推:
+
+```php
+use SuperAICore\Backends\ClaudeCliBackend;
+
+$env = array_diff_key($parentEnv, array_flip(ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS));
+```
+
+### 长期视角
+
+接入 `ScriptedSpawnBackend` 之后,任何新 CLI 引擎落到上游后都会自动出现在宿主的每条 runner 路径上 —— 宿主无需打补丁,不用加 `match` 分支。这是契约存在的意义:0.7.1 之后的每个新引擎（Moonshot Kimi、未来的阿里 Qwen、未来的 Mistral `le-chat` 等）只要 SuperAICore 注册 backend,宿主代码路径里马上可见。完整背景见 [docs/host-spawn-uplift-roadmap.md](host-spawn-uplift-roadmap.md) —— 它替掉了宿主里 700 行 per-backend 胶水、分阶段迁移计划、以及 pre-soak caveat。
 
 ---
 

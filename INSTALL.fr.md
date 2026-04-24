@@ -510,6 +510,33 @@ DELETE FROM ai_usage_logs WHERE task_type IS NULL AND input_tokens = 0 AND outpu
 
 Voir `docs/advanced-usage.fr.md` pour les recettes approfondies — Responses multi-tours, tracing LangSmith, LM Studio sur LAN, routage d'exception niveau hôte, surcharges HTTP-header par provider.
 
+**0.7.1 — aucune migration.** Contrat purement additif — `Contracts\ScriptedSpawnBackend` arrive en sibling (pas en remplacement) de `StreamingBackend`. Les six backends CLI (`Claude` / `Codex` / `Gemini` / `Copilot` / `Kiro` / `Kimi`) l'implémentent dans la même release. Les hôtes qui portent aujourd'hui un `match ($backend) { 'claude' => buildClaudeProcess(…), 'codex' => buildCodexProcess(…), … }` par backend (une copie pour le spawn de tâche, une autre pour le chat one-shot) peuvent collapser les deux en un seul appel polymorphe :
+
+```php
+use SuperAICore\Services\BackendRegistry;
+
+$backend = app(BackendRegistry::class)->forEngine($engineKey);  // nullable — null quand l'engine est désactivé
+$process = $backend->prepareScriptedProcess([
+    'prompt_file'  => $promptFile,
+    'log_file'     => $logFile,
+    'project_root' => $projectRoot,
+    'model'        => $model,
+    'env'          => $env,                     // construit côté hôte (lit IntegrationConfig)
+    'disable_mcp'  => $disableMcp,              // surtout Claude
+    'codex_extra_config_args' => $codexArgs,    // surtout Codex
+]);
+$process->start();
+
+// Le sibling one-shot chat — le backend possède argv, parsing de sortie, strip ANSI :
+$response = $backend->streamChat($prompt, function (string $chunk) {
+    echo $chunk;
+});
+```
+
+Après la migration, les futurs engines qui ship une implémentation `ScriptedSpawnBackend` s'allument automatiquement dans chaque code path hôte — aucune branche `match` à ajouter. `Support\CliBinaryLocator` est enregistré en singleton par le service provider pour que la résolution des binaires CLI côté hôte utilise les mêmes sondes (`~/.npm-global/bin` / `/opt/homebrew/bin` / chemins nvm / `%APPDATA%/npm` Windows) que les backends du package. `ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS` est exposé en constante publique pour que les hôtes qui composent encore leurs propres processus `claude` partagent la liste canonique des 5 marqueurs à scrub.
+
+Voir `docs/advanced-usage.fr.md` §12 pour le pattern de migration complet avant/après et `docs/host-spawn-uplift-roadmap.md` pour le contexte.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.
