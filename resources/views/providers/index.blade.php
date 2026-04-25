@@ -104,18 +104,26 @@
         $beDisabled = !empty($backendDisabled[$be]);
         $beIsCli = (bool) ($engine?->isCli ?? false);
         $beCliInstalled = !empty(($cliStatuses[$be] ?? [])['installed']);
+        $beCliMissing = $beIsCli && !$beCliInstalled;
+        // An engine is effectively unusable when it's been toggled off OR
+        // it's a CLI engine without its binary installed — the dispatcher
+        // can't reach it either way. Mirror the top status card's signal
+        // here so the bottom card doesn't render in full colour while the
+        // top half says the engine is off / missing.
+        $beEffectivelyOff = $beDisabled || $beCliMissing;
         // The synthetic "built-in (local CLI login)" row makes no sense
         // when the backend toggle is off or its CLI isn't installed —
         // hide it instead of inviting clicks that can't succeed.
-        $showBuiltinRow = $be !== 'superagent' && !$beDisabled && (!$beIsCli || $beCliInstalled);
+        $showBuiltinRow = $be !== 'superagent' && !$beEffectivelyOff;
     @endphp
     {{-- Skip the whole card for CLI engines that aren't installed and have
          no external providers configured. The top status card already shows
-         the install hint; rendering an empty table here is just noise. --}}
-    @if($beIsCli && !$beCliInstalled && $beProviders->isEmpty())
+         the install hint; rendering an empty table here is just noise.
+         Hosts that want to skip more aggressively can override this view. --}}
+    @if($beCliMissing && $beProviders->isEmpty())
         @continue
     @endif
-    <div class="card border-0 shadow-sm mb-3 {{ $beDisabled ? 'opacity-50' : '' }}">
+    <div class="card border-0 shadow-sm mb-3 {{ $beEffectivelyOff ? 'opacity-50' : '' }}">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <div>
                 <strong><i class="bi bi-{{ $beIcon }} me-1"></i>{{ $beLabel }}</strong>
@@ -123,6 +131,8 @@
             </div>
             @if($beDisabled)
                 <span class="badge bg-secondary"><i class="bi bi-power me-1"></i>{{ __('super-ai-core::messages.engine_disabled_badge') }}</span>
+            @elseif($beCliMissing)
+                <span class="badge bg-secondary"><i class="bi bi-exclamation-triangle me-1"></i>{{ __('super-ai-core::messages.cli_not_installed') }}</span>
             @endif
         </div>
         <div class="card-body p-0">
