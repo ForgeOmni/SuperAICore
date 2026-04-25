@@ -99,21 +99,25 @@
     @php
         $engine = $engines[$be] ?? null;
         $beDisabled = !empty($backendDisabled[$be]);
+        $beIsCli = (bool) ($engine?->isCli ?? false);
+        $beCliInstalled = !empty(($cliStatuses[$be] ?? [])['installed']);
+        // Hide the whole provider card when the engine is unusable:
+        //   - explicitly toggled off, or
+        //   - it's a CLI engine and its CLI isn't installed (without the
+        //     binary the dispatcher can't reach this engine, so external
+        //     providers configured against it would also fail to spawn).
+        // The top engine-status card still surfaces both states, so the
+        // user always has a recovery path; this just stops the bottom
+        // half from offering settings that can't take effect.
+        $hideCard = $beDisabled || ($beIsCli && !$beCliInstalled);
     @endphp
-    {{-- Engine toggled off → hide its provider table entirely. The top
-         status card already shows its disabled state; a grayed-out
-         duplicate below is just visual noise. --}}
-    @continue($beDisabled)
+    @continue($hideCard)
     @php
         $beLabel = $engine?->label ?? ucfirst($be);
         $beIcon  = $engine?->icon  ?? 'plug';
         $anyActive = $beProviders->contains(fn ($p) => $p->is_active);
-        $beIsCli = (bool) ($engine?->isCli ?? false);
-        $beCliInstalled = !empty(($cliStatuses[$be] ?? [])['installed']);
-        // The synthetic "built-in (local CLI login)" row makes no sense
-        // when its CLI isn't installed — hide it instead of inviting
-        // clicks that can't succeed.
-        $showBuiltinRow = $be !== 'superagent' && (!$beIsCli || $beCliInstalled);
+        // Built-in row hides for non-CLI backends like superagent.
+        $showBuiltinRow = $be !== 'superagent';
     @endphp
     <div class="card border-0 shadow-sm mb-3">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
@@ -198,11 +202,6 @@
                     @empty
                         @if($be === 'superagent')
                             <tr><td colspan="5" class="text-center text-muted py-3">{{ __('super-ai-core::messages.superagent_requires_provider') }}</td></tr>
-                        @elseif(!$showBuiltinRow)
-                            {{-- CLI missing: built-in row hidden + no external providers configured. --}}
-                            <tr><td colspan="5" class="text-center text-muted py-3">
-                                <i class="bi bi-info-circle me-1"></i>{{ __('super-ai-core::messages.cli_not_installed') }}
-                            </td></tr>
                         @endif
                     @endforelse
                 </tbody>
