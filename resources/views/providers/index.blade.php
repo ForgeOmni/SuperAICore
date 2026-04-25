@@ -22,9 +22,15 @@
         @php
             $st = $cliStatuses[$be] ?? [];
             $isDisabled = !empty($backendDisabled[$be]);
+            $isCliEngine = (bool) ($engines[$be]->isCli ?? false);
+            $cliInstalled = !empty($st['installed']);
+            // CLI engines that aren't installed can't be enabled — there's no
+            // binary to spawn. Lock the toggle off so the UI doesn't lie.
+            $cliMissing = $isCliEngine && !$cliInstalled;
+            $effectivelyOff = $isDisabled || $cliMissing;
         @endphp
         <div class="col-md-4">
-            <div class="card border-0 shadow-sm h-100 {{ ($defaultBackend === $be) ? 'border-primary border-2' : '' }} {{ $isDisabled ? 'opacity-50' : '' }}">
+            <div class="card border-0 shadow-sm h-100 {{ ($defaultBackend === $be) ? 'border-primary border-2' : '' }} {{ $effectivelyOff ? 'opacity-50' : '' }}">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <div>
@@ -32,17 +38,23 @@
                             <code class="small text-muted">{{ $be }}</code>
                         </div>
                         <div class="d-flex flex-column align-items-end gap-1">
-                            @if(!empty($st['installed']))
-                                <span class="badge bg-success">{{ __('super-ai-core::messages.cli_installed') }}</span>
-                            @else
-                                <span class="badge bg-secondary">{{ __('super-ai-core::messages.cli_not_installed') }}</span>
+                            @if($isCliEngine)
+                                @if($cliInstalled)
+                                    <span class="badge bg-success">{{ __('super-ai-core::messages.cli_installed') }}</span>
+                                @else
+                                    <span class="badge bg-secondary">{{ __('super-ai-core::messages.cli_not_installed') }}</span>
+                                @endif
                             @endif
                             <form method="POST" action="{{ route('super-ai-core.providers.toggle-backend') }}" class="form-check form-switch m-0">
                                 @csrf
                                 <input type="hidden" name="backend" value="{{ $be }}">
-                                <input type="hidden" name="enabled" value="{{ $isDisabled ? '1' : '0' }}">
-                                <input type="checkbox" class="form-check-input" onchange="this.form.submit()" {{ $isDisabled ? '' : 'checked' }}>
-                                <label class="form-check-label small">{{ $isDisabled ? __('super-ai-core::messages.engine_off') : __('super-ai-core::messages.engine_on') }}</label>
+                                <input type="hidden" name="enabled" value="{{ $effectivelyOff ? '1' : '0' }}">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       onchange="this.form.submit()"
+                                       {{ $effectivelyOff ? '' : 'checked' }}
+                                       @if($cliMissing) disabled title="{{ __('super-ai-core::messages.cli_not_installed') }}" @endif>
+                                <label class="form-check-label small">{{ $effectivelyOff ? __('super-ai-core::messages.engine_off') : __('super-ai-core::messages.engine_on') }}</label>
                             </form>
                         </div>
                     </div>
@@ -90,6 +102,12 @@
         $beIcon  = $engine?->icon  ?? 'plug';
         $anyActive = $beProviders->contains(fn ($p) => $p->is_active);
         $beDisabled = !empty($backendDisabled[$be]);
+        $beIsCli = (bool) ($engine?->isCli ?? false);
+        $beCliInstalled = !empty(($cliStatuses[$be] ?? [])['installed']);
+        // The synthetic "built-in (local CLI login)" row makes no sense
+        // when the backend toggle is off or its CLI isn't installed —
+        // hide it instead of inviting clicks that can't succeed.
+        $showBuiltinRow = $be !== 'superagent' && !$beDisabled && (!$beIsCli || $beCliInstalled);
     @endphp
     <div class="card border-0 shadow-sm mb-3 {{ $beDisabled ? 'opacity-50' : '' }}">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
@@ -114,7 +132,7 @@
                 </thead>
                 <tbody>
                     {{-- Built-in synthetic row (only for CLI backends that have a local login) --}}
-                    @if($be !== 'superagent')
+                    @if($showBuiltinRow)
                         <tr class="table-light">
                             <td class="fw-semibold">
                                 <i class="bi bi-box-seam me-1"></i>
@@ -177,6 +195,15 @@
                     @empty
                         @if($be === 'superagent')
                             <tr><td colspan="5" class="text-center text-muted py-3">{{ __('super-ai-core::messages.superagent_requires_provider') }}</td></tr>
+                        @elseif(!$showBuiltinRow)
+                            {{-- Backend disabled or CLI missing: built-in row hidden + no external providers configured. --}}
+                            <tr><td colspan="5" class="text-center text-muted py-3">
+                                @if($beIsCli && !$beCliInstalled)
+                                    <i class="bi bi-info-circle me-1"></i>{{ __('super-ai-core::messages.cli_not_installed') }}
+                                @else
+                                    <i class="bi bi-power me-1"></i>{{ __('super-ai-core::messages.engine_disabled_badge') }}
+                                @endif
+                            </td></tr>
                         @endif
                     @endforelse
                 </tbody>
