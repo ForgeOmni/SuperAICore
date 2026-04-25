@@ -109,6 +109,12 @@
         // hide it instead of inviting clicks that can't succeed.
         $showBuiltinRow = $be !== 'superagent' && !$beDisabled && (!$beIsCli || $beCliInstalled);
     @endphp
+    {{-- Skip the whole card for CLI engines that aren't installed and have
+         no external providers configured. The top status card already shows
+         the install hint; rendering an empty table here is just noise. --}}
+    @if($beIsCli && !$beCliInstalled && $beProviders->isEmpty())
+        @continue
+    @endif
     <div class="card border-0 shadow-sm mb-3 {{ $beDisabled ? 'opacity-50' : '' }}">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
             <div>
