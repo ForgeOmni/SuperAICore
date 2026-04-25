@@ -104,4 +104,90 @@ final class McpManagerPortablePathTest extends TestCase
         config(['super-ai-core.mcp.portable_root_var' => '   ']);
         $this->assertNull(McpManager::portableRootVar());
     }
+
+    public function test_materialize_replaces_placeholder_with_env_var_value(): void
+    {
+        config(['super-ai-core.mcp.portable_root_var' => 'TEST_ROOT']);
+        putenv('TEST_ROOT=' . $this->tempRoot);
+
+        $this->assertSame(
+            $this->tempRoot . '/web/artisan',
+            McpManager::materializePortablePath('${TEST_ROOT}/web/artisan')
+        );
+
+        putenv('TEST_ROOT'); // unset
+    }
+
+    public function test_materialize_falls_back_to_project_root_when_env_unset(): void
+    {
+        config(['super-ai-core.mcp.portable_root_var' => 'TEST_ROOT']);
+        putenv('TEST_ROOT'); // ensure unset
+
+        $this->assertSame(
+            $this->tempRoot . '/web/artisan',
+            McpManager::materializePortablePath('${TEST_ROOT}/web/artisan')
+        );
+    }
+
+    public function test_materialize_is_noop_when_disabled(): void
+    {
+        config(['super-ai-core.mcp.portable_root_var' => null]);
+
+        // Even with the placeholder text in the string and the env var
+        // exported, materialise leaves it alone — the disabled mode is a
+        // hard no-op so legacy callers see exactly the bytes they passed.
+        putenv('TEST_ROOT=/tmp/whatever');
+        $this->assertSame(
+            '${TEST_ROOT}/web/artisan',
+            McpManager::materializePortablePath('${TEST_ROOT}/web/artisan')
+        );
+        putenv('TEST_ROOT');
+    }
+
+    public function test_materialize_is_noop_when_string_has_no_placeholder(): void
+    {
+        config(['super-ai-core.mcp.portable_root_var' => 'TEST_ROOT']);
+        putenv('TEST_ROOT=' . $this->tempRoot);
+
+        $this->assertSame('/already/absolute/path', McpManager::materializePortablePath('/already/absolute/path'));
+        $this->assertSame('node', McpManager::materializePortablePath('node'));
+
+        putenv('TEST_ROOT');
+    }
+
+    public function test_materialize_server_spec_walks_command_args_env(): void
+    {
+        config(['super-ai-core.mcp.portable_root_var' => 'TEST_ROOT']);
+        putenv('TEST_ROOT=' . $this->tempRoot);
+
+        $input = [
+            'command' => '${TEST_ROOT}/.venv/bin/python',
+            'args' => ['-m', '${TEST_ROOT}/.mcp-servers/foo/server.py'],
+            'env' => ['DATA_DIR' => '${TEST_ROOT}/data', 'API_KEY' => 'sk-no-placeholder'],
+            'timeout' => 30000,
+        ];
+
+        $output = McpManager::materializeServerSpec($input);
+
+        $this->assertSame($this->tempRoot . '/.venv/bin/python', $output['command']);
+        $this->assertSame(['-m', $this->tempRoot . '/.mcp-servers/foo/server.py'], $output['args']);
+        $this->assertSame($this->tempRoot . '/data', $output['env']['DATA_DIR']);
+        $this->assertSame('sk-no-placeholder', $output['env']['API_KEY']);
+        $this->assertSame(30000, $output['timeout']);
+
+        putenv('TEST_ROOT');
+    }
+
+    public function test_materialize_server_spec_is_noop_when_disabled(): void
+    {
+        config(['super-ai-core.mcp.portable_root_var' => null]);
+
+        $input = [
+            'command' => '${TEST_ROOT}/python',
+            'args' => ['${TEST_ROOT}/server.py'],
+            'env' => ['X' => '${TEST_ROOT}/data'],
+        ];
+
+        $this->assertSame($input, McpManager::materializeServerSpec($input));
+    }
 }

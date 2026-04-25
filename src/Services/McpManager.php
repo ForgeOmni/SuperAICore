@@ -1407,6 +1407,59 @@ class McpManager
     }
 
     /**
+     * Inverse of `portablePath()`: replace `${ROOT_VAR}` placeholders in a
+     * string with the env var's actual value (falling back to `projectRoot()`
+     * when the env var isn't exported in the current process). Used at
+     * sync time when materialising entries for backend user-scope configs
+     * (`~/.codex/config.toml`, `~/.gemini/settings.json`, …) — those files
+     * are inherently per-machine and not all backends honour `${VAR}`
+     * expansion, so writing real paths is the safe contract. When
+     * portability is disabled this is a no-op.
+     */
+    public static function materializePortablePath(string $value): string
+    {
+        $var = self::portableRootVar();
+        if ($var === null) return $value;
+
+        $needle = '${' . $var . '}';
+        if (strpos($value, $needle) === false) return $value;
+
+        $envValue = getenv($var);
+        $rootValue = ($envValue !== false && $envValue !== '') ? $envValue : self::projectRoot();
+        return str_replace($needle, $rootValue, $value);
+    }
+
+    /**
+     * Walk a single MCP-server spec array and materialise every `${VAR}`
+     * placeholder living in its `command` / `args` / `env` values. Returns
+     * a new spec; the input is left untouched.
+     *
+     * @param  array<string,mixed>  $server
+     * @return array<string,mixed>
+     */
+    public static function materializeServerSpec(array $server): array
+    {
+        if (self::portableRootVar() === null) return $server;
+
+        if (isset($server['command']) && is_string($server['command'])) {
+            $server['command'] = self::materializePortablePath($server['command']);
+        }
+        if (isset($server['args']) && is_array($server['args'])) {
+            $server['args'] = array_map(
+                fn ($v) => is_string($v) ? self::materializePortablePath($v) : $v,
+                $server['args']
+            );
+        }
+        if (isset($server['env']) && is_array($server['env'])) {
+            $server['env'] = array_map(
+                fn ($v) => is_string($v) ? self::materializePortablePath($v) : $v,
+                $server['env']
+            );
+        }
+        return $server;
+    }
+
+    /**
      * Get .mcp-servers directory path.
      */
     public static function serversDir(): string
@@ -1690,6 +1743,13 @@ class McpManager
                 continue;
             }
 
+            // `.mcp.json` (project-scope) keeps `${ROOT_VAR}/...` placeholders
+            // for portability. Backend user-scope configs (~/.codex/config.toml,
+            // ~/.gemini/settings.json, ~/.claude/settings.json) and runtime
+            // `codex exec -c` flags are per-machine and don't all honour
+            // env-var expansion, so substitute real paths now.
+            $server = self::materializeServerSpec($server);
+
             $normalized = self::normalizeCodexMcpServer($server);
             if ($normalized === null) {
                 continue;
@@ -1709,7 +1769,7 @@ class McpManager
         }
 
         return [
-            'command' => $python,
+            'command' => self::portableCommand('python', $python),
             'args' => ['-m', 'mcp_ocr'],
             'timeout' => 30000,
         ];
@@ -1718,8 +1778,8 @@ class McpManager
     protected static function codexPdfExtractMcpConfig(): ?array
     {
         return [
-            'command' => PHP_BINARY,
-            'args' => [base_path('artisan'), 'superocr:serve', '--transport=stdio', '-q'],
+            'command' => self::portableCommand('php', PHP_BINARY),
+            'args' => [self::portablePath(base_path('artisan')), 'superocr:serve', '--transport=stdio', '-q'],
             'timeout' => 300000,
         ];
     }
@@ -1759,8 +1819,8 @@ class McpManager
     protected static function superfeedMcpConfig(): array
     {
         return [
-            'command' => PHP_BINARY,
-            'args' => [base_path('artisan'), 'superfeed:mcp-server'],
+            'command' => self::portableCommand('php', PHP_BINARY),
+            'args' => [self::portablePath(base_path('artisan')), 'superfeed:mcp-server'],
         ];
     }
 
