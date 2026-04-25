@@ -4,6 +4,16 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Portable `.mcp.json` writes via `mcp.portable_root_var` config knob.** When a host sets `AI_CORE_MCP_PORTABLE_ROOT_VAR` (or the equivalent `super-ai-core.mcp.portable_root_var` config) to an env var name (e.g. `SUPERTEAM_ROOT`), every `McpManager::install*()` writer now emits bare command names (`node`, `uvx`, `uv`, `php`, `python`) and rewrites paths under the project root as `${ROOT_VAR}/<rel>`, so the generated `.mcp.json` survives being moved between machines / users without losing pointers. Default stays `null`, preserving the legacy "absolute path everywhere" behaviour for hosts that haven't opted in.
+  - New helpers: `McpManager::portablePath()`, `portableCommand()`, `portableRootVar()`.
+  - Affects `installUvx`, `installArtisan`, `installPython` (Node + uv-pyproject + venv-fallback + entrypoint-script + tsx branches), `installPythonPackage`, and `installBinary`. Codex-side helpers (`codexOcrMcpConfig`, `codexPdfExtractMcpConfig`, `superfeedMcpConfig`) are intentionally unchanged — those write per-machine `~/.codex/config.toml`, not project-scoped `.mcp.json`.
+  - Registry entry `pdf-extract` keeps `PHP_BINARY` directly; `installArtisan` normalises it to `'php'` at write time when portability is on, so the registry shape stays the same.
+  - With portability enabled, Python servers that have a `pyproject.toml` and an `entrypoint_script` route through `uv run <script>` instead of the venv-bin executable, avoiding a per-machine venv path inside the command field.
+
 ## [0.8.0] — 2026-04-24
 
 **Consolidates the 0.7.1 + 0.7.2 arc and lands cleanup from a three-agent review pass.** The theme is *host integrations auto-discover new CLI engines*: everything needed to surface a built-in CLI engine — from argv composition down to "Built-in (Engine)" rows in the task-create picker — is now either shipped inside the engine's `ScriptedSpawnBackend` implementation or derived from its `EngineDescriptor`. Host apps that carried per-backend `match` statements in three places (spawn, chat, target-list filtering) collapse to single polymorphic calls. Adding a new CLI engine means writing a `ScriptedSpawnBackend` + seeding `EngineCatalog` + registering on `BackendRegistry`; host code stays byte-identical.

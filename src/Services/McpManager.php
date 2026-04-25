@@ -1353,6 +1353,60 @@ class McpManager
     }
 
     /**
+     * Configured env-var name used as the project-root placeholder in
+     * generated `.mcp.json` entries. Returns null when portability is
+     * disabled (the default), in which case write helpers fall back to
+     * absolute paths and resolved binary commands.
+     */
+    public static function portableRootVar(): ?string
+    {
+        $name = function_exists('config') ? config('super-ai-core.mcp.portable_root_var') : null;
+        $name = is_string($name) ? trim($name) : null;
+        return ($name === null || $name === '') ? null : $name;
+    }
+
+    /**
+     * Convert an absolute path under the project root into a portable
+     * placeholder form (e.g. `${SUPERTEAM_ROOT}/.mcp-servers/foo/server.py`)
+     * so generated `.mcp.json` entries survive being moved between
+     * machines / users. When `mcp.portable_root_var` is unset the input is
+     * returned unchanged. Paths outside the project root are also returned
+     * unchanged — the caller decides whether that's acceptable.
+     */
+    public static function portablePath(string $absolute): string
+    {
+        $var = self::portableRootVar();
+        if ($var === null) {
+            return $absolute;
+        }
+        $root = realpath(self::projectRoot()) ?: self::projectRoot();
+        $abs  = realpath($absolute) ?: $absolute;
+        $rootNorm = rtrim(str_replace('\\', '/', $root), '/');
+        $absNorm  = str_replace('\\', '/', $abs);
+        if ($rootNorm !== '' && stripos($absNorm, $rootNorm . '/') === 0) {
+            return '${' . $var . '}/' . substr($absNorm, strlen($rootNorm) + 1);
+        }
+        if ($rootNorm !== '' && strcasecmp($absNorm, $rootNorm) === 0) {
+            return '${' . $var . '}';
+        }
+        return $absolute;
+    }
+
+    /**
+     * Return the bare command name (`'node'`, `'uvx'`, `'php'`, …) when
+     * portability is enabled, or fall back to the resolved absolute binary
+     * path passed in. Centralising the legacy-vs-portable choice keeps
+     * each writer site readable.
+     */
+    public static function portableCommand(string $bareName, ?string $resolvedPath): string
+    {
+        if (self::portableRootVar() !== null) {
+            return $bareName;
+        }
+        return $resolvedPath ?: $bareName;
+    }
+
+    /**
      * Get .mcp-servers directory path.
      */
     public static function serversDir(): string
@@ -2076,15 +2130,18 @@ class McpManager
             ];
         }
 
-        // uvx packages run on-demand, just add config — use full path to uvx
+        // uvx packages run on-demand, just add config. With portability
+        // enabled we keep the bare `uvx` command so the file stays
+        // movable; otherwise (legacy mode) we write the resolved absolute
+        // path because uvx is often outside PATH on Windows.
         $mcpConfig = $info['mcp_config'] ?? [
-            'command' => $uvx,
+            'command' => self::portableCommand('uvx', $uvx),
             'args' => [$info['package']],
             'timeout' => 30000,
         ];
 
-        // Replace bare 'uvx' with full path in mcp_config (may not be in PATH)
-        if (($mcpConfig['command'] ?? '') === 'uvx') {
+        // Legacy mode: replace bare 'uvx' with full path (may not be in PATH).
+        if (self::portableRootVar() === null && ($mcpConfig['command'] ?? '') === 'uvx') {
             $mcpConfig['command'] = $uvx;
         }
 
@@ -2101,14 +2158,21 @@ class McpManager
     protected static function installArtisan(string $key, array $info): array
     {
         $mcpConfig = $info['mcp_config'] ?? [
-            'command' => PHP_BINARY,
-            'args' => [base_path('artisan'), $info['artisan_command'] ?? 'mcp:serve', '--transport=stdio', '-q'],
+            'command' => self::portableCommand('php', PHP_BINARY),
+            'args' => [self::portablePath(base_path('artisan')), $info['artisan_command'] ?? 'mcp:serve', '--transport=stdio', '-q'],
             'timeout' => 300000,
         ];
 
-        // Replace __ARTISAN__ placeholder with actual artisan path
+        // Normalise command field when the registry's mcp_config supplied
+        // PHP_BINARY directly (so portability stays consistent regardless
+        // of whether the registry pre-built the entry).
+        if (self::portableRootVar() !== null && ($mcpConfig['command'] ?? '') === PHP_BINARY) {
+            $mcpConfig['command'] = 'php';
+        }
+
+        // Replace __ARTISAN__ placeholder with portable artisan path.
         $mcpConfig['args'] = array_map(function ($arg) {
-            return $arg === '__ARTISAN__' ? base_path('artisan') : $arg;
+            return $arg === '__ARTISAN__' ? self::portablePath(base_path('artisan')) : $arg;
         }, $mcpConfig['args']);
 
         $config = self::readConfig();
@@ -2302,10 +2366,9 @@ class McpManager
                 return ['success' => false, 'message' => 'binary_not_found', 'output' => $output . "Entrypoint not found: {$entrypointFull}"];
             }
 
-            $node = self::which('node');
             $mcpConfig = [
-                'command' => $node,
-                'args' => [$entrypointFull],
+                'command' => self::portableCommand('node', self::which('node')),
+                'args' => [self::portablePath($entrypointFull)],
                 'timeout' => 30000,
             ];
 
@@ -2462,11 +2525,26 @@ class McpManager
         // Add to .mcp.json — use mcp_config if provided, otherwise build from venv
         if (!empty($info['mcp_config'])) {
             $mcpConfig = $info['mcp_config'];
-        } elseif (!empty($info['entrypoint_script'])) {
-            // For pyproject.toml projects with a console_scripts entry (installed in .venv/bin/)
-            $scriptPath = $venvDir . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $info['entrypoint_script'];
+        } elseif (!empty($info['entrypoint_script']) && $usePyproject && $hasUv && self::portableRootVar() !== null) {
+            // pyproject + uv + portability enabled: prefer `uv run <script>`
+            // so the command stays bare (`uv`) instead of pinning the
+            // venv-bin path. Equivalent to pip's console_scripts entry but
+            // resolved by uv at runtime.
             $mcpConfig = [
-                'command' => $scriptPath,
+                'command' => 'uv',
+                'args' => ['--directory', self::portablePath($serverDir), 'run', $info['entrypoint_script']],
+                'timeout' => 30000,
+            ];
+        } elseif (!empty($info['entrypoint_script'])) {
+            // Fallback: console_scripts entry installed in venv (Unix:
+            // .venv/bin/, Windows: .venv/Scripts/). The path is inherently
+            // absolute; portablePath() at least normalises it under
+            // ${ROOT_VAR} so it survives a different user dir on the same
+            // OS. Cross-OS portability still requires `uv run`.
+            $binDir = PHP_OS_FAMILY === 'Windows' ? 'Scripts' : 'bin';
+            $scriptPath = $venvDir . DIRECTORY_SEPARATOR . $binDir . DIRECTORY_SEPARATOR . $info['entrypoint_script'];
+            $mcpConfig = [
+                'command' => self::portablePath($scriptPath),
                 'args' => [],
                 'timeout' => 30000,
             ];
@@ -2475,23 +2553,23 @@ class McpManager
             $entrypoint = $serverDir . DIRECTORY_SEPARATOR . ($info['entrypoint'] ?? 'src/index.ts');
             $mcpConfig = [
                 'command' => 'npx',
-                'args' => ['-y', 'tsx', $entrypoint],
+                'args' => ['-y', 'tsx', self::portablePath($entrypoint)],
                 'timeout' => 30000,
             ];
         } elseif ($usePyproject && $hasUv) {
-            // For uv sync projects, use `uv run` with the entrypoint — use full path
+            // For uv sync projects, use `uv run` with the entrypoint
             $uvCmd = self::which('uv') ?: self::findUvPath();
             $mcpConfig = [
-                'command' => $uvCmd,
-                'args' => ['--directory', $serverDir, 'run', $info['entrypoint'] ?? 'server.py'],
+                'command' => self::portableCommand('uv', $uvCmd),
+                'args' => ['--directory', self::portablePath($serverDir), 'run', $info['entrypoint'] ?? 'server.py'],
                 'timeout' => 30000,
             ];
         } else {
             $python = self::venvPython($venvDir);
             $entrypoint = $serverDir . DIRECTORY_SEPARATOR . ($info['entrypoint'] ?? 'server.py');
             $mcpConfig = [
-                'command' => $python,
-                'args' => [$entrypoint],
+                'command' => self::portablePath($python),
+                'args' => [self::portablePath($entrypoint)],
                 'timeout' => 30000,
             ];
         }
@@ -2546,7 +2624,7 @@ class McpManager
         }
 
         $mcpConfig = $info['mcp_config'] ?? [
-            'command' => $python,
+            'command' => self::portableCommand('python', $python),
             'args' => ['-m', $module],
             'timeout' => 30000,
         ];
@@ -2728,7 +2806,7 @@ class McpManager
         // Add to config
         $config = self::readConfig();
         $config['mcpServers'][$key] = [
-            'command' => $binaryPath,
+            'command' => self::portablePath($binaryPath),
             'args' => [],
         ];
         self::writeConfig($config);

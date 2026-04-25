@@ -148,6 +148,16 @@ return [
         'enabled' => env('AI_CORE_MCP_ENABLED', true),
         // Directory where MCP server binaries get installed
         'install_dir' => env('AI_CORE_MCP_INSTALL_DIR', null),
+        // Env var name used as a placeholder for the project root in
+        // generated `.mcp.json` entries. When set (e.g. 'SUPERTEAM_ROOT'),
+        // McpManager rewrites paths under projectRoot() to ${VAR}/<rel> and
+        // writes bare command names ('node', 'uvx', 'php', …) instead of
+        // resolved binary paths, so the file stays portable across machines
+        // and users. Set to null (the default) to keep legacy behaviour of
+        // writing absolute paths. The host's MCP runtime (Claude Code,
+        // Codex, Gemini, …) must export this env var — typically via
+        // `.claude/settings.local.json` — for the placeholder to expand.
+        'portable_root_var' => env('AI_CORE_MCP_PORTABLE_ROOT_VAR', null),
     ],
 
     // ─── Process monitor (admin only) ───
