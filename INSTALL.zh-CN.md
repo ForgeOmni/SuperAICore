@@ -527,6 +527,24 @@ $response = $backend->streamChat($prompt, function (string $chunk) {
 
 完整 before/after 迁移模式见 `docs/advanced-usage.zh-CN.md` §12；上下文见 `docs/host-spawn-uplift-roadmap.md`。
 
+**0.8.1 —— 无迁移。** 两个 opt-in 改动，升级时不启用也完全无感。
+
+1. **通过 `mcp.portable_root_var` 让 `.mcp.json` 写入可移植。** 默认仍为 `null`，"路径全部写绝对值" 的 legacy 行为保留。当你希望生成的 `.mcp.json` 跨机器 / 跨用户 / 跨容器复制或同步都不会失效时（典型场景:`mcp` 安装目录就在项目树内，跟项目一起搬迁），就启用它:
+
+   ```dotenv
+   # .env —— 任何宿主 MCP runtime 会导出的环境变量名都可以
+   AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT
+   ```
+
+   ```jsonc
+   // .claude/settings.local.json —— Claude Code 在 spawn MCP 时展开 ${SUPERTEAM_ROOT}
+   { "env": { "SUPERTEAM_ROOT": "${PWD}" } }
+   ```
+
+   开启后，所有 `McpManager::install*()` 写入路径会输出裸命令（`node` / `php` / `uvx` / `uv` / `python`），并把 `projectRoot()` 下的路径改写成 `${SUPERTEAM_ROOT}/<rel>`。三个 backend-sync 辅助方法（`superfeedMcpConfig` / `codexOcrMcpConfig` / `codexPdfExtractMcpConfig`）也遵循同一开关。出口到 per-machine 目标时（Codex `~/.codex/config.toml`、Gemini / Claude / Copilot / Kiro / Kimi 的 user-scope MCP 配置、`codex exec -c` 运行时 flag），通过 `materializePortablePath()` 把占位符再展开回绝对路径，那些只接受字面值的 backend 一样能正常 spawn。`McpManager` 新增的辅助方法:`portablePath()` / `portableCommand()` / `portableRootVar()` / `materializePortablePath()` / `materializeServerSpec()`。完整 recipes（容器化宿主、多用户挂载、当环境变量未在运行时导出时的处理）见 `docs/advanced-usage.zh-CN.md` §13。
+
+2. **`/providers` 页基于 CLI 可用性收敛 UI。** 纯 UI 修复 —— 不动 controller / 路由 / DB。`$PATH` 上找不到二进制的 CLI 引擎（`claude` / `codex` / `gemini` / `copilot` / `kiro` / `kimi`），引擎开关会渲染成 `disabled`（带提示 + 隐藏字段被钳制），下方 per-backend 表里那条合成的 "built-in (local CLI login)" 行也会在引擎关闭或 CLI 缺失时被隐藏。当 built-in 与任何外部 provider 都不适用时，表格底部会出现一行明确的空态，指出真正的原因。之前用户切到 "Engine on" 后再发现 runtime 静默失败的工单，可以从此免单。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

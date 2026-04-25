@@ -537,6 +537,24 @@ Après la migration, les futurs engines qui ship une implémentation `ScriptedSp
 
 Voir `docs/advanced-usage.fr.md` §12 pour le pattern de migration complet avant/après et `docs/host-spawn-uplift-roadmap.md` pour le contexte.
 
+**0.8.1 — aucune migration.** Deux changements opt-in ; sûrs à laisser éteints à la mise à jour.
+
+1. **Écritures `.mcp.json` portables via `mcp.portable_root_var`.** Default reste `null` — le legacy "chemins absolus partout" est préservé. Opt-in quand vous voulez qu'un `.mcp.json` généré survive à un copie / sync entre machines, utilisateurs ou couches de container (cas typique : votre dossier d'install `mcp` vit dans l'arbre projet et bouge avec lui) :
+
+   ```dotenv
+   # .env — n'importe quel nom de variable d'env exportée par votre runtime MCP convient
+   AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT
+   ```
+
+   ```jsonc
+   // .claude/settings.local.json — Claude Code expand ${SUPERTEAM_ROOT} au spawn MCP
+   { "env": { "SUPERTEAM_ROOT": "${PWD}" } }
+   ```
+
+   Après ça, chaque writer `McpManager::install*()` émet des commandes nues (`node`, `php`, `uvx`, `uv`, `python`) et réécrit les chemins sous `projectRoot()` en `${SUPERTEAM_ROOT}/<rel>`. Les trois helpers backend-sync (`superfeedMcpConfig`, `codexOcrMcpConfig`, `codexPdfExtractMcpConfig`) honorent le même knob. À l'égress vers les cibles per-machine (Codex `~/.codex/config.toml`, configs MCP user-scope Gemini / Claude / Copilot / Kiro / Kimi, flags runtime `codex exec -c`), `materializePortablePath()` retourne les placeholders en chemins absolus, donc les backends à manipulation littérale stricte spawnent correctement. Nouveaux helpers sur `McpManager` : `portablePath()`, `portableCommand()`, `portableRootVar()`, `materializePortablePath()`, `materializeServerSpec()`. Voir `docs/advanced-usage.fr.md` §13 pour les recettes (hôtes containerisés, montages multi-user, quoi faire quand la variable d'env n'est pas exportée au runtime).
+
+2. **`/providers` gate maintenant l'UI sur la disponibilité du CLI.** Pur fix UI — pas de changement controller / route / DB. Les engines CLI (`claude` / `codex` / `gemini` / `copilot` / `kiro` / `kimi`) dont le binaire n'est pas sur `$PATH` rendent le toggle engine en `disabled` (avec tooltip + champ caché clampé), et la ligne synthétique "built-in (local CLI login)" dans la table per-backend est masquée quand l'engine est éteint ou son CLI manquant. Quand ni built-in ni aucun provider externe ne s'applique, la table affiche maintenant une ligne d'état vide pointant la vraie raison. Les hôtes qui voyaient des utilisateurs activer "Engine on" pour ensuite voir les spawns échouer silencieusement au runtime peuvent arrêter de traiter ces tickets.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

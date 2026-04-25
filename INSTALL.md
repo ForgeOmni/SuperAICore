@@ -532,6 +532,24 @@ After this migration, future engines that ship a `ScriptedSpawnBackend` implemen
 
 See `docs/advanced-usage.md` §12 for the full before/after migration pattern and `docs/host-spawn-uplift-roadmap.md` for the context.
 
+**0.8.1 — no migration.** Two opt-in changes; both safe to skip on upgrade.
+
+1. **Portable `.mcp.json` writes via `mcp.portable_root_var`.** Default stays `null` — legacy "absolute path everywhere" preserved. Opt in when you want a generated `.mcp.json` to survive being copied / synced across machines, users, or container layers (typical for hosts whose `mcp` install dir lives inside the project tree and therefore moves with it):
+
+   ```dotenv
+   # .env — any env var name your MCP runtime exports works
+   AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT
+   ```
+
+   ```jsonc
+   // .claude/settings.local.json — Claude Code expands ${SUPERTEAM_ROOT} at MCP spawn time
+   { "env": { "SUPERTEAM_ROOT": "${PWD}" } }
+   ```
+
+   After this, every `McpManager::install*()` writer emits bare commands (`node`, `php`, `uvx`, `uv`, `python`) and rewrites paths under `projectRoot()` as `${SUPERTEAM_ROOT}/<rel>`. Backend-sync helpers (`superfeedMcpConfig`, `codexOcrMcpConfig`, `codexPdfExtractMcpConfig`) honour the same knob. Egress to per-machine targets (Codex `~/.codex/config.toml`, Gemini / Claude / Copilot / Kiro / Kimi user-scope MCP configs, `codex exec -c` runtime flags) materialises placeholders back to absolute paths via `materializePortablePath()`, so backends with strict literal handling still spawn correctly. New helpers on `McpManager`: `portablePath()`, `portableCommand()`, `portableRootVar()`, `materializePortablePath()`, `materializeServerSpec()`. See `docs/advanced-usage.md` §13 for recipes (containerised hosts, multi-user mounts, what to do when the env var isn't exported at runtime).
+
+2. **`/providers` page now gates UI on CLI availability.** Pure UI fix — no controller / route / DB change. CLI engines (`claude` / `codex` / `gemini` / `copilot` / `kiro` / `kimi`) whose binary isn't on `$PATH` render the engine toggle as `disabled` (with tooltip + clamped hidden field), and the synthetic "built-in (local CLI login)" row inside the per-backend table is hidden when the engine is off or its CLI is missing. When neither built-in nor any external provider applies, the table now shows a one-line empty state pointing at the actual reason. Hosts that previously saw users toggle "engine on" only to have spawns silently fail at runtime can stop fielding those tickets.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

@@ -20,6 +20,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 10. [Prompt-cache keys（Kimi）](#10-prompt-cache-keyskimi)
 11. [扩展 provider type 注册表](#11-扩展-provider-type-注册表)
 12. [通过 `ScriptedSpawnBackend` 接管宿主 CLI spawn](#12-通过-scriptedspawnbackend-接管宿主-cli-spawn)
+13. [可移植的 `.mcp.json` 写入](#13-可移植的-mcpjson-写入)
 
 ---
 
@@ -569,6 +570,123 @@ $env = array_diff_key($parentEnv, array_flip(ClaudeCliBackend::CLAUDE_SESSION_EN
 ### 长期视角
 
 接入 `ScriptedSpawnBackend` 之后,任何新 CLI 引擎落到上游后都会自动出现在宿主的每条 runner 路径上 —— 宿主无需打补丁,不用加 `match` 分支。这是契约存在的意义:0.7.1 之后的每个新引擎（Moonshot Kimi、未来的阿里 Qwen、未来的 Mistral `le-chat` 等）只要 SuperAICore 注册 backend,宿主代码路径里马上可见。完整背景见 [docs/host-spawn-uplift-roadmap.md](host-spawn-uplift-roadmap.md) —— 它替掉了宿主里 700 行 per-backend 胶水、分阶段迁移计划、以及 pre-soak caveat。
+
+---
+
+## 13. 可移植的 `.mcp.json` 写入
+
+*自 0.8.1 起。*
+
+只要你**手工**编辑 `.mcp.json` 时使用裸命令名（`node`、`uvx` 等）和 `${SUPERTEAM_ROOT}/<rel>` 占位路径，文件本来就是可移植的。但只要走 UI 触发的写入路径，`McpManager::install*()` 都会通过 `which()` / `PHP_BINARY` 解出绝对路径，再把项目相对路径拼成绝对值才落盘 —— 一旦用户点 "Install" 或 "Install All"，文件马上被 `C:\Program Files\nodejs\node.exe`、`/Users/jane/projects/foo/.mcp-servers/bar/dist/index.js`、venv-bin 路径等再次污染。这个文件被同步进同事的 checkout、挂载进容器，或者复制到不同的 `${HOME}` 时立即报废。
+
+0.8.1 引入一个由单一配置项驱动的 **可移植模式**（opt-in）:
+
+```dotenv
+# .env —— 任意你的 MCP runtime 会导出的环境变量名都可以
+AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT
+```
+
+设置之后（默认仍为 `null`，意味着 legacy "处处绝对路径" 的行为），所有 writer 同时翻转两件事:
+
+1. **裸命令** —— `which('node')` / `PHP_BINARY` / `which('uvx')` 等被替换成 `node` / `php` / `uvx`。CLI 引擎在 spawn 时按各自 PATH 决定真正运行哪个二进制，不绑定具体机器路径。
+2. **路径占位符** —— `projectRoot()` 下的所有绝对路径被改写为 `${SUPERTEAM_ROOT}/<rel>`。树外的路径（`/usr/share/...`、`/var/lib/...` 等）保持绝对值。宿主的 MCP runtime 在 spawn 时展开占位符。
+
+### 让 MCP runtime 展开 `${SUPERTEAM_ROOT}`
+
+大多数 MCP runtime（Claude Code、Codex、Gemini 等）从 `.claude/settings.local.json` 或等价位置读取 project-scope env，再注入到 spawn 出来的 MCP server 进程里。把 `SUPERTEAM_ROOT` 接到项目根:
+
+```jsonc
+// .claude/settings.local.json
+{
+  "env": {
+    "SUPERTEAM_ROOT": "${PWD}"
+  }
+}
+```
+
+具体怎么填取决于宿主怎么跑 —— 用 `php artisan serve` 起的 Laravel 应用，`${PWD}` 就够了。容器部署时在容器 env 文件里设 `SUPERTEAM_ROOT=/srv/app`（或你容器内的项目根）。从不同 cwd 启动的队列 worker 要在 systemd unit / supervisord 配置里 export。
+
+### writer 输出对比 —— before / after
+
+```jsonc
+// Before —— legacy 绝对路径
+{
+  "mcpServers": {
+    "ocr": {
+      "command": "C:\\Users\\jane\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": ["C:\\Users\\jane\\projects\\acme\\.mcp-servers\\ocr\\main.py"]
+    },
+    "pdf-extract": {
+      "command": "/opt/homebrew/Cellar/php/8.3.0/bin/php",
+      "args": ["/Users/jane/projects/acme/artisan", "pdf:extract"]
+    }
+  }
+}
+```
+
+```jsonc
+// After —— 启用 AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT
+{
+  "mcpServers": {
+    "ocr": {
+      "command": "python",
+      "args": ["${SUPERTEAM_ROOT}/.mcp-servers/ocr/main.py"]
+    },
+    "pdf-extract": {
+      "command": "php",
+      "args": ["${SUPERTEAM_ROOT}/artisan", "pdf:extract"]
+    }
+  }
+}
+```
+
+### 出口规则 —— 占位符在 per-machine 目标处展开
+
+project-scope 的 `.mcp.json` 保留占位符以维持可移植性。但有三类目标**无法**保持可移植:
+
+- **user-scope backend 配置** —— `~/.codex/config.toml`（TOML 完全不展开 `${VAR}`）、`~/.gemini/settings.json`、`~/.claude/settings.json`、`~/.copilot/...`、`~/.kiro/...`、`~/.kimi/...` 本质上都是 per-machine。
+- **Codex `exec -c` 运行时 flag** —— 作为命令行参数传给 `codex exec`，不会做 env 展开。
+- **在 `.mcp.json` 之上合成 MCP 条目的辅助方法** —— `superfeedMcpConfig` / `codexOcrMcpConfig` / `codexPdfExtractMcpConfig` 产出的 spec 会被 `syncAllBackends()` 和 `codexMcpConfigArgs()` 消费。
+
+针对这些场景，`codexMcpServers()` 在返回前对每个 spec 都跑一遍 `materializeServerSpec()`。materializer 的行为:
+
+1. 用环境变量的运行时值（`getenv('SUPERTEAM_ROOT')`）替换 `${SUPERTEAM_ROOT}`。
+2. 若当前进程没 export 该变量，回退到 `projectRoot()` —— 不继承 web 请求 env 的队列 worker 常见。
+3. 可移植模式关闭时为 no-op（spec 本来就是绝对值）。
+
+净效果:一份 project-scope 的 `.mcp.json` 同时携带裸命令 + 占位符；每个消费它的 backend writer 在真正需要时拿到的是裸命令 + 真实绝对路径。
+
+### 编程辅助方法
+
+如果宿主有自己的 MCP-spec writer 想走同样的处理，`McpManager` 上五个辅助方法都是公开的:
+
+```php
+use SuperAICore\Services\McpManager;
+
+$mcp = app(McpManager::class);
+
+// 正向 —— writer 用
+$cmd  = $mcp->portableCommand('uvx', $resolvedUvxPath);   // 'uvx' 或绝对路径
+$path = $mcp->portablePath('/Users/jane/proj/.mcp/foo');  // '${SUPERTEAM_ROOT}/.mcp/foo'
+
+// 反向 —— 出口到不可移植目标时用
+$abs  = $mcp->materializePortablePath('${SUPERTEAM_ROOT}/foo'); // '/srv/app/foo'
+$spec = $mcp->materializeServerSpec([                            // 遍历 command + args + env
+    'command' => 'python',
+    'args'    => ['${SUPERTEAM_ROOT}/script.py'],
+    'env'     => ['DATA_DIR' => '${SUPERTEAM_ROOT}/data'],
+]);
+
+// 配置访问 —— 关闭时返回 null
+$varName = $mcp->portableRootVar(); // 'SUPERTEAM_ROOT' 或 null
+```
+
+### 注意事项
+
+- **pyproject Python server 的 `uv run` 替换。** 可移植模式 + `pyproject.toml` + `entrypoint_script` 三者同时成立时，writer 会改路由策略 —— 不再把 `command` 钉到 `<projectRoot>/.venv/bin/<script>`（per-machine 路径），而是输出 `command: "uv"`、`args: ["run", "<script>"]`，让 `uv` 在 spawn 时解析 venv。如果宿主在 MCP spawn 时机的 PATH 上没有 `uv`，对该 server 关掉可移植模式（或装上 `uv`）。
+- **`PHP_BINARY` 注册项。** `pdf-extract` 注册项保持 `'command' => PHP_BINARY` 直接写，注册表形状不变。开启可移植模式后 `installArtisan` 在写盘时把它规范化成 `'php'`。如果你有自定义注册项把绝对二进制路径硬写进 `command`，也要在 writer 里先过一遍 `portableCommand($bare, $resolved)`。
+- **树外路径保持绝对。** `portablePath('/usr/share/foo')` 直接返回 `/usr/share/foo`，因为它不在 `projectRoot()` 下。这是设计 —— 占位符只对树内相对路径有意义。
+- **Codex 辅助（`codexOcrMcpConfig` / `codexPdfExtractMcpConfig` / `superfeedMcpConfig`）写到 project-scope `.mcp.json`。** 可移植模式开启时它们输出占位符；出口 materializer 在抵达 `~/.codex/config.toml` 之前再展开成绝对路径。0.8.1 之前的"始终绝对"行为在关闭可移植模式时被原样保留。
 
 ---
 

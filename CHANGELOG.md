@@ -4,17 +4,58 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.1] — 2026-04-25
+
+**Portable `.mcp.json` for the install-then-relocate workflow + two providers-page UI lies fixed.** The release lands an opt-in `mcp.portable_root_var` knob: with it set, every `McpManager` writer emits bare commands (`node`, `php`, `uvx`, `uv`, `python`) and rewrites in-tree absolute paths as `${ROOT_VAR}/<rel>`, so a generated `.mcp.json` survives being copied / synced across machines, users, or container layers. Egress to per-machine targets (Codex `~/.codex/config.toml`, Gemini / Claude / Copilot / Kiro / Kimi user-scope MCP configs, `codex exec -c` runtime flags) materialises the placeholders back into absolute paths so backends that don't expand `${VAR}` still spawn correctly. Default is `null` — legacy "absolute path everywhere" behaviour preserved for hosts that haven't opted in. Separately, the `/providers` page stops offering toggles and "Built-in" rows for engines whose CLI binary isn't installed.
 
 ### Added
 
-- **Portable `.mcp.json` writes via `mcp.portable_root_var` config knob.** When a host sets `AI_CORE_MCP_PORTABLE_ROOT_VAR` (or the equivalent `super-ai-core.mcp.portable_root_var` config) to an env var name (e.g. `SUPERTEAM_ROOT`), every `McpManager::install*()` writer now emits bare command names (`node`, `uvx`, `uv`, `php`, `python`) and rewrites paths under the project root as `${ROOT_VAR}/<rel>`, so the generated `.mcp.json` survives being moved between machines / users without losing pointers. Default stays `null`, preserving the legacy "absolute path everywhere" behaviour for hosts that haven't opted in.
-  - New helpers: `McpManager::portablePath()`, `portableCommand()`, `portableRootVar()`.
-  - Affects `installUvx`, `installArtisan`, `installPython` (Node + uv-pyproject + venv-fallback + entrypoint-script + tsx branches), `installPythonPackage`, and `installBinary`.
-  - Registry entry `pdf-extract` keeps `PHP_BINARY` directly; `installArtisan` normalises it to `'php'` at write time when portability is on, so the registry shape stays the same.
-  - With portability enabled, Python servers that have a `pyproject.toml` and an `entrypoint_script` route through `uv run <script>` instead of the venv-bin executable, avoiding a per-machine venv path inside the command field.
+#### Portable MCP path mode (`mcp.portable_root_var`)
 
-- **Codex / Gemini / Claude / Copilot / Kiro / Kimi backend-sync configs go through bare commands too** when `mcp.portable_root_var` is set. The three runtime helpers that synthesise per-host MCP entries on top of `.mcp.json` — `superfeedMcpConfig`, `codexOcrMcpConfig`, `codexPdfExtractMcpConfig` — now use `portableCommand()` for the `command` field (so `php`/`python` resolve through PATH instead of pinning a specific PhpStudy / WindowsApps binary) and `portablePath()` for `base_path('artisan')`. `codexMcpServers()` then materialises every `${ROOT_VAR}/...` placeholder back into an absolute path before returning, since user-scope backend configs (`~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.claude/settings.json`, etc.) and `codex exec -c` runtime flags are inherently per-machine and don't all honour env-var expansion. Net effect: `command` stays a bare name (works regardless of which `php`/`python` is installed); paths are real and ready to spawn. New helpers: `McpManager::materializePortablePath()`, `materializeServerSpec()`. Tests added for materialise vs no-op disabled mode and for full-spec walking (command/args/env).
+- **`super-ai-core.mcp.portable_root_var` config + `AI_CORE_MCP_PORTABLE_ROOT_VAR` env var** (default `null`). When set to an env var name (e.g. `SUPERTEAM_ROOT`), every `McpManager::install*()` writer emits bare command names and rewrites paths under `projectRoot()` as `${ROOT_VAR}/<rel>`. The host's MCP runtime (Claude Code, Codex, Gemini, …) must export the env var — typically via `.claude/settings.local.json` `env` block — for the placeholder to expand at spawn time.
+- **Three new helpers on `McpManager`**:
+  - `portableRootVar(): ?string` — config accessor (trims, treats empty as `null`).
+  - `portablePath(string $abs): string` — abs path under projectRoot → `${VAR}/<rel>`; paths outside the tree returned unchanged; equals-root collapses to bare `${VAR}`.
+  - `portableCommand(string $bare, ?string $resolved): string` — bare name when portability on; resolved abs path otherwise (or bare as last fallback when `which` failed).
+- **Inverse pair, used at egress**:
+  - `materializePortablePath(string): string` — replaces `${ROOT_VAR}` with the env var's runtime value (falls back to `projectRoot()` when the var isn't exported in the current process). No-op when portability is disabled.
+  - `materializeServerSpec(array): array` — walks `command` + `args` + `env` of one MCP-server spec; returns a new array.
+- **Writer sites updated** (all `.mcp.json` writes — opt-in via `portable_root_var`, BC otherwise):
+  - `installUvx` — `$uvx` → bare `uvx`.
+  - `installArtisan` — `PHP_BINARY` → bare `php`, `__ARTISAN__` → portable artisan path. Also normalises registry entries that ship `'command' => PHP_BINARY` directly.
+  - `installPython` (all five branches: Node entrypoint, `entrypoint_script`, `run_with_tsx`, uv pyproject, venv fallback). When pyproject + uv + portability is on, the `entrypoint_script` branch routes through `uv run <script>` to keep `command` bare instead of pinning a per-machine `.venv/bin/<script>` path.
+  - `installPythonPackage` — bare `python`.
+  - `installBinary` — portable binary path.
+- **Backend-sync helpers updated** (synthesise per-host MCP entries on top of `.mcp.json` at sync time): `superfeedMcpConfig`, `codexOcrMcpConfig`, `codexPdfExtractMcpConfig` use `portableCommand()` for `command` and `portablePath()` for `base_path('artisan')`.
+- **Egress hook**: `codexMcpServers()` runs every spec through `materializeServerSpec()` before normalising. All consumers (`syncAllBackends`, `codexMcpConfigArgs`) get bare commands + real abs paths — exactly what each backend's renderer expects to write to disk / spawn.
+- **14 new tests** in `tests/Unit/McpManagerPortablePathTest.php` (21 assertions): disabled-by-default pass-through, in-tree rewriting, out-of-tree unchanged, equals-root collapsing, command bare/resolved switch, empty-string-treated-as-null parsing, env-var-driven expansion, projectRoot fallback when the var is unset at runtime, no-op on strings without placeholders, spec walking across `command` / `args` / `env`, and disabled-mode pass-through for full specs.
+
+### Fixed
+
+- **Providers page no longer lies about CLI engines whose binary isn't installed.** Two cases:
+  1. **Top toggle** — CLI engines (`claude` / `codex` / `gemini` / `copilot` / `kiro` / `kimi`) without their binary on `$PATH` now render the `enabled` checkbox `disabled` (with a tooltip pointing at the install-CLI hint), the hidden form field clamps to `1` so a stray submit can't claim "engine on", and the card greys out the same way an explicitly-disabled engine does. The "CLI installed / not installed" badge is also gated on `$isCliEngine` so non-CLI backends (`superagent`, `anthropic_api`, …) stop being labelled missing-CLI.
+  2. **Bottom "Built-in" row** — the synthetic "built-in (local CLI login)" row was rendering with a "Default backend" badge even when the engine was off or its CLI was missing. Gated on `$showBuiltinRow = $be !== 'superagent' && !$beDisabled && (!$beIsCli || $beCliInstalled)`. When hidden and there are no external providers configured, the table now shows a one-line empty state pointing at the actual reason (CLI missing vs engine off) instead of an empty body.
+- No controller / route changes. The existing `toggleBackend` handler still accepts whatever the form sends — the UI just stops asking users to send a request that can't help them.
+
+### Migration path
+
+Hosts that want their `.mcp.json` to survive being relocated (synced into a container image, copied to a teammate's checkout, mounted into a different user's `${HOME}`):
+
+```php
+// .env
+AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT
+```
+
+```jsonc
+// .claude/settings.local.json — host MCP runtime expands ${SUPERTEAM_ROOT} at spawn time
+{
+  "env": { "SUPERTEAM_ROOT": "${PWD}" }
+}
+```
+
+After this, click "Install" / "Install All" in `/integrations` (or call `McpManager::installAll()` programmatically). The resulting `.mcp.json` ships bare commands + `${SUPERTEAM_ROOT}/<rel>` paths instead of `C:\Program Files\nodejs\node.exe` and `/Users/jane/projects/foo/.mcp-servers/bar/dist/index.js`. Backends that don't expand `${VAR}` (Codex TOML, Gemini settings JSON, …) still receive absolute paths because `codexMcpServers()` materialises before egress.
+
+Codex helpers that write per-machine `~/.codex/config.toml` entries (not project-scope `.mcp.json`) are intentionally unchanged from the writer side, but `codexMcpServers()` egress materialises any placeholders that bled in from project-scope synthesis.
 
 ## [0.8.0] — 2026-04-24
 

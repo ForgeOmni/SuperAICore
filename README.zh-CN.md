@@ -128,6 +128,7 @@
 - **UI 驱动管理器** —— 在后台 UI 安装、启用、配置 MCP 服务器。
 - **catalog 驱动的同步**（0.6.8+）—— `claude:mcp-sync` 读 `.mcp-servers/mcp-catalog.json` + 薄的 `.claude/mcp-host.json` 映射，把正确的 server 子集分发到项目 `.mcp.json`、每个 agent `.claude/agents/*.md` frontmatter 里的 `mcpServers:` 块，以及每个已安装 CLI backend 的 user-scope 配置。`mcp:sync-backends` 是给手改 `.mcp.json` 或 file-watcher 自动同步用的独立入口。非破坏性:按 sha256 manifest 标记用户编辑并保留。详见 `docs/mcp-sync.md`。
 - **mcp.json 的 OAuth 辅助方法**（0.6.9+）—— `McpManager::oauthStatus(key)` / `oauthLogin(key)` / `oauthLogout(key)` 薄封装 SDK 0.9.0 的 `McpOAuth`，针对 mcp.json 条目里声明了 `oauth: {client_id, device_endpoint, token_endpoint, scope?}` 块的 MCP 服务器。前端可以给每个这类服务器画一个 OAuth 按钮。
+- **可移植的 `.mcp.json` 写入**（0.8.1+）—— 设置 `AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT`（或任意你的 MCP runtime 会导出的环境变量名）后，所有 `McpManager::install*()` 写入路径会输出裸命令名（`node` / `php` / `uvx` / `uv` / `python`），并把项目根下的绝对路径改写成 `${SUPERTEAM_ROOT}/<rel>` 占位符。生成出来的 `.mcp.json` 跨机器 / 跨用户 / 跨容器复制或同步都不会被 `which()` / `PHP_BINARY` 再次污染。出口到 per-machine 目标时（Codex `~/.codex/config.toml`、Gemini / Claude / Copilot / Kiro / Kimi 的 user-scope MCP 配置、`codex exec -c` 运行时 flag）会把占位符再展开回绝对路径，所以那些不解析 `${VAR}` 的 backend 也能正常 spawn。默认值依然是 `null`，未启用的宿主行为完全不变。详见 `docs/advanced-usage.md` §13。
 
 ### SuperAgent SDK 集成
 
