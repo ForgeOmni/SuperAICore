@@ -4,6 +4,14 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] — 2026-04-25
+
+**Fix the providers-page bottom card so it visually reflects engine availability the same way the top card does.** Patch release on top of 0.8.1 — no behavioural changes elsewhere.
+
+### Fixed
+
+- **Bottom provider card grays out and surfaces a "CLI not installed" badge when a CLI engine's binary is missing**, mirroring the top status card's `$effectivelyOff` logic. Before this fix the bottom half rendered in full colour while the top half showed the engine as unavailable — internally inconsistent and easy to miss. Engine toggled off keeps its existing `engine_disabled_badge`; CLI-missing gets a separate `cli_not_installed` chip so the two causes stay distinguishable. Built-in synthetic row gating now keys off the unified `$beEffectivelyOff` flag for the same reason. Hosts that want to skip the whole card more aggressively (rather than gray it out) can override via `resources/views/vendor/super-ai-core/providers/index.blade.php`.
+
 ## [0.8.1] — 2026-04-25
 
 **Portable `.mcp.json` for the install-then-relocate workflow + two providers-page UI lies fixed.** The release lands an opt-in `mcp.portable_root_var` knob: with it set, every `McpManager` writer emits bare commands (`node`, `php`, `uvx`, `uv`, `python`) and rewrites in-tree absolute paths as `${ROOT_VAR}/<rel>`, so a generated `.mcp.json` survives being copied / synced across machines, users, or container layers. Egress to per-machine targets (Codex `~/.codex/config.toml`, Gemini / Claude / Copilot / Kiro / Kimi user-scope MCP configs, `codex exec -c` runtime flags) materialises the placeholders back into absolute paths so backends that don't expand `${VAR}` still spawn correctly. Default is `null` — legacy "absolute path everywhere" behaviour preserved for hosts that haven't opted in. Separately, the `/providers` page stops offering toggles and "Built-in" rows for engines whose CLI binary isn't installed.
