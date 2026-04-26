@@ -20,6 +20,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 10. [Prompt-cache keys (Kimi)](#10-prompt-cache-keys-kimi)
 11. [Extending the provider-type registry](#11-extending-the-provider-type-registry)
 12. [Host CLI spawn via `ScriptedSpawnBackend`](#12-host-cli-spawn-via-scriptedspawnbackend)
+13. [Portable `.mcp.json` writes](#13-portable-mcpjson-writes)
 
 ---
 
@@ -569,6 +570,123 @@ $env = array_diff_key($parentEnv, array_flip(ClaudeCliBackend::CLAUDE_SESSION_EN
 ### Why the contract matters long-term
 
 After adopting `ScriptedSpawnBackend`, a new CLI engine lands upstream and shows up in host runners automatically — no host patch, no `match` arm to add. That's the point of the contract: every new engine since 0.7.1 (Moonshot's Kimi, future Alibaba Qwen, future Mistral `le-chat`, …) becomes visible in host code paths the moment SuperAICore registers its backend. See [docs/host-spawn-uplift-roadmap.md](host-spawn-uplift-roadmap.md) for the full context — the 700 lines of per-backend glue it replaces, the phased migration plan, and the pre-soak caveat.
+
+---
+
+## 13. Portable `.mcp.json` writes
+
+*Since 0.8.1.*
+
+Generated `.mcp.json` files have always been moveable *if* you hand-authored them with bare command names (`node`, `uvx`, …) and `${SUPERTEAM_ROOT}/<rel>` placeholder paths. But every UI-driven write path on `McpManager::install*()` resolved binaries through `which()` / `PHP_BINARY` and joined project-relative paths into absolute ones before writing — so the moment a user clicked "Install" or "Install All", the file got re-polluted with `C:\Program Files\nodejs\node.exe`, `/Users/jane/projects/foo/.mcp-servers/bar/dist/index.js`, venv-bin paths, etc. The file then broke the moment it was synced into a teammate's checkout, mounted into a container, or copied to a different `${HOME}`.
+
+0.8.1 adds an opt-in **portable mode** driven by one config knob:
+
+```dotenv
+# .env — pick any env var name your MCP runtime exports
+AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT
+```
+
+When the knob is set (default `null` = legacy "absolute paths everywhere"), every writer flips two things:
+
+1. **Bare commands** — `which('node')` / `PHP_BINARY` / `which('uvx')` etc. are replaced by `node` / `php` / `uvx`. The CLI engine's PATH at spawn time decides which binary actually runs — no per-machine pinning.
+2. **Path placeholders** — every absolute path under `projectRoot()` is rewritten to `${SUPERTEAM_ROOT}/<rel>`. Paths outside the tree (e.g. `/usr/share/...`, `/var/lib/...`) stay absolute. The host's MCP runtime expands the placeholder at spawn time.
+
+### Telling the MCP runtime to expand `${SUPERTEAM_ROOT}`
+
+Most MCP runtimes (Claude Code, Codex, Gemini, …) read project-scope env from `.claude/settings.local.json` or equivalent, then expand it into spawned MCP-server processes. Wire `SUPERTEAM_ROOT` to your project root once:
+
+```jsonc
+// .claude/settings.local.json
+{
+  "env": {
+    "SUPERTEAM_ROOT": "${PWD}"
+  }
+}
+```
+
+The actual value depends on how the host runs — for a Laravel app served by `php artisan serve`, `${PWD}` works. For container deployments, set `SUPERTEAM_ROOT=/srv/app` (or whatever your in-container project root is) in the container's env file. For a queue worker that boots from a different cwd, export it from the systemd unit / supervisord config.
+
+### What the writers produce — before and after
+
+```jsonc
+// Before — legacy absolute paths
+{
+  "mcpServers": {
+    "ocr": {
+      "command": "C:\\Users\\jane\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": ["C:\\Users\\jane\\projects\\acme\\.mcp-servers\\ocr\\main.py"]
+    },
+    "pdf-extract": {
+      "command": "/opt/homebrew/Cellar/php/8.3.0/bin/php",
+      "args": ["/Users/jane/projects/acme/artisan", "pdf:extract"]
+    }
+  }
+}
+```
+
+```jsonc
+// After — portable, with AI_CORE_MCP_PORTABLE_ROOT_VAR=SUPERTEAM_ROOT
+{
+  "mcpServers": {
+    "ocr": {
+      "command": "python",
+      "args": ["${SUPERTEAM_ROOT}/.mcp-servers/ocr/main.py"]
+    },
+    "pdf-extract": {
+      "command": "php",
+      "args": ["${SUPERTEAM_ROOT}/artisan", "pdf:extract"]
+    }
+  }
+}
+```
+
+### Egress rule — placeholders materialise into per-machine targets
+
+Project-scope `.mcp.json` keeps placeholders for portability. But three categories of target *can't* be portable:
+
+- **User-scope backend configs** — `~/.codex/config.toml` (TOML, no `${VAR}` expansion at all), `~/.gemini/settings.json`, `~/.claude/settings.json`, `~/.copilot/...`, `~/.kiro/...`, `~/.kimi/...` are inherently per-machine.
+- **Codex `exec -c` runtime flags** — passed to `codex exec` on the command line; not env-expanded.
+- **Helpers that synthesise MCP entries on top of `.mcp.json`** at sync time — `superfeedMcpConfig`, `codexOcrMcpConfig`, `codexPdfExtractMcpConfig` produce specs consumed by `syncAllBackends()` and `codexMcpConfigArgs()`.
+
+For these, `codexMcpServers()` runs every spec through `materializeServerSpec()` immediately before returning. The materialiser:
+
+1. Replaces `${SUPERTEAM_ROOT}` with the env var's runtime value (`getenv('SUPERTEAM_ROOT')`).
+2. Falls back to `projectRoot()` when the var isn't exported in the current process — common for queue workers that don't inherit the web request env.
+3. No-ops when portability is disabled (the spec is already absolute).
+
+Net effect: one project-scope `.mcp.json` ships with bare commands + placeholders; every backend writer that consumes it gets bare commands + real absolute paths exactly when it needs them.
+
+### Programmatic helpers
+
+If your host has its own MCP-spec writer that needs the same treatment, the five helpers on `McpManager` are public:
+
+```php
+use SuperAICore\Services\McpManager;
+
+$mcp = app(McpManager::class);
+
+// Forward direction — used by writers
+$cmd  = $mcp->portableCommand('uvx', $resolvedUvxPath);   // 'uvx' or absolute
+$path = $mcp->portablePath('/Users/jane/proj/.mcp/foo');  // '${SUPERTEAM_ROOT}/.mcp/foo'
+
+// Inverse — used at egress to non-portable targets
+$abs  = $mcp->materializePortablePath('${SUPERTEAM_ROOT}/foo'); // '/srv/app/foo'
+$spec = $mcp->materializeServerSpec([                            // walks command + args + env
+    'command' => 'python',
+    'args'    => ['${SUPERTEAM_ROOT}/script.py'],
+    'env'     => ['DATA_DIR' => '${SUPERTEAM_ROOT}/data'],
+]);
+
+// Knob accessor — null if portability disabled
+$varName = $mcp->portableRootVar(); // 'SUPERTEAM_ROOT' or null
+```
+
+### Gotchas
+
+- **`uv run` substitution for pyproject Python servers.** Portability + `pyproject.toml` + `entrypoint_script` triggers a routing change — instead of pinning `command` to `<projectRoot>/.venv/bin/<script>` (a per-machine path), the writer emits `command: "uv"`, `args: ["run", "<script>"]`. `uv` resolves the venv at spawn time. If your host doesn't have `uv` on PATH at MCP spawn time, leave portability off for that server (or install `uv`).
+- **`PHP_BINARY` registry entries.** The `pdf-extract` registry entry keeps `'command' => PHP_BINARY` directly (so the registry shape stays the same). `installArtisan` normalises it to `'php'` at write time when portability is on. Custom registry entries that hardcode an absolute binary in `command` need the same treatment — pass it through `portableCommand($bare, $resolved)` from your writer.
+- **Out-of-tree paths stay absolute.** `portablePath('/usr/share/foo')` returns `/usr/share/foo` unchanged because `/usr/share` isn't under `projectRoot()`. This is intentional — the placeholder only makes sense for tree-relative paths.
+- **Codex helpers (`codexOcrMcpConfig` / `codexPdfExtractMcpConfig` / `superfeedMcpConfig`) write to project-scope `.mcp.json`.** They emit placeholders when portability is on. The egress materialiser then re-absolutises before they hit `~/.codex/config.toml`. The pre-0.8.1 behaviour (always-absolute) is preserved verbatim when portability is off.
 
 ---
 
