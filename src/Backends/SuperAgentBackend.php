@@ -354,7 +354,7 @@ class SuperAgentBackend implements Backend
      *
      * @param array<string,mixed> $hostConfig
      */
-    protected function makeProvider(string $providerName, array $hostConfig): \SuperAgent\Providers\LLMProvider
+    protected function makeProvider(string $providerName, array $hostConfig): \SuperAgent\Contracts\LLMProvider
     {
         return ProviderRegistry::createForHost($providerName, $hostConfig);
     }

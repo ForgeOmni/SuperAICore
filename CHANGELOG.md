@@ -4,6 +4,12 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`SuperAgentBackend::makeProvider()` return type pointed at a non-existent namespace** (`\SuperAgent\Providers\LLMProvider`). The interface lives at `\SuperAgent\Contracts\LLMProvider`, so every call to `makeProvider()` on the 0.8.1 / 0.8.2 path threw `TypeError` mid-construct. The exception was swallowed by the `\Throwable` catch at the bottom of `SuperAgentBackend::generate()` and the call returned `null` — silently breaking the entire SuperAgent in-process backend introduced when the createForHost refactor landed. `SuperAgentBackendTest` was failing 15 / 22 (plus 2 errors) for the same reason. Fix is one line: correct the namespace. All 480 tests now pass.
+
 ## [0.8.2] — 2026-04-25
 
 **Fix the providers-page bottom card so it visually reflects engine availability the same way the top card does.** Patch release on top of 0.8.1 — no behavioural changes elsewhere.
