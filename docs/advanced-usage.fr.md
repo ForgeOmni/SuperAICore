@@ -21,6 +21,8 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 11. [Étendre le registre de types de provider](#11-étendre-le-registre-de-types-de-provider)
 12. [Spawn CLI hôte via `ScriptedSpawnBackend`](#12-spawn-cli-hôte-via-scriptedspawnbackend)
 13. [Écritures `.mcp.json` portables](#13-écritures-mcpjson-portables)
+14. [Adaptateur host-config SuperAgent — `createForHost`](#14-adaptateur-host-config-superagent--createforhost)
+15. [Handoff de provider en milieu de conversation (`Agent::switchProvider`)](#15-handoff-de-provider-en-milieu-de-conversation-agentswitchprovider)
 
 ---
 
@@ -688,6 +690,159 @@ $varName = $mcp->portableRootVar(); // 'SUPERTEAM_ROOT' ou null
 - **Entrées de registre `PHP_BINARY`.** L'entrée registre `pdf-extract` garde `'command' => PHP_BINARY` directement (pour que la forme du registre reste identique). `installArtisan` la normalise en `'php'` au write time quand la portabilité est on. Les entrées custom du registre qui hardcodent un binaire absolu dans `command` ont besoin du même traitement — passez-le par `portableCommand($bare, $resolved)` depuis votre writer.
 - **Les chemins hors-arbre restent absolus.** `portablePath('/usr/share/foo')` retourne `/usr/share/foo` inchangé parce que `/usr/share` n'est pas sous `projectRoot()`. C'est intentionnel — le placeholder n'a de sens que pour les chemins relatifs à l'arbre.
 - **Helpers Codex (`codexOcrMcpConfig` / `codexPdfExtractMcpConfig` / `superfeedMcpConfig`) écrivent dans `.mcp.json` project-scope.** Ils émettent des placeholders quand la portabilité est on. Le matérialisateur d'égress les ré-absolutise avant qu'ils n'atteignent `~/.codex/config.toml`. Le comportement pre-0.8.1 (toujours-absolu) est préservé verbatim quand la portabilité est off.
+
+---
+
+## 14. Adaptateur host-config SuperAgent — `createForHost`
+
+*Depuis 0.8.5.*
+
+`SuperAgentBackend::buildAgent()` ne bricole plus la construction des providers SDK à la main. La double branche region / non-region + l'injection HTTP-header manuelle se réduisent à un seul appel :
+
+```php
+// src/Backends/SuperAgentBackend.php (extrait — ce que le backend fait en interne)
+$hostConfig = [
+    'api_key'  => $providerConfig['api_key']  ?? null,
+    'base_url' => $providerConfig['base_url'] ?? null,
+    'model'    => $options['model']           ?? $providerConfig['model']    ?? null,
+    'region'   => $providerConfig['region']   ?? null,
+    'extra'    => [
+        'http_headers'     => $descriptor->httpHeaders,
+        'env_http_headers' => $descriptor->envHttpHeaders,
+    ],
+];
+$agentConfig['provider'] = ProviderRegistry::createForHost($providerName, $hostConfig);
+```
+
+L'adaptateur per-key côté SDK possède la map de constructeur :
+
+- **Adaptateur par défaut** — passe `api_key` / `base_url` / `model` / `max_tokens` / `region` directement, puis fait un deep-merge de `extra` après eux (`extra` ne peut donc pas écraser accidentellement un champ top-level). Couvre Anthropic / OpenAI / OpenAI-Responses / OpenRouter / Ollama / LMStudio / Gemini / Kimi / Qwen / Qwen-native / GLM / MiniMax.
+- **Adaptateur `bedrock`** (intégré au SDK) — éclate `credentials.aws_access_key_id` / `aws_secret_access_key` / `aws_region` dans les slots `access_key` / `secret_key` / `region` du constructeur BedrockProvider. Retombe sur `host['api_key']` pour `access_key` si le bloc credentials structuré est absent.
+- **Futures clés provider** — chacune embarque son propre adaptateur (ou utilise celui par défaut). Les nouveaux types provider du SDK arrivent ici sans aucun changement de code backend.
+
+### Ce que les hôtes qui contournent `Dispatcher` doivent faire
+
+La plupart des hôtes passent par `Dispatcher::dispatch(['backend' => 'superagent', …])` et ne touchent jamais cette couche. Mais les hôtes qui construisent un `Agent` directement — typiquement parce qu'ils veulent piloter `withSystemPrompt()` / `addTool()` / les hooks de streaming du SDK sans l'enveloppe Dispatcher — peuvent utiliser la même forme :
+
+```php
+use SuperAgent\Agent;
+use SuperAgent\Providers\ProviderRegistry;
+use SuperAICore\Services\ProviderTypeRegistry;
+use SuperAICore\Models\AiProvider;
+
+$row = AiProvider::find(42);
+$descriptor = app(ProviderTypeRegistry::class)->get($row->type);
+$sdkKey = $descriptor?->sdkProvider ?: $row->type;
+
+$provider = ProviderRegistry::createForHost($sdkKey, [
+    'api_key'  => $row->decrypted_api_key,
+    'base_url' => $row->base_url,
+    'model'    => $row->extra_config['default_model'] ?? null,
+    'region'   => $row->extra_config['region']        ?? null,
+    'extra'    => [
+        // Les headers HTTP statiques + env-driven déclarés sur le
+        // descriptor passent par `extra` sur l'adaptateur par défaut.
+        // Les hôtes peuvent aussi y mettre n'importe quel knob
+        // provider-spécifique que le SDK accepte : `organization`,
+        // `reasoning`, `verbosity`, `store`, `extra_body`,
+        // `prompt_cache_key`, `azure_api_version`, etc.
+        'http_headers'     => $descriptor?->httpHeaders     ?? [],
+        'env_http_headers' => $descriptor?->envHttpHeaders  ?? [],
+        'organization'     => $row->extra_config['organization'] ?? null,
+    ],
+]);
+
+$agent = new Agent([
+    'provider'   => $provider,
+    'max_turns'  => 5,
+    'max_tokens' => 4000,
+]);
+```
+
+### Pourquoi ça compte
+
+- **Un appel factory par provider**, peu importe la clé. Les hôtes qui portaient un `match ($providerType) { 'bedrock' => new BedrockProvider([...]), 'openai' => new OpenAIProvider([...]), … }` se ramènent à une ligne. Les nouvelles clés provider SDK (`openai-responses` et `lmstudio` ont atterri en 0.7.0 ; les futures atterrissent transparently) marchent sans bras `match` à ajouter.
+- **Les providers region-aware restent region-aware** sans que les appelants aient à connaître la map de region. Passez `'region' => 'cn'` sur Kimi / Qwen / GLM / MiniMax et le `regionToBaseUrl()` per-provider du SDK résout le bon endpoint. `'region' => 'code'` sur Kimi / Qwen route via le store de credentials OAuth (`KimiCodeCredentials` / `QwenCodeCredentials`) et retombe sur `api_key` si aucun token n'est en cache.
+- **Les adaptateurs custom sont un point d'extension.** Les hôtes qui maintiennent leur propre classe provider (ex. un proxy interne avec auth non-standard) enregistrent un adaptateur une fois et le reste de l'hôte traite la clé comme n'importe quelle autre :
+
+  ```php
+  use SuperAgent\Providers\ProviderRegistry;
+
+  ProviderRegistry::registerHostConfigAdapter('my-internal-proxy', static function (array $host): array {
+      return [
+          'api_key'  => $host['credentials']['internal_token'] ?? null,
+          'base_url' => 'https://llm-proxy.internal/v1',
+          'model'    => $host['model'] ?? 'gpt-4o',
+          // …tout ce dont la classe provider concrète a besoin
+      ];
+  });
+
+  // Puis partout ailleurs dans l'hôte :
+  $provider = ProviderRegistry::createForHost('my-internal-proxy', $hostConfig);
+  ```
+
+### Substitution de test — seam `makeProvider()`
+
+Les sous-classes backend qui ont besoin d'injecter un faux `LLMProvider` sans toucher au `ProviderRegistry` global peuvent overrider `makeProvider()` directement :
+
+```php
+class FakeSuperAgentBackend extends \SuperAICore\Backends\SuperAgentBackend
+{
+    protected function makeProvider(string $providerName, array $hostConfig): \SuperAgent\Contracts\LLMProvider
+    {
+        return new MyFakeProvider($hostConfig);
+    }
+}
+```
+
+`SuperAgentBackend::makeAgent()` reçoit toujours un `LLMProvider` construit (jamais une chaîne + clés llmConfig étalées) post-0.8.5 — les assertions de test devraient vérifier `$agentConfig['provider'] instanceof \SuperAgent\Contracts\LLMProvider` plutôt que de comparer à une chaîne nom-de-provider.
+
+---
+
+## 15. Handoff de provider en milieu de conversation (`Agent::switchProvider`)
+
+*Depuis 0.8.5 (via SDK 0.9.5).*
+
+Cette feature **n'est pas utilisée par SuperAICore lui-même** — `FallbackChain` traverse des sous-processus CLI, pas des providers SDK in-process, et `Dispatcher` ne porte pas d'état conversationnel entre les appels. Mais les hôtes qui wrappent `SuperAgentBackend` et pilotent l'`Agent` directement peuvent passer une conversation vivante à un autre provider en plein vol sans perdre l'historique. Utile pour des patterns "commencer pas cher, escalader sous pression de context-window" ou "rebuild ça avec un autre modèle quand le premier dérape".
+
+```php
+use SuperAgent\Agent;
+use SuperAgent\Conversation\HandoffPolicy;
+
+$agent = new Agent(['provider' => 'anthropic', 'api_key' => $key, 'model' => 'claude-opus-4-7']);
+$agent->run('analyse this codebase');
+
+// Passe à un modèle moins cher / plus rapide pour la phase suivante :
+$agent->switchProvider('kimi', ['api_key' => $kimiKey, 'model' => 'kimi-k2-6'])
+      ->run('write the unit tests');
+
+// Vérifie si l'historique tient dans la context window du nouveau modèle —
+// les tokenizers différents comptent le même historique avec 20–30% de drift :
+$status = $agent->lastHandoffTokenStatus();
+if ($status !== null && ! $status['fits']) {
+    // Déclenche votre compression IncrementalContext existante avant le prochain appel
+}
+
+// Vous voulez garder les blocks signed-thinking d'Anthropic au cas où vous reveniez ?
+$agent->switchProvider('kimi', [...], HandoffPolicy::preserveAll());
+
+// La conversation déraille — réessayez avec un autre modèle sur ardoise propre :
+$agent->switchProvider('openai', [...], HandoffPolicy::freshStart());
+```
+
+Les trois presets de policy :
+
+- **`HandoffPolicy::default()`** — garde l'historique tool, drop le signed thinking, append un marker system de handoff, reset les ids de continuation. Défaut sensé pour "switch sur un autre modèle et continue".
+- **`HandoffPolicy::preserveAll()`** — garde tout dans la représentation interne. L'encoder drop quand même ce que la wire shape cible ne peut pas porter (signed thinking Anthropic, `prompt_cache_key` Kimi, items `reasoning` chiffrés Responses-API, refs `cachedContent` Gemini), mais ces artefacts atterrissent sous `AssistantMessage::$metadata['provider_artifacts'][$providerKey]` pour qu'un swap ultérieur de retour à la family d'origine puisse les ré-stitcher.
+- **`HandoffPolicy::freshStart()`** — collapse l'historique au dernier user turn pour qu'un autre modèle prenne un tir propre.
+
+### Ce qui est lossy
+
+L'encoding cross-family strip toujours les artefacts que la wire shape cible ne peut pas porter. Le handoff est atomique — une construction de provider ratée (`api_key` manquante, region inconnue, network probe rejetée) laisse l'agent sur l'ancien provider avec sa liste de messages intacte. Gemini est la seule family qui n'expose pas d'ids de tool-call sur le wire ; l'encoder du SDK reconstruit l'index `toolUseId → toolName` depuis l'historique assistant à chaque appel, donc les conversations originées Gemini round-trip à travers d'autres providers et reviennent sans table de mapping externe. Les règles d'encoding complètes vivent dans l'entrée `[0.9.5]` du CHANGELOG du SDK — cherchez "Notes" dans cette section.
+
+### Quand reach pour ça depuis un hôte SuperAICore
+
+Presque jamais via le package directement. Le Dispatcher est one-shot par appel. Mais les runners host-side qui construisent leur propre `Agent` (ex. la pipeline PPT de SuperTeam qui veut planifier avec Claude + exécuter avec Kimi sans payer deux replays de contexte séparés) peuvent l'utiliser. Si vous vous trouvez à le vouloir depuis l'intérieur du `SuperAgentBackend` de SuperAICore, ouvrez une issue d'abord — il n'y a aucune surface produit actuelle pour le handoff multi-tour in-process et en ajouter une toucherait le contrat Dispatcher.
 
 ---
 

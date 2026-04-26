@@ -21,6 +21,8 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 11. [扩展 provider type 注册表](#11-扩展-provider-type-注册表)
 12. [通过 `ScriptedSpawnBackend` 接管宿主 CLI spawn](#12-通过-scriptedspawnbackend-接管宿主-cli-spawn)
 13. [可移植的 `.mcp.json` 写入](#13-可移植的-mcpjson-写入)
+14. [SuperAgent host-config adapter —— `createForHost`](#14-superagent-host-config-adapter--createforhost)
+15. [对话中途切换 provider（`Agent::switchProvider`）](#15-对话中途切换-provideragentswitchprovider)
 
 ---
 
@@ -687,6 +689,158 @@ $varName = $mcp->portableRootVar(); // 'SUPERTEAM_ROOT' 或 null
 - **`PHP_BINARY` 注册项。** `pdf-extract` 注册项保持 `'command' => PHP_BINARY` 直接写，注册表形状不变。开启可移植模式后 `installArtisan` 在写盘时把它规范化成 `'php'`。如果你有自定义注册项把绝对二进制路径硬写进 `command`，也要在 writer 里先过一遍 `portableCommand($bare, $resolved)`。
 - **树外路径保持绝对。** `portablePath('/usr/share/foo')` 直接返回 `/usr/share/foo`，因为它不在 `projectRoot()` 下。这是设计 —— 占位符只对树内相对路径有意义。
 - **Codex 辅助（`codexOcrMcpConfig` / `codexPdfExtractMcpConfig` / `superfeedMcpConfig`）写到 project-scope `.mcp.json`。** 可移植模式开启时它们输出占位符；出口 materializer 在抵达 `~/.codex/config.toml` 之前再展开成绝对路径。0.8.1 之前的"始终绝对"行为在关闭可移植模式时被原样保留。
+
+---
+
+## 14. SuperAgent host-config adapter —— `createForHost`
+
+*自 0.8.5 起。*
+
+`SuperAgentBackend::buildAgent()` 不再手工拼装 SDK provider 的构造形状。region / 无 region 双分支 + 手动注入 HTTP header 折叠成一个调用：
+
+```php
+// src/Backends/SuperAgentBackend.php（节选 —— backend 内部实际行为）
+$hostConfig = [
+    'api_key'  => $providerConfig['api_key']  ?? null,
+    'base_url' => $providerConfig['base_url'] ?? null,
+    'model'    => $options['model']           ?? $providerConfig['model']    ?? null,
+    'region'   => $providerConfig['region']   ?? null,
+    'extra'    => [
+        'http_headers'     => $descriptor->httpHeaders,
+        'env_http_headers' => $descriptor->envHttpHeaders,
+    ],
+];
+$agentConfig['provider'] = ProviderRegistry::createForHost($providerName, $hostConfig);
+```
+
+SDK 侧的 per-key adapter 拥有构造形状的映射权：
+
+- **默认 adapter** —— 把 `api_key` / `base_url` / `model` / `max_tokens` / `region` 直接透传，再把 `extra` 在它们之后深合并（`extra` 不会意外覆盖顶层字段）。覆盖 Anthropic / OpenAI / OpenAI-Responses / OpenRouter / Ollama / LMStudio / Gemini / Kimi / Qwen / Qwen-native / GLM / MiniMax。
+- **`bedrock` adapter**（SDK 内置）—— 把 `credentials.aws_access_key_id` / `aws_secret_access_key` / `aws_region` 拆进 BedrockProvider 构造器的 `access_key` / `secret_key` / `region` 字段。当结构化凭据块缺失时，`access_key` 回退到 `host['api_key']`。
+- **未来的 provider key** —— 各自带 adapter（或走默认 adapter）。SDK 后续新增的 provider type 在这里零代码改动就能落地。
+
+### 绕过 `Dispatcher` 的宿主该怎么做
+
+绝大多数宿主走 `Dispatcher::dispatch(['backend' => 'superagent', …])`，根本不碰这一层。但有些宿主直接构造 `Agent` —— 通常是想用 SDK 的 `withSystemPrompt()` / `addTool()` / 流式 hook 而不要 Dispatcher 的 envelope —— 可以套同一个形状：
+
+```php
+use SuperAgent\Agent;
+use SuperAgent\Providers\ProviderRegistry;
+use SuperAICore\Services\ProviderTypeRegistry;
+use SuperAICore\Models\AiProvider;
+
+$row = AiProvider::find(42);
+$descriptor = app(ProviderTypeRegistry::class)->get($row->type);
+$sdkKey = $descriptor?->sdkProvider ?: $row->type;
+
+$provider = ProviderRegistry::createForHost($sdkKey, [
+    'api_key'  => $row->decrypted_api_key,
+    'base_url' => $row->base_url,
+    'model'    => $row->extra_config['default_model'] ?? null,
+    'region'   => $row->extra_config['region']        ?? null,
+    'extra'    => [
+        // descriptor 声明的静态 + env 驱动 HTTP header 通过 `extra` 在
+        // 默认 adapter 中透传。宿主也可以在这里塞任何 SDK 接受的
+        // provider 专属 knob:`organization` / `reasoning` /
+        // `verbosity` / `store` / `extra_body` / `prompt_cache_key` /
+        // `azure_api_version` 等等。
+        'http_headers'     => $descriptor?->httpHeaders     ?? [],
+        'env_http_headers' => $descriptor?->envHttpHeaders  ?? [],
+        'organization'     => $row->extra_config['organization'] ?? null,
+    ],
+]);
+
+$agent = new Agent([
+    'provider'   => $provider,
+    'max_turns'  => 5,
+    'max_tokens' => 4000,
+]);
+```
+
+### 为什么重要
+
+- **每个 provider 一次工厂调用**，无论 provider key 是什么。之前抗着 `match ($providerType) { 'bedrock' => new BedrockProvider([...]), 'openai' => new OpenAIProvider([...]), … }` 的宿主，现在折叠成一行。SDK 后续新增的 provider key（`openai-responses` 和 `lmstudio` 在 0.7.0 落地；以后的也会透明落地）零代码上线。
+- **region-aware provider 依然 region-aware**，调用方不需要知道 region 映射表。Kimi / Qwen / GLM / MiniMax 上传 `'region' => 'cn'`，SDK 的 per-provider `regionToBaseUrl()` 解析正确端点。Kimi / Qwen 上的 `'region' => 'code'` 走 OAuth 凭据存储（`KimiCodeCredentials` / `QwenCodeCredentials`），缓存里没 token 时回退到 `api_key`。
+- **自定义 adapter 是扩展点。** 维护内部 provider 类（比如非标准认证的内部代理）的宿主，注册一次 adapter 后剩下的代码就能像处理任意 key 一样处理它：
+
+  ```php
+  use SuperAgent\Providers\ProviderRegistry;
+
+  ProviderRegistry::registerHostConfigAdapter('my-internal-proxy', static function (array $host): array {
+      return [
+          'api_key'  => $host['credentials']['internal_token'] ?? null,
+          'base_url' => 'https://llm-proxy.internal/v1',
+          'model'    => $host['model'] ?? 'gpt-4o',
+          // …任何具体 provider 类需要的字段
+      ];
+  });
+
+  // 宿主代码里别处都这么用:
+  $provider = ProviderRegistry::createForHost('my-internal-proxy', $hostConfig);
+  ```
+
+### 测试替身 —— `makeProvider()` seam
+
+如果 backend 子类需要不动全局 `ProviderRegistry` 注入一个 fake `LLMProvider`，直接 override `makeProvider()`：
+
+```php
+class FakeSuperAgentBackend extends \SuperAICore\Backends\SuperAgentBackend
+{
+    protected function makeProvider(string $providerName, array $hostConfig): \SuperAgent\Contracts\LLMProvider
+    {
+        return new MyFakeProvider($hostConfig);
+    }
+}
+```
+
+0.8.5 之后 `SuperAgentBackend::makeAgent()` 永远收到一个构造好的 `LLMProvider`（不再是字符串 + 散开的 llmConfig 键），所以测试断言应该写 `$agentConfig['provider'] instanceof \SuperAgent\Contracts\LLMProvider`，不要再跟 provider 名字符串比。
+
+---
+
+## 15. 对话中途切换 provider（`Agent::switchProvider`）
+
+*自 0.8.5（通过 SDK 0.9.5）起。*
+
+这个特性 **SuperAICore 自己没用** —— `FallbackChain` 走 CLI 子进程级别的 backend，不是进程内 SDK provider；`Dispatcher` 也不在调用之间携带对话状态。但是直接包 `SuperAgentBackend` 并自己驱动 `Agent` 的宿主可以把一段活的对话中途切到另一个 provider 而不丢消息历史。适合 "便宜模型起步、上下文压力大时升级" 或者 "一个模型跑歪了用另一个模型重来" 这类场景。
+
+```php
+use SuperAgent\Agent;
+use SuperAgent\Conversation\HandoffPolicy;
+
+$agent = new Agent(['provider' => 'anthropic', 'api_key' => $key, 'model' => 'claude-opus-4-7']);
+$agent->run('analyse this codebase');
+
+// 切到一个更便宜 / 更快的模型继续:
+$agent->switchProvider('kimi', ['api_key' => $kimiKey, 'model' => 'kimi-k2-6'])
+      ->run('write the unit tests');
+
+// 检查历史是否塞得进新模型的 context window —— 不同 tokenizer
+// 数同一段历史会差 20–30%:
+$status = $agent->lastHandoffTokenStatus();
+if ($status !== null && ! $status['fits']) {
+    // 在下次调用前触发你已有的 IncrementalContext 压缩
+}
+
+// 想把 Anthropic 签名 thinking block 留着，万一切回去用？
+$agent->switchProvider('kimi', [...], HandoffPolicy::preserveAll());
+
+// 对话跑歪了 —— 用另一个模型干净开局再来一次:
+$agent->switchProvider('openai', [...], HandoffPolicy::freshStart());
+```
+
+三种策略预设：
+
+- **`HandoffPolicy::default()`** —— 保留 tool 历史，丢弃签名 thinking，附加 handoff system marker，重置 continuation id。"换一个模型继续干" 的合理默认值。
+- **`HandoffPolicy::preserveAll()`** —— 内部表示里什么都保留。encoder 仍然会丢掉目标 wire 形状装不下的东西（Anthropic 签名 thinking、Kimi `prompt_cache_key`、Responses-API 加密 reasoning item、Gemini `cachedContent` 引用），但这些会被存进 `AssistantMessage::$metadata['provider_artifacts'][$providerKey]`，后续切回原 family 时可以重新拼回去。
+- **`HandoffPolicy::freshStart()`** —— 把历史压缩到只剩最后一个 user turn，让另一个模型干净开局。
+
+### 哪些东西会丢
+
+跨 family 编码总是会丢目标 wire 形状装不下的 artifact。切换是原子的 —— 新 provider 构造失败（`api_key` 缺失、region 未知、网络探测被拒）时，agent 留在旧 provider 上，消息列表保持原样。Gemini 是唯一在 wire 上不暴露 tool-call id 的 family；SDK 的 encoder 每次 call 时从 assistant 历史重建 `toolUseId → toolName` 索引，所以从 Gemini 起头的对话经过其他 provider 再切回 Gemini 不需要外部映射表。完整编码规则见 SDK 的 `[0.9.5]` CHANGELOG —— 在该节里搜 "Notes"。
+
+### SuperAICore 宿主什么时候用得上这个
+
+通过包直接用，几乎用不到。Dispatcher 是 one-shot 模型。但是宿主侧自己构造 `Agent` 的 runner（比如 SuperTeam 的 PPT pipeline，想用 Claude 规划、Kimi 执行，又不想付两次完整 context replay 的钱）可以用。如果你发现自己想从 SuperAICore 的 `SuperAgentBackend` 内部用它，先开 issue —— 当前没有进程内多轮 handoff 的产品面，加这个会动 Dispatcher 契约。
 
 ---
 

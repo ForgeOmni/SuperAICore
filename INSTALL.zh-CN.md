@@ -545,6 +545,16 @@ $response = $backend->streamChat($prompt, function (string $chunk) {
 
 2. **`/providers` 页基于 CLI 可用性收敛 UI。** 纯 UI 修复 —— 不动 controller / 路由 / DB。`$PATH` 上找不到二进制的 CLI 引擎（`claude` / `codex` / `gemini` / `copilot` / `kiro` / `kimi`），引擎开关会渲染成 `disabled`（带提示 + 隐藏字段被钳制），下方 per-backend 表里那条合成的 "built-in (local CLI login)" 行也会在引擎关闭或 CLI 缺失时被隐藏。当 built-in 与任何外部 provider 都不适用时，表格底部会出现一行明确的空态，指出真正的原因。之前用户切到 "Engine on" 后再发现 runtime 静默失败的工单，可以从此免单。
 
+**0.8.5 —— 无迁移。** SDK uptake + 一处正确性修复；不动 DB / config。Composer 约束从 `^0.9.0` 升到 `^0.9.5`。三件值得知道的事：
+
+1. **针对 Kimi / GLM / MiniMax / Qwen / OpenAI / OpenRouter / LMStudio 的多轮 tool-use 回放终于能工作了。** 0.9.5 之前 SDK 的 `ChatCompletionsProvider::convertMessage()` 在第一个 `tool_use` block 提前 return（丢掉同级 text 和并行 tool call），并且访问根本不存在的 `ContentBlock` 属性 —— 每个回放的 tool call 都以 `{id: null, name: null, arguments: "null"}` 出去。任何用 `Dispatcher::dispatch(['backend' => 'superagent', 'max_turns' => 10, …])` 跑这些 provider 的宿主，升级前都是静默坏的。无需改调用代码；SDK 新加的 `Conversation\Transcoder` 把六种 wire family 全统一到一个 converter，一次修复全部 provider 同步生效。
+
+2. **`SuperAgentBackend::buildAgent()` 现在永远把构造好的 `LLMProvider` 实例交给 SDK**（不再交字符串 provider 名 + 散开的 `llmConfig` 键）。生产路径走 `Dispatcher`，从来不检查 `$agentConfig['provider']`，因此对它无感。子类 `SuperAgentBackend` 并 override `makeAgent()` 的宿主，应该把之前断言 `$agentConfig['provider'] === 'sa-test'` 的测试改为 `instanceof \SuperAgent\Contracts\LLMProvider` —— 范例参见 `tests/Unit/SuperAgentBackendTest.php::test_no_region_still_hands_llmprovider_instance_to_agent`。`SuperAgentBackend` 新增的 `makeProvider()` seam 是测试替身的注入点，不必再走 `ProviderRegistry::register()`。
+
+3. **`Agent::switchProvider($name, $config, $policy)` 现在可用。** 直接包 `SuperAgentBackend` 并希望进程内对话中途切 provider family 的宿主可以用。SuperAICore 自己的 `FallbackChain` 走的是 CLI 子进程级别（不同的关心面），没有用这个特性。`HandoffPolicy::default() / preserveAll() / freshStart()` 三种预设和跨家族 wire-format 编码规则见 SDK 的 `[0.9.5]` CHANGELOG。
+
+0.8.1 引入的命名空间 typo 修复（`makeProvider()` 当时返回根本不存在的 `\SuperAgent\Providers\LLMProvider`，导致 SuperAgent in-process backend 在 0.8.1 → 0.8.2 期间静默全坏）也是这次发布的一部分。之前发现 `Dispatcher::dispatch(['backend' => 'superagent', …])` 每次都返回 `null` 的宿主，现在应该能看到真实的 envelope 了 —— 用 `bin/superaicore api:status` 对你 SuperAgent 路由的 provider 验证一下，或跑包内测试套件:480 tests / 1380 assertions。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。
