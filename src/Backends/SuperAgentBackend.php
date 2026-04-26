@@ -30,9 +30,10 @@ use SuperAICore\Services\ProviderTypeRegistry;
  *   - mcp_config_file: string  path to a `.mcp.json` to load + auto-connect
  *                              (same shape claude:mcp-sync writes)
  *   - provider_config.region   intl/cn/us/hk/code split for providers that
- *                              support it (Kimi/Qwen/GLM/MiniMax); routed
- *                              through createWithRegion() because Agent's
- *                              internal config allowlist skips 'region'.
+ *                              support it (Kimi/Qwen/GLM/MiniMax); folded
+ *                              into the host-config shape and resolved by
+ *                              the per-provider adapter inside the SDK
+ *                              (0.9.2 `ProviderRegistry::createForHost`).
  *                              Note: `region: 'code'` on Kimi/Qwen routes
  *                              through OAuth bearer (KimiCodeCredentials /
  *                              QwenCodeCredentials) before falling back
@@ -242,33 +243,36 @@ class SuperAgentBackend implements Backend
     protected function buildAgent(array $options, array $providerConfig): Agent
     {
         $providerName = (string) ($providerConfig['provider'] ?? $this->resolveSdkProvider($providerConfig) ?? 'anthropic');
-        $region       = $providerConfig['region'] ?? null;
 
-        $llmConfig = [];
-        foreach ([
-            'api_key'  => $providerConfig['api_key']  ?? null,
-            'model'    => $options['model']           ?? $providerConfig['model']    ?? null,
-            'base_url' => $providerConfig['base_url'] ?? null,
-        ] as $k => $v) {
-            if ($v !== null && $v !== '') {
-                $llmConfig[$k] = $v;
-            }
-        }
-
-        // 0.9.1: descriptor-declared HTTP headers. `http_headers` are static
-        // (literal header → value); `env_http_headers` read from env at
-        // request time (header → env var name), and are silently dropped
-        // when the env var is unset, so nothing surprising ships on hosts
-        // that didn't set them.
-        foreach ($this->resolveHttpHeaderKnobs($providerConfig) as $k => $v) {
+        // 0.9.2 host-config adapter: one shape covers every provider key.
+        // The SDK's per-key adapter (default for ChatCompletions-style;
+        // dedicated one for `bedrock` that splits AWS credentials, etc.)
+        // owns the constructor-shape mapping. New SDK provider keys ship
+        // with their own adapter and work here without backend changes.
+        //
+        // Descriptor-declared HTTP header knobs (0.9.1 `http_headers` /
+        // `env_http_headers`) ride through `extra` — the default adapter
+        // passes them straight to the provider constructor.
+        $headerKnobs = $this->resolveHttpHeaderKnobs($providerConfig);
+        $extra = [];
+        foreach ($headerKnobs as $k => $v) {
             if ($v !== [] && $v !== null) {
-                $llmConfig[$k] = $v;
+                $extra[$k] = $v;
             }
         }
+
+        $hostConfig = [
+            'api_key'  => $providerConfig['api_key']  ?? null,
+            'base_url' => $providerConfig['base_url'] ?? null,
+            'model'    => $options['model']           ?? $providerConfig['model']    ?? null,
+            'region'   => $providerConfig['region']   ?? null,
+            'extra'    => $extra,
+        ];
 
         $agentConfig = [
             'max_tokens' => (int) ($options['max_tokens'] ?? 500),
             'max_turns'  => max(1, (int) ($options['max_turns'] ?? 1)),
+            'provider'   => $this->makeProvider($providerName, $hostConfig),
         ];
 
         // Short-circuit SDK's ToolLoader when the caller didn't explicitly
@@ -280,20 +284,6 @@ class SuperAgentBackend implements Backend
             $agentConfig['load_tools'] = $options['load_tools'];
         } else {
             $agentConfig['tools'] = [];
-        }
-
-        // Region-aware providers (Kimi/Qwen/GLM/MiniMax): Agent's internal
-        // config allowlist skips `region`, so we build the provider
-        // explicitly and hand the instance in.
-        if ($region !== null && $region !== '') {
-            $agentConfig['provider'] = ProviderRegistry::createWithRegion(
-                $providerName,
-                (string) $region,
-                $llmConfig,
-            );
-        } else {
-            $agentConfig['provider'] = $providerName;
-            $agentConfig += $llmConfig;
         }
 
         if (isset($options['max_cost_usd']) && (float) $options['max_cost_usd'] > 0) {
@@ -350,6 +340,23 @@ class SuperAgentBackend implements Backend
     protected function makeAgent(array $agentConfig): Agent
     {
         return new Agent($agentConfig);
+    }
+
+    /**
+     * Build the SDK `LLMProvider` instance for this provider_config. Routes
+     * through 0.9.2's `createForHost()` so per-provider constructor-shape
+     * differences (Bedrock's split AWS creds, Azure's auto-detected base
+     * URL, LMStudio's synthetic auth, future provider keys) are owned by
+     * the SDK adapter, not by this backend.
+     *
+     * Kept as its own seam so tests can substitute a fake provider without
+     * having to register it in `ProviderRegistry`.
+     *
+     * @param array<string,mixed> $hostConfig
+     */
+    protected function makeProvider(string $providerName, array $hostConfig): \SuperAgent\Providers\LLMProvider
+    {
+        return ProviderRegistry::createForHost($providerName, $hostConfig);
     }
 
     /**

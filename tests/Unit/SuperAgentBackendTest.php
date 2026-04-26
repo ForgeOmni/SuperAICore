@@ -109,7 +109,7 @@ final class SuperAgentBackendTest extends TestCase
         $this->assertArrayNotHasKey('max_budget_usd', $b->lastAgentConfig);
     }
 
-    public function test_region_routes_through_createWithRegion_and_reaches_provider(): void
+    public function test_region_routes_through_host_config_and_reaches_provider(): void
     {
         TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
         $b = new CapturingSuperAgentBackend();
@@ -117,14 +117,15 @@ final class SuperAgentBackendTest extends TestCase
             'prompt' => 'p',
             'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x', 'region' => 'cn'],
         ]);
-        // With region set, we hand a pre-built LLMProvider to the Agent
-        // instead of the string name — that's the whole point of the
-        // branch (Agent's internal config allowlist skips `region`).
+        // 0.9.2 host-config adapter: backend always hands a pre-built
+        // LLMProvider to the Agent. `region` rides through the host-shape
+        // and lands in the provider constructor via the per-key adapter
+        // (default adapter for `sa-test` passes it through).
         $this->assertInstanceOf(LLMProvider::class, $b->lastAgentConfig['provider']);
         $this->assertSame('cn', TestSuperAgentProvider::$lastRegion);
     }
 
-    public function test_no_region_passes_provider_name_as_string(): void
+    public function test_no_region_still_hands_llmprovider_instance_to_agent(): void
     {
         TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
         $b = new CapturingSuperAgentBackend();
@@ -132,7 +133,11 @@ final class SuperAgentBackendTest extends TestCase
             'prompt' => 'p',
             'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
         ]);
-        $this->assertSame('sa-test', $b->lastAgentConfig['provider']);
+        // Single codepath after the 0.9.5 uptake: Agent always sees a
+        // constructed LLMProvider (the SDK's createForHost() path), not
+        // a string + spread llmConfig keys.
+        $this->assertInstanceOf(LLMProvider::class, $b->lastAgentConfig['provider']);
+        $this->assertNull(TestSuperAgentProvider::$lastRegion);
     }
 
     public function test_default_path_short_circuits_tool_loader_with_empty_tools(): void
