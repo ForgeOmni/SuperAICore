@@ -17,6 +17,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
 - [Features](#features)
   - [Execution engines + provider types](#execution-engines--provider-types)
   - [Skill & sub-agent runner](#skill--sub-agent-runner)
+  - [Skill engine — telemetry, ranking, evolution](#skill-engine--telemetry-ranking-evolution)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -78,6 +79,16 @@ Each feature below is tagged with the version it landed in. Features without a t
 - **`copilot:fleet`** — runs the same task across N Copilot sub-agents concurrently, aggregates results, registers each child in the Process Monitor.
 - **`kiro:sync`** *(since 0.6.1)* — translates Claude agent frontmatter into `~/.kiro/agents/*.json` for native Kiro DAG execution.
 - **`kimi:sync`** *(since 0.6.8)* — translates `.claude/agents/*.md` tool lists into `~/.kimi/agents/*.yaml` + `~/.kimi/mcp.json`. `claude:mcp-sync` fans out to Kimi automatically.
+
+### Skill engine — telemetry, ranking, evolution
+
+Three orthogonal services *(since 0.8.6)* that turn the static skill catalog into a feedback loop. Borrowed in spirit from HKUDS/OpenSpace's `skill_engine`, trimmed to the safe subset for production use — DERIVED / CAPTURED modes intentionally omitted (humans curate new skills on Day 0); cloud registry omitted (no cross-project sharing need yet).
+
+- **`SkillTelemetry`** *(since 0.8.6)* — one row per Claude Code Skill tool invocation in `sac_skill_executions`. PreToolUse hook → `php artisan skill:track-start` (insert `in_progress` row, returns id). Stop hook → `php artisan skill:track-stop` (close every still-open row for the session). Both commands accept Claude Code's hook JSON payload on stdin so the wiring lives in `.claude/settings.local.json`, not in PHP. Aggregation seam: `SkillTelemetry::metrics(?since, ?skillName)` returns per-skill `applied / completed / failed / orphaned / interrupted / completion_rate / failure_rate / last_used_at`. `sweepOrphaned(maxAgeSeconds=7200)` recovers from crashed sessions.
+- **`SkillRanker`** *(since 0.8.6)* — pure-PHP BM25 over the `SkillRegistry` catalog (Robertson-Walker `K1=1.5`, `B=0.75`, BM25-Plus IDF). CJK-aware tokeniser emits each Han character as its own token (Chinese skill descriptions are short — char-grams suffice), tiny EN+zh stopword list, hyphenated words yield their parts. Confidence-weighted telemetry boost: `final = bm25 * (1 + 0.4 * (success_rate - 0.5) * applied_signal)`, where `applied_signal = min(1, applied / 10)` saturates near 10 runs. Skills with no telemetry get `boost = 1.0`. Drives `php artisan skill:rank "your task description"` — table or JSON, with full per-term IDF×TF breakdown for debugging.
+- **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
+- **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
+- **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
 
 ### CLI installer & health
 
@@ -252,6 +263,33 @@ Full step-by-step guide: [INSTALL.md](INSTALL.md).
 ./vendor/bin/superaicore copilot:fleet "refactor auth" --agents planner,reviewer,tester
 ```
 
+### Skill engine — telemetry / ranking / evolution (artisan, since 0.8.6)
+
+Mounted on Laravel artisan via the package service provider — invoke with `php artisan` from any host:
+
+```bash
+# Hook targets — read Claude Code hook payload on stdin
+php artisan skill:track-start --json     # PreToolUse(Skill) — insert in_progress row
+php artisan skill:track-stop  --json     # Stop — close session's open rows
+
+# Read the table
+php artisan skill:stats --since=7d --sort=failure_rate
+php artisan skill:stats --skill=research --format=json
+
+# Rank skills against a task description (BM25 + telemetry boost)
+php artisan skill:rank "estimate effort for an outsource project"
+php artisan skill:rank "重构认证模块" --no-telemetry --format=json
+
+# Queue a FIX-mode candidate (review-only — never auto-applied)
+php artisan skill:evolve --skill=research                          # manual trigger
+php artisan skill:evolve --skill=research --dispatch               # also invoke LLM (costs tokens)
+php artisan skill:evolve --sweep --threshold=0.30 --min-applied=5  # all degraded skills
+
+# Inspect the queue
+php artisan skill:candidates                                       # list pending
+php artisan skill:candidates --id=42 --show-prompt --show-diff     # full detail
+```
+
 ## PHP quick start
 
 ### Long-running task — `TaskRunner` (since 0.6.6)
@@ -341,7 +379,7 @@ All repositories are interfaces. The service provider auto-binds Eloquent implem
 
 ## Advanced usage
 
-- **[Advanced usage guide](docs/advanced-usage.md)** — idempotency round-trip, W3C trace context, classified provider exceptions, `openai-responses` + Azure OpenAI + ChatGPT OAuth, LM Studio, `http_headers` / `env_http_headers` overrides, SDK features (`extra_body` / `features` / `loop_detection`), `ScriptedSpawnBackend` host migration.
+- **[Advanced usage guide](docs/advanced-usage.md)** — idempotency round-trip, W3C trace context, classified provider exceptions, `openai-responses` + Azure OpenAI + ChatGPT OAuth, LM Studio, `http_headers` / `env_http_headers` overrides, SDK features (`extra_body` / `features` / `loop_detection`), `ScriptedSpawnBackend` host migration, skill engine telemetry / BM25 ranker / FIX-mode evolution (since 0.8.6).
 - **[Task runner quickstart](docs/task-runner-quickstart.md)** — full `TaskRunner` option reference.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, per-backend stream formats, `onChunk`.
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** — codex/gemini agent emulation.

@@ -17,6 +17,7 @@
 - [特性](#特性)
   - [执行引擎 + provider 类型](#执行引擎--provider-类型)
   - [Skill 与 sub-agent 运行器](#skill-与-sub-agent-运行器)
+  - [Skill engine —— 遥测 / 排序 / 演化](#skill-engine--遥测--排序--演化)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -78,6 +79,16 @@
 - **`copilot:fleet`** —— 同一任务并发分发给 N 个 Copilot sub-agent，聚合每 agent 结果，每子进程都注册到 Process Monitor。
 - **`kiro:sync`**（0.6.1+）—— 把 Claude agent frontmatter 翻译成 `~/.kiro/agents/*.json`，交给 Kiro 原生 DAG 编排执行。
 - **`kimi:sync`**（0.6.8+）—— 把 `.claude/agents/*.md` 的 tool 列表翻译成 `~/.kimi/agents/*.yaml` + `~/.kimi/mcp.json`（Claude 兼容）。`claude:mcp-sync` 自动 fan-out 到 Kimi。
+
+### Skill engine —— 遥测 / 排序 / 演化
+
+三个正交的服务（0.8.6+），把静态的 skill 目录变成一个反馈闭环。**精神上借鉴**自 HKUDS/OpenSpace 的 `skill_engine`，砍到生产可用的安全子集 —— DERIVED / CAPTURED 模式有意省略（Day 0 的策略是人来策展新 skill）；云端 registry 也省略（暂无跨项目共享需求）。
+
+- **`SkillTelemetry`**（0.8.6+）—— 每次 Claude Code Skill 工具调用在 `sac_skill_executions` 落一行。PreToolUse hook → `php artisan skill:track-start`（写入 `in_progress` 行，返回 id）；Stop hook → `php artisan skill:track-stop`（把当前 session 还没关的行全关掉）。两个命令都从 stdin 读 Claude Code hook JSON 负载，所以接线只在 `.claude/settings.local.json` 里，不需要写 PHP。聚合接口:`SkillTelemetry::metrics(?since, ?skillName)` 按 skill 返回 `applied / completed / failed / orphaned / interrupted / completion_rate / failure_rate / last_used_at`。`sweepOrphaned(maxAgeSeconds=7200)` 用来回收崩溃 session 留下的孤儿行。
+- **`SkillRanker`**（0.8.6+）—— 在 `SkillRegistry` 目录上跑纯 PHP BM25（Robertson-Walker `K1=1.5`、`B=0.75`，BM25-Plus IDF）。CJK 感知的 tokenizer 把每个汉字单独切一个 token（中文 skill 描述很短，char-grams 够用），EN+zh 极小停用词表，连字符词同时拆分成各部分。带置信度加权的遥测加成:`final = bm25 * (1 + 0.4 * (success_rate - 0.5) * applied_signal)`，其中 `applied_signal = min(1, applied / 10)` 在样本量到 10 后饱和；没有遥测的 skill 拿 `boost = 1.0`。驱动 `php artisan skill:rank "你的任务描述"`，table / JSON 输出，并提供完整的 per-term IDF×TF 拆分用于调试。
+- **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
+- **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
+- **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
 
 ### CLI 安装器与健康检查
 
@@ -252,6 +263,33 @@ php artisan migrate
 ./vendor/bin/superaicore copilot:fleet "重构 auth" --agents planner,reviewer,tester
 ```
 
+### Skill engine 命令（artisan，0.8.6+）
+
+通过包的 service provider 挂载到 Laravel artisan —— 任何宿主都能 `php artisan` 直接用：
+
+```bash
+# Hook 接入点 —— 从 stdin 读 Claude Code hook 负载
+php artisan skill:track-start --json     # PreToolUse(Skill) —— 插入 in_progress 行
+php artisan skill:track-stop  --json     # Stop —— 关闭 session 里所有未完成的行
+
+# 读统计
+php artisan skill:stats --since=7d --sort=failure_rate
+php artisan skill:stats --skill=research --format=json
+
+# 按任务描述给 skill 排序（BM25 + 遥测加成）
+php artisan skill:rank "estimate effort for an outsource project"
+php artisan skill:rank "重构认证模块" --no-telemetry --format=json
+
+# 入队一个 FIX 模式 candidate（仅审核，永不自动应用）
+php artisan skill:evolve --skill=research                          # 手动触发
+php artisan skill:evolve --skill=research --dispatch               # 顺便调用 LLM（烧 token）
+php artisan skill:evolve --sweep --threshold=0.30 --min-applied=5  # 扫所有指标退化的 skill
+
+# 查看队列
+php artisan skill:candidates                                       # 列出 pending
+php artisan skill:candidates --id=42 --show-prompt --show-diff     # 完整详情
+```
+
 ## PHP 快速上手
 
 ### 长任务 —— `TaskRunner`（0.6.6+）
@@ -341,7 +379,7 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）。
 - **[Task runner 快速入门](docs/task-runner-quickstart.md)** —— 完整 `TaskRunner` 选项参考。
 - **[Streaming backends](docs/streaming-backends.md)** —— `mcp_mode`、每后端流格式、`onChunk`。
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** —— codex/gemini agent 模拟。
