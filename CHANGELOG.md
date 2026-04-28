@@ -4,6 +4,41 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8] — 2026-04-28
+
+**Cross-platform CLI prompt delivery — Windows large-argv fix.** Every CLI backend's `stream()` / `generate()` was appending the user prompt as the trailing argv element. On Windows, Symfony Process wraps every command in `cmd /V:ON /E:ON /D /C "(...)"` regardless of whether the args came in as an array or a string — and `cmd.exe` has a hard 8191-char command-line cap. Markdown agent prompts at our typical 25K size were silently truncated; the CLI either failed to start or, like Claude, reported `Error: Input must be provided either through stdin or as a prompt argument when using --print`. macOS/Linux argv limits (`getconf ARG_MAX`, typically 128K+) absorbed the same calls without complaint, so the bug only surfaced on Windows.
+
+Two-track fix, depending on whether the upstream CLI accepts the prompt on stdin:
+
+### Fixed — stdin-capable engines (Claude / Codex / Gemini)
+
+These CLIs natively read the prompt from stdin under their `--print` / `exec` modes, so the cleanest fix is to drop the prompt from argv entirely and pipe it via `Process::setInput()`.
+
+- **`ClaudeCliBackend::generate()` + `::stream()`** — removed `$cmd[] = $prompt`, added `$process->setInput($prompt)` before `run()` / `runStreaming()`. Claude CLI under `--print` reads stdin when no positional prompt is present.
+- **`CodexCliBackend::generate()` + `::stream()`** — same shape: argv now ends with `'-'` (Codex's documented stdin-marker token: `codex exec - …`), prompt piped via `setInput()`. Verified against `codex exec --help` v0.120: *"if `-` is used, instructions are read from stdin."*
+- **`GeminiCliBackend::generate()` + `::stream()`** — switched from `-p $prompt` to `--prompt ""` + `setInput($prompt)`, mirroring the idiom already used by `GeminiSkillRunner`.
+
+Side benefit: avoids any cmd-line escaping pitfalls for prompts containing newlines, code fences, single/double quotes, or non-ASCII (CJK), regardless of platform.
+
+### Fixed — argv-only engines (Kimi / Kiro / Copilot)
+
+These CLIs don't read stdin — `kimi --prompt <text>`, `kiro chat <text>`, `copilot -p <text>` all require the prompt as an argv argument. New shared trait routes them through PowerShell on Windows when the argv would exceed the cmd.exe cap; macOS/Linux paths are unchanged.
+
+- **New trait `Backends\Concerns\LargeArgvSafeSpawn`** — exposes `buildLargeArgvSafeProcess(array $args, ?string $cwd, array $env)`. Returns a plain `Process` on POSIX or for short Windows argv (< 6500 chars). When Windows + argv ≥ 6500 chars, writes a self-contained `.ps1` to `sys_get_temp_dir()` that holds every argv element as a single-quoted PowerShell string (single quotes escaped by doubling — PowerShell's only metachar inside single-quoted literals), then invokes `& $binary @arguments`. PowerShell's call operator with array splat goes straight to `CreateProcess` with the array, hitting only the kernel-level Windows API limit (~32K) instead of cmd.exe's 8K cap.
+- **`KimiCliBackend::stream()` + `::generate()`** — now use `$this->buildLargeArgvSafeProcess($cmd, ...)` instead of `new Process($cmd, ...)`.
+- **`KiroCliBackend::stream()` + `::generate()`** — same.
+- **`CopilotCliBackend::streamChat()`** — same.
+
+### Added
+
+- **`tests/Unit/LargeArgvSafeSpawnTest.php`** — covers: short argv on any platform → plain Process (no PowerShell); long argv on Windows → routes via PowerShell wrapper with `-File <ps1>`; long argv on POSIX → still plain Process (no PowerShell needed); generated `.ps1` correctly doubles single quotes and uses `@arguments` splat. Probe writes a real `.ps1` to a temp dir and inspects it post-hoc — no real CLIs spawned.
+
+### Known caveats
+
+- The trait's threshold (6500 chars) is conservative — leaves headroom for Symfony's `cmd /V:ON /E:ON /D /C "(…)"` wrapping overhead (~80 chars) and per-element argv quoting. Hosts that use very tight prompts can leave it at the default; hosts that observe spurious PowerShell-wrapper invocations on borderline sizes can override `winArgvThreshold()` in a subclass.
+- The PowerShell wrapper writes a `.ps1` file per spawn — not cleaned up automatically (Windows reaps `%TEMP%` on disk-cleanup runs). At ~1KB per script + per-task-run cadence, the leak is negligible; could be made explicit with a finally-cleanup if a host runs into temp-dir bloat.
+- `BuildsScriptedProcess` (the wrapper-bat path used by `prepareScriptedProcess()` in scripted-spawn mode) still embeds the prompt argv inline in the generated `.bat` for Copilot/Kiro and similar engines. That path also hits the cmd.exe 8K limit on Windows, but it's a separate code path from `stream()`/`generate()` and was not exercised by the current bug report — tracked as a follow-up.
+
 ## [0.8.7] — 2026-04-28
 
 **Cross-platform CLI detection — Windows compatibility fix.** `CliStatusDetector` and `CliBinaryLocator` were silently broken on Windows because their probe commands embedded the POSIX redirect `2>/dev/null`, which `cmd.exe` misparses as an output filename, aborting the whole command and zeroing out stdout. Symptom: `claude auth status` returned valid JSON to a shell but `auth: null` to the detector — Claude Code disappeared from `/super-ai-core/providers` build-task pickers even when fully logged in. Codex was unaffected (`2>&1` is cross-platform), but every CLI's `--version` probe was broken on Windows.

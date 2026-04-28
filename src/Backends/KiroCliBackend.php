@@ -3,6 +3,7 @@
 namespace SuperAICore\Backends;
 
 use SuperAICore\Backends\Concerns\BuildsScriptedProcess;
+use SuperAICore\Backends\Concerns\LargeArgvSafeSpawn;
 use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
 use SuperAICore\Contracts\ScriptedSpawnBackend;
@@ -40,6 +41,7 @@ class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
     use StreamableProcess;
     use BuildsScriptedProcess;
+    use LargeArgvSafeSpawn;
 
     public function __construct(
         protected string $binary = 'kiro-cli',
@@ -94,7 +96,10 @@ class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 
         try {
             $env = $this->buildEnv($providerConfig);
-            $process = new Process($cmd, null, $env);
+            // Kiro reads the prompt as the last positional argv. On Windows
+            // long prompts hit the cmd.exe 8K limit — route through the
+            // PowerShell wrapper trait when needed.
+            $process = $this->buildLargeArgvSafeProcess($cmd, null, $env);
             $process->setTimeout($this->timeout);
             $process->run();
 
@@ -166,7 +171,8 @@ class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 
         try {
             $env = $this->buildEnv($providerConfig);
-            $process = new Process($cmd, null, $env);
+            // See generate() for rationale.
+            $process = $this->buildLargeArgvSafeProcess($cmd, null, $env);
             $result = $this->runStreaming(
                 process: $process,
                 backend: $this->name(),

@@ -3,6 +3,7 @@
 namespace SuperAICore\Backends;
 
 use SuperAICore\Backends\Concerns\BuildsScriptedProcess;
+use SuperAICore\Backends\Concerns\LargeArgvSafeSpawn;
 use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
 use SuperAICore\Contracts\ScriptedSpawnBackend;
@@ -26,6 +27,7 @@ class CopilotCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacke
 {
     use StreamableProcess;
     use BuildsScriptedProcess;
+    use LargeArgvSafeSpawn;
 
     public function __construct(
         protected string $binary = 'copilot',
@@ -332,7 +334,10 @@ class CopilotCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacke
         }
 
         $env = array_merge(['NO_COLOR' => '1', 'TERM' => 'dumb'], (array) ($options['env'] ?? []));
-        $process = new Process($args, $options['cwd'] ?? null, $env);
+        // Copilot's `-p <text>` is argv-only — no stdin support — so on
+        // Windows long prompts hit the cmd.exe 8K limit. Wrapper trait
+        // routes through PowerShell on Windows when needed.
+        $process = $this->buildLargeArgvSafeProcess($args, $options['cwd'] ?? null, $env);
         $process->setTimeout((int) ($options['timeout'] ?? 0));
         $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 300));
 

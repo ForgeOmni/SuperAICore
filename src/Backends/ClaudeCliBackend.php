@@ -81,12 +81,17 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
             $cmd[] = '--system-prompt';
             $cmd[] = $options['system'];
         }
-        $cmd[] = $prompt;
+        // Pipe prompt via stdin instead of trailing argv. argv on Windows
+        // hits cmd-line escaping / 8K length limits for prompts with
+        // newlines, code fences, or non-ASCII (typical for ours: 25K of
+        // markdown + CJK). Claude CLI under `--print` reads stdin when
+        // no positional prompt is present.
 
         try {
             $env = $this->buildEnv($providerConfig);
             $process = new Process($cmd, null, $env);
             $process->setTimeout($this->timeout);
+            $process->setInput($prompt);
             $process->run();
 
             if (!$process->isSuccessful()) {
@@ -210,11 +215,14 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
             $cmd[] = '--strict-mcp-config';
         }
 
-        $cmd[] = $prompt;
+        // Pipe prompt via stdin instead of argv — see generate() above
+        // for the rationale. setInput() must be called before runStreaming
+        // hands the process to start().
 
         try {
             $env = $this->buildEnv($providerConfig);
             $process = new Process($cmd, null, $env);
+            $process->setInput($prompt);
 
             $result = $this->runStreaming(
                 process: $process,

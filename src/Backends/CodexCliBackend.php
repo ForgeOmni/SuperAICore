@@ -54,12 +54,14 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         // fail the run — we substitute the closest compatible model.
         $model = CodexModelResolver::resolve($model, $this->binary);
 
-        $cmd = [$this->binary, 'exec', '--json', '--full-auto', '--skip-git-repo-check'];
+        // `codex exec -` reads the prompt from stdin instead of the
+        // trailing argv. Avoids cmd-line escaping / 8K length limits on
+        // Windows for large or markdown-heavy prompts.
+        $cmd = [$this->binary, 'exec', '-', '--json', '--full-auto', '--skip-git-repo-check'];
         if ($model) {
             $cmd[] = '--model';
             $cmd[] = $model;
         }
-        $cmd[] = $prompt;
 
         $env = [];
         if (!empty($providerConfig['api_key'])) {
@@ -72,6 +74,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         try {
             $process = new Process($cmd, null, $env);
             $process->setTimeout($this->timeout);
+            $process->setInput($prompt);
             $process->run();
 
             if (!$process->isSuccessful()) {
@@ -117,12 +120,12 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $model = $options['model'] ?? $providerConfig['model'] ?? null;
         $model = CodexModelResolver::resolve($model, $this->binary);
 
-        $cmd = [$this->binary, 'exec', '--json', '--full-auto', '--skip-git-repo-check'];
+        // `codex exec -` reads stdin — same rationale as generate().
+        $cmd = [$this->binary, 'exec', '-', '--json', '--full-auto', '--skip-git-repo-check'];
         if ($model) {
             $cmd[] = '--model';
             $cmd[] = $model;
         }
-        $cmd[] = $prompt;
 
         $env = [];
         if (!empty($providerConfig['api_key'])) {
@@ -134,6 +137,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 
         try {
             $process = new Process($cmd, null, $env);
+            $process->setInput($prompt);
             $result = $this->runStreaming(
                 process: $process,
                 backend: $this->name(),

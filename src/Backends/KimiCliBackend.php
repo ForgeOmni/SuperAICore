@@ -3,6 +3,7 @@
 namespace SuperAICore\Backends;
 
 use SuperAICore\Backends\Concerns\BuildsScriptedProcess;
+use SuperAICore\Backends\Concerns\LargeArgvSafeSpawn;
 use SuperAICore\Backends\Concerns\StreamableProcess;
 use SuperAICore\Contracts\Backend;
 use SuperAICore\Contracts\ScriptedSpawnBackend;
@@ -48,6 +49,7 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
     use StreamableProcess;
     use BuildsScriptedProcess;
+    use LargeArgvSafeSpawn;
 
     public function __construct(
         protected string $binary = 'kimi',
@@ -80,7 +82,11 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $cmd = $this->buildCommand($options, $providerConfig, $prompt);
 
         try {
-            $process = new Process($cmd, $options['cwd'] ?? null);
+            // LargeArgvSafeSpawn handles Windows cmd-line truncation for
+            // CLIs that don't read stdin — Kimi's `--prompt <text>` is
+            // argv-only, so on Windows + long prompts it would otherwise
+            // hit the 8K cmd.exe limit.
+            $process = $this->buildLargeArgvSafeProcess($cmd, $options['cwd'] ?? null);
             $process->setTimeout($this->timeout);
             $process->run();
 
@@ -127,7 +133,11 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $cmd = $this->buildCommand($options, $providerConfig, $prompt);
 
         try {
-            $process = new Process($cmd, $options['cwd'] ?? null);
+            // LargeArgvSafeSpawn handles Windows cmd-line truncation for
+            // CLIs that don't read stdin — Kimi's `--prompt <text>` is
+            // argv-only, so on Windows + long prompts it would otherwise
+            // hit the 8K cmd.exe limit.
+            $process = $this->buildLargeArgvSafeProcess($cmd, $options['cwd'] ?? null);
             $model = $options['model']
                 ?? $providerConfig['model']
                 ?? 'kimi-code/kimi-for-coding';

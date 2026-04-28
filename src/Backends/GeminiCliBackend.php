@@ -54,13 +54,17 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $prompt = $options['prompt'] ?? '';
         $model = GeminiModelResolver::resolve($options['model'] ?? $providerConfig['model'] ?? null);
 
+        // `gemini --prompt ""` (empty value) tells gemini-cli to read the
+        // actual prompt from stdin — same idiom GeminiSkillRunner uses.
+        // Avoids Windows cmd-line escaping / 8K length issues for large
+        // prompts (see SuperAICore CHANGELOG 0.8.8).
         $cmd = [$this->binary, '--output-format=json', '--yolo'];
         if ($model) {
             $cmd[] = '--model';
             $cmd[] = $model;
         }
-        $cmd[] = '-p';
-        $cmd[] = $prompt;
+        $cmd[] = '--prompt';
+        $cmd[] = '';
 
         $env = [];
         if (!empty($providerConfig['api_key'])) {
@@ -79,6 +83,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         try {
             $process = new Process($cmd, null, $env);
             $process->setTimeout($this->timeout);
+            $process->setInput($prompt);
             $process->run();
 
             if (!$process->isSuccessful()) {
@@ -122,13 +127,14 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
         $model = GeminiModelResolver::resolve($options['model'] ?? $providerConfig['model'] ?? null);
 
+        // Stdin pipe — see generate() above for rationale.
         $cmd = [$this->binary, '--output-format=json', '--yolo'];
         if ($model) {
             $cmd[] = '--model';
             $cmd[] = $model;
         }
-        $cmd[] = '-p';
-        $cmd[] = $prompt;
+        $cmd[] = '--prompt';
+        $cmd[] = '';
 
         $env = [];
         if (!empty($providerConfig['api_key'])) {
@@ -145,6 +151,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
         try {
             $process = new Process($cmd, null, $env);
+            $process->setInput($prompt);
             $result = $this->runStreaming(
                 process: $process,
                 backend: $this->name(),
