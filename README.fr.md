@@ -17,6 +17,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
 - [Fonctionnalités](#fonctionnalités)
   - [Moteurs d'exécution + types de provider](#moteurs-dexécution--types-de-provider)
   - [Exécuteur de skills & sous-agents](#exécuteur-de-skills--sous-agents)
+  - [Moteur de skills — télémétrie, ranking, évolution](#moteur-de-skills--télémétrie-ranking-évolution)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -78,6 +79,16 @@ Chaque fonctionnalité ci-dessous est marquée par la version où elle a été i
 - **`copilot:fleet`** — exécute la même tâche sur N sous-agents Copilot en parallèle, agrège les résultats, enregistre chaque enfant dans le moniteur.
 - **`kiro:sync`** (depuis 0.6.1) — traduit la frontmatter d'agent Claude en `~/.kiro/agents/*.json` pour exécution DAG native Kiro.
 - **`kimi:sync`** (depuis 0.6.8) — traduit les listes d'outils de `.claude/agents/*.md` en `~/.kimi/agents/*.yaml` + `~/.kimi/mcp.json`. `claude:mcp-sync` fan-out vers Kimi automatiquement.
+
+### Moteur de skills — télémétrie, ranking, évolution
+
+Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de skills statique en boucle de feedback. Inspiré du `skill_engine` de HKUDS/OpenSpace, taillé au sous-ensemble safe pour la prod — modes DERIVED / CAPTURED volontairement omis (Day 0 : les humains curatent les nouveaux skills) ; pas de registry cloud (pas de besoin de partage inter-projets pour l'instant).
+
+- **`SkillTelemetry`** *(depuis 0.8.6)* — une ligne par invocation Skill de Claude Code dans `sac_skill_executions`. Hook PreToolUse → `php artisan skill:track-start` (insert ligne `in_progress`, retourne id). Hook Stop → `php artisan skill:track-stop` (ferme toutes les lignes encore ouvertes pour la session). Les deux commandes acceptent le payload JSON du hook Claude Code sur stdin — le câblage vit donc dans `.claude/settings.local.json`, pas dans du PHP. Seam d'agrégation : `SkillTelemetry::metrics(?since, ?skillName)` retourne par skill `applied / completed / failed / orphaned / interrupted / completion_rate / failure_rate / last_used_at`. `sweepOrphaned(maxAgeSeconds=7200)` récupère après les sessions crashées.
+- **`SkillRanker`** *(depuis 0.8.6)* — BM25 pur PHP sur le catalogue `SkillRegistry` (Robertson-Walker `K1=1.5`, `B=0.75`, IDF BM25-Plus). Tokeniseur CJK-aware qui émet chaque caractère Han comme un token (les descriptions de skill chinoises sont courtes — les char-grams suffisent), petite stoplist EN+zh, mots avec tirets éclatés en parties. Boost télémétrie pondéré par confiance : `final = bm25 * (1 + 0.4 * (success_rate - 0.5) * applied_signal)`, où `applied_signal = min(1, applied / 10)` sature vers 10 runs. Skills sans télémétrie reçoivent `boost = 1.0`. Pilote `php artisan skill:rank "votre description de tâche"` — sortie table ou JSON, avec breakdown complet per-term IDF×TF pour le debug.
+- **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
+- **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
+- **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
 
 ### Installateur CLI & santé
 
@@ -252,6 +263,33 @@ Guide complet étape par étape : [INSTALL.fr.md](INSTALL.fr.md).
 ./vendor/bin/superaicore copilot:fleet "refactoriser auth" --agents planner,reviewer,tester
 ```
 
+### Moteur de skills — commandes artisan (depuis 0.8.6)
+
+Monté sur Laravel artisan via le service provider du package — invoquer avec `php artisan` depuis n'importe quel hôte :
+
+```bash
+# Cibles de hooks — lisent le payload Claude Code sur stdin
+php artisan skill:track-start --json     # PreToolUse(Skill) — insert ligne in_progress
+php artisan skill:track-stop  --json     # Stop — ferme les lignes ouvertes de la session
+
+# Lire la table
+php artisan skill:stats --since=7d --sort=failure_rate
+php artisan skill:stats --skill=research --format=json
+
+# Ranker les skills face à une description de tâche (BM25 + boost télémétrie)
+php artisan skill:rank "estimer l'effort pour un projet outsourcé"
+php artisan skill:rank "重构认证模块" --no-telemetry --format=json
+
+# Mettre en queue un candidat FIX (review-only — jamais auto-appliqué)
+php artisan skill:evolve --skill=research                          # trigger manuel
+php artisan skill:evolve --skill=research --dispatch               # invoque aussi le LLM (coûte des tokens)
+php artisan skill:evolve --sweep --threshold=0.30 --min-applied=5  # tous les skills dégradés
+
+# Inspecter la queue
+php artisan skill:candidates                                       # lister les pending
+php artisan skill:candidates --id=42 --show-prompt --show-diff     # détail complet
+```
+
 ## Démarrage rapide — PHP
 
 ### Tâche longue — `TaskRunner` (depuis 0.6.6)
@@ -341,7 +379,7 @@ Tous les repositories sont des interfaces. Le service provider lie automatiqueme
 
 ## Usage avancé
 
-- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`.
+- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6).
 - **[Démarrage Task runner](docs/task-runner-quickstart.md)** — référence d'options complète de `TaskRunner`.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, formats de stream par backend, `onChunk`.
 - **[Protocole spawn plan](docs/spawn-plan-protocol.md)** — émulation agent codex/gemini.

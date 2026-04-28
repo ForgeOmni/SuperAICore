@@ -23,6 +23,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 13. [Écritures `.mcp.json` portables](#13-écritures-mcpjson-portables)
 14. [Adaptateur host-config SuperAgent — `createForHost`](#14-adaptateur-host-config-superagent--createforhost)
 15. [Handoff de provider en milieu de conversation (`Agent::switchProvider`)](#15-handoff-de-provider-en-milieu-de-conversation-agentswitchprovider)
+16. [Moteur de skills — télémétrie, ranking, évolution mode FIX](#16-moteur-de-skills--télémétrie-ranking-évolution-mode-fix)
 
 ---
 
@@ -843,6 +844,198 @@ L'encoding cross-family strip toujours les artefacts que la wire shape cible ne 
 ### Quand reach pour ça depuis un hôte SuperAICore
 
 Presque jamais via le package directement. Le Dispatcher est one-shot par appel. Mais les runners host-side qui construisent leur propre `Agent` (ex. la pipeline PPT de SuperTeam qui veut planifier avec Claude + exécuter avec Kimi sans payer deux replays de contexte séparés) peuvent l'utiliser. Si vous vous trouvez à le vouloir depuis l'intérieur du `SuperAgentBackend` de SuperAICore, ouvrez une issue d'abord — il n'y a aucune surface produit actuelle pour le handoff multi-tour in-process et en ajouter une toucherait le contrat Dispatcher.
+
+---
+
+## 16. Moteur de skills — télémétrie, ranking, évolution mode FIX
+
+*Depuis 0.8.6.*
+
+Trois services orthogonaux qui transforment le catalogue statique `.claude/skills/` en boucle de feedback :
+
+- **`SkillTelemetry`** — une ligne par invocation Skill de Claude Code dans `sac_skill_executions`.
+- **`SkillRanker`** — BM25 pur PHP sur le registry, boosté par le taux de succès récent.
+- **`SkillEvolver`** — patches mode FIX pour les skills défaillants, mis en queue comme candidats review-only. **N'auto-applique jamais.**
+
+Modes d'évolution DERIVED / CAPTURED (auto-dériver de nouveaux skills depuis les runs réussis, capturer les workflows démontrés par l'utilisateur) volontairement non-shippés — Day 0 : les humains curatent les nouveaux skills. Pas de registry cloud (pas de besoin de partage inter-projets pour l'instant). Tout le moteur est inspiré du `skill_engine` de HKUDS/OpenSpace, taillé au sous-ensemble safe pour la prod.
+
+### Câbler la télémétrie via les hooks Claude Code
+
+Le package n'expédie que les endpoints artisan. Le contrat de hook appartient à Claude Code :
+
+```jsonc
+// .claude/settings.local.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [{ "type": "command", "command": "php artisan skill:track-start --json" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "php artisan skill:track-stop --json" }]
+      }
+    ]
+  }
+}
+```
+
+Les deux commandes lisent le payload JSON du hook sur stdin — `session_id`, `transcript_path`, `cwd`, `tool_name`, `tool_input.skill` pour `PreToolUse` ; `session_id`, `stop_hook_active`, `user_interrupted` pour `Stop`. Les lectures de payload utilisent une deadline soft de 1.0s + cap 200KB en lecture non-bloquante donc un pipe pathologique ne peut pas bloquer la session. Les erreurs de télémétrie sont avalées silencieusement — le hook n'échoue jamais. Les fallbacks par flags CLI (`--skill`, `--session`, `--host-app`, `--status`, `--error`) marchent pour invocation manuelle hors de Claude Code.
+
+`host_app` est auto-détecté en remontant à la recherche d'un `.claude/` voisin et en utilisant le basename du parent — utile quand le même package est monté dans SuperTeam, SuperFeed, etc. et que vous voulez les métriques partitionnées par hôte.
+
+### Agrégation : `SkillTelemetry::metrics()`
+
+```php
+use SuperAICore\Services\SkillTelemetry;
+use Carbon\Carbon;
+
+// Tout le temps, tous les skills
+$metrics = SkillTelemetry::metrics();
+
+// Les 7 derniers jours
+$metrics = SkillTelemetry::metrics(Carbon::now()->subDays(7));
+
+// Un skill spécifique
+$metrics = SkillTelemetry::metrics(null, 'research');
+
+// Retourne :
+// [
+//   'research' => [
+//     'applied' => 42, 'completed' => 38, 'failed' => 3,
+//     'orphaned' => 1, 'interrupted' => 0, 'in_progress' => 0,
+//     'completion_rate' => 0.9048, 'failure_rate' => 0.0714,
+//     'last_used_at' => '2026-04-26 14:33:12',
+//   ],
+//   ...
+// ]
+```
+
+Une requête, un seul GROUP BY round-trip. `recentFailures($skillName, $limit = 5)` alimente le constructeur de prompt mode FIX.
+
+### Ranking : `SkillRanker`
+
+BM25 pur PHP (Robertson-Walker `K1=1.5`, `B=0.75`, IDF BM25-Plus). Le nom du skill est répété dans le doc bag pour upweight le signal d'intention ; description plus les 600 premiers caractères du body SKILL.md fournissent le reste de la surface lexicale. Tokeniseur CJK-aware qui émet chaque caractère Han comme un token (les descriptions de skill chinoises sont courtes — char-grams suffisent). Boost télémétrie pondéré par confiance : `final = bm25 * (1 + 0.4 * (success_rate - 0.5) * applied_signal)`, où `applied_signal = min(1, applied / 10)` sature vers 10 runs.
+
+```php
+use SuperAICore\Registry\SkillRegistry;
+use SuperAICore\Services\SkillRanker;
+
+$ranker = new SkillRanker(new SkillRegistry(base_path()));
+
+$results = $ranker->rank('estimer effort projet outsourcé', limit: 5);
+foreach ($results as $r) {
+    echo "{$r['skill']->name}  score={$r['score']}  boost={$r['breakdown']['tel_boost']}\n";
+    // breakdown contient aussi : bm25, matched (per-term IDF×TF), metrics (ligne télémétrie brute)
+}
+
+// Désactiver le boost pour ranking pure-lexical (ex. quand vous venez juste de seed la télémétrie) :
+$ranker = new SkillRanker(new SkillRegistry(base_path()), useTelemetry: false);
+
+// Restreindre à un sous-ensemble par nom (UI skill-picker côté hôte) :
+$results = $ranker->rank($query, limit: 10, skillNames: ['research', 'plan', 'init']);
+```
+
+Sibling CLI : `php artisan skill:rank "votre tâche" --no-telemetry --format=json --cwd=/abs/path`. L'override `--cwd` compte pour les hôtes qui tournent depuis `web/public` dont la racine projet vit quelques niveaux plus haut.
+
+### Évolution mode FIX : `SkillEvolver`
+
+L'evolver construit un prompt LLM contraint contre le SKILL.md vivant (tronqué à 8K caractères) plus les 5 derniers échecs depuis la télémétrie, persiste un `SkillEvolutionCandidate` en statut `pending`, et **ne modifie jamais SKILL.md directement**. Les humains review la queue via `php artisan skill:candidates`.
+
+```php
+use SuperAICore\Services\Dispatcher;
+use SuperAICore\Services\SkillEvolver;
+use SuperAICore\Registry\SkillRegistry;
+use SuperAICore\Models\SkillEvolutionCandidate;
+
+$evolver = new SkillEvolver(
+    new SkillRegistry(base_path()),
+    app(Dispatcher::class),   // optionnel — seulement nécessaire quand dispatch=true
+);
+
+// Trigger manuel — pas d'appel LLM, juste stage un candidat avec le prompt
+$candidate = $evolver->proposeFix('research');
+
+// Ancrer le candidat à un run échoué spécifique
+$candidate = $evolver->proposeFix(
+    skillName: 'research',
+    triggerType: SkillEvolutionCandidate::TRIGGER_FAILURE,
+    executionId: 1234,
+    dispatch: false,
+);
+
+// Brûler des tokens — invoque le LLM et stocke à la fois la réponse complète + le diff extrait
+$candidate = $evolver->proposeFix('research', dispatch: true);
+echo $candidate->proposed_diff;   // null si le LLM a dit NO_FIX_RECOMMENDED
+
+// Sweep — met en queue des candidats pour chaque skill avec failure_rate > seuil
+// après au moins N runs. Déduplique contre les lignes pending existantes.
+$ids = $evolver->sweepDegraded(failureRateThreshold: 0.30, minApplied: 5);
+```
+
+Les contraintes hardcodées dans le prompt :
+
+- « Produire le **plus petit patch possible**, pas une réécriture. »
+- « Si vous ne pouvez pas identifier de root cause concrète depuis les preuves ci-dessous, répondre `NO_FIX_RECOMMENDED`. »
+- « Ne pas inventer d'échecs que les preuves ne supportent pas. »
+- « Ne pas restructurer les sections, renommer le skill, changer le `name` du frontmatter, ou ajouter de nouveaux outils à `allowed-tools` sauf si les preuves d'échec l'exigent explicitement. »
+- Format de sortie pinnê à deux sections : `Diagnosis` (2-4 phrases) + `Patch` (un seul bloc \`\`\`diff fenced, OU la chaîne littérale `NO_FIX_RECOMMENDED`).
+
+Le mode `--dispatch` route le prompt via `Dispatcher::dispatch()` avec `capability: 'reasoning'`, `task_type: 'skill_evolution_fix'` — le provider qui répond `reasoning` dans votre `RoutingRepository` s'en charge. Pas de nouvelles env vars, pas de nouvelles clés de config.
+
+Cadence recommandée : cron nocturne, sans dispatch LLM. Les reviewers voient une queue de skills flaggés par la télémétrie avec les prompts pré-construits ; ils décident lesquels valent de brûler des tokens en relançant avec `--dispatch` depuis `php artisan skill:evolve --skill=<name> --dispatch`.
+
+```php
+// app/Console/Kernel.php
+$schedule->command('skill:evolve --sweep --threshold=0.30 --min-applied=5')
+         ->daily()
+         ->withoutOverlapping();
+```
+
+### Reviewer les candidats
+
+```bash
+# Lister les pending
+php artisan skill:candidates
+
+# Filtrer
+php artisan skill:candidates --skill=research --status=pending
+
+# Inspecter un
+php artisan skill:candidates --id=42 --show-prompt --show-diff
+
+# JSON pour le tooling
+php artisan skill:candidates --id=42 --format=json
+```
+
+Statuts : `pending` (juste mis en queue) → `reviewing` → `applied | rejected | superseded`. Workflow humain branché direct sur `git apply` :
+
+```bash
+php artisan skill:candidates --id=42 --show-diff --format=text \
+  | sed -n '/^=== Proposed Diff ===$/,$p' \
+  | tail -n +2 \
+  | git apply --check                  # validation dry-run
+```
+
+Après application, marquer le candidat done :
+
+```php
+SkillEvolutionCandidate::find(42)->update([
+    'status' => SkillEvolutionCandidate::STATUS_APPLIED,
+    'reviewed_at' => now(),
+    'reviewed_by' => auth()->user()->email,
+]);
+```
+
+### Ce qui n'est volontairement pas shippé
+
+- **Mode DERIVED** (auto-dériver de nouveaux skills depuis les runs réussis) — nécessiterait un juge LLM pour décider si un run multi-tour mérite d'être promu en skill, plus une queue de curation. Hors scope pour 0.8.6.
+- **Mode CAPTURED** (capturer les workflows démontrés par l'utilisateur comme nouveaux skills) — même blocker plus une surface UX pour labeller la démonstration. Hors scope pour 0.8.6.
+- **Registry cloud / partage de skills inter-projets** — pas de besoin actuel ; nécessiterait un service de registry et signature de skills.
+- **Auto-apply** — l'evolver stage toujours, n'applique jamais. Par design — un mauvais patch dans SKILL.md empoisonne chaque exécution future de ce skill.
+- **Montage sur `bin/superaicore`** — les six commandes artisan sont enregistrées via `SuperAICoreServiceProvider::boot()` uniquement. La console standalone ne les auto-monte pas car la télémétrie skill est un concern hôte, pas Composer-CLI. Si vous en avez besoin hors Laravel, enregistrez-les sur votre propre Symfony Console manuellement.
 
 ---
 

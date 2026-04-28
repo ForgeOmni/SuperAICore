@@ -23,6 +23,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 13. [可移植的 `.mcp.json` 写入](#13-可移植的-mcpjson-写入)
 14. [SuperAgent host-config adapter —— `createForHost`](#14-superagent-host-config-adapter--createforhost)
 15. [对话中途切换 provider（`Agent::switchProvider`）](#15-对话中途切换-provideragentswitchprovider)
+16. [Skill engine —— 遥测、排序、FIX 模式演化](#16-skill-engine--遥测排序fix-模式演化)
 
 ---
 
@@ -841,6 +842,198 @@ $agent->switchProvider('openai', [...], HandoffPolicy::freshStart());
 ### SuperAICore 宿主什么时候用得上这个
 
 通过包直接用，几乎用不到。Dispatcher 是 one-shot 模型。但是宿主侧自己构造 `Agent` 的 runner（比如 SuperTeam 的 PPT pipeline，想用 Claude 规划、Kimi 执行，又不想付两次完整 context replay 的钱）可以用。如果你发现自己想从 SuperAICore 的 `SuperAgentBackend` 内部用它，先开 issue —— 当前没有进程内多轮 handoff 的产品面，加这个会动 Dispatcher 契约。
+
+---
+
+## 16. Skill engine —— 遥测、排序、FIX 模式演化
+
+*自 0.8.6 起。*
+
+三个正交的服务，把静态的 `.claude/skills/` 目录变成一个反馈闭环:
+
+- **`SkillTelemetry`** —— 每次 Claude Code Skill 工具调用在 `sac_skill_executions` 落一行。
+- **`SkillRanker`** —— 在注册表上跑纯 PHP BM25，按近期成功率加权。
+- **`SkillEvolver`** —— 给失败的 skill 提出 FIX 模式 patch，仅以审核 candidate 入队。**永不自动应用。**
+
+DERIVED / CAPTURED 演化模式（自动从成功 run 派生新 skill / 把用户演示的工作流捕获成新 skill）有意省略 —— Day 0 的策略是人来策展。云端 registry 也省略（暂无跨项目共享需求）。整个引擎精神上借鉴自 HKUDS/OpenSpace 的 `skill_engine`，砍到生产可用的安全子集。
+
+### 通过 Claude Code hook 接遥测
+
+包只发 artisan 接入点。hook 契约属于 Claude Code:
+
+```jsonc
+// .claude/settings.local.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [{ "type": "command", "command": "php artisan skill:track-start --json" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "php artisan skill:track-stop --json" }]
+      }
+    ]
+  }
+}
+```
+
+两个命令都从 stdin 读 hook JSON 负载 —— `PreToolUse` 期望 `session_id` / `transcript_path` / `cwd` / `tool_name` / `tool_input.skill`；`Stop` 期望 `session_id` / `stop_hook_active` / `user_interrupted`。负载读取使用 1.0s 软超时 + 200KB 上限的非阻塞读，避免病态管道挂起 session。遥测出错被静默吞掉 —— hook 永不失败。手动场景下命令行 fallback 选项也都齐全（`--skill` / `--session` / `--host-app` / `--status` / `--error`）。
+
+`host_app` 通过向上找 `.claude/` 目录、取上级目录 basename 自动识别 —— 同一个包同时挂在 SuperTeam / SuperFeed 等多个宿主时很有用。
+
+### 聚合接口:`SkillTelemetry::metrics()`
+
+```php
+use SuperAICore\Services\SkillTelemetry;
+use Carbon\Carbon;
+
+// 全时段、全 skill
+$metrics = SkillTelemetry::metrics();
+
+// 最近 7 天
+$metrics = SkillTelemetry::metrics(Carbon::now()->subDays(7));
+
+// 单个 skill
+$metrics = SkillTelemetry::metrics(null, 'research');
+
+// 返回:
+// [
+//   'research' => [
+//     'applied' => 42, 'completed' => 38, 'failed' => 3,
+//     'orphaned' => 1, 'interrupted' => 0, 'in_progress' => 0,
+//     'completion_rate' => 0.9048, 'failure_rate' => 0.0714,
+//     'last_used_at' => '2026-04-26 14:33:12',
+//   ],
+//   ...
+// ]
+```
+
+一次查询、一次 GROUP BY。`recentFailures($skillName, $limit = 5)` 喂给 FIX 模式的 prompt 构造器。
+
+### 排序:`SkillRanker`
+
+纯 PHP BM25（Robertson-Walker `K1=1.5`、`B=0.75`，BM25-Plus IDF）。skill 名字在 doc bag 里重复一次以加权 intent 信号；description 加上 SKILL.md body 头 600 字符提供其余的 lexical 表面。CJK 感知的 tokenizer 把每个汉字切单独 token（中文 skill 描述很短，char-grams 够用）。带置信度加权的遥测加成:`final = bm25 * (1 + 0.4 * (success_rate - 0.5) * applied_signal)`，其中 `applied_signal = min(1, applied / 10)` 在 10 次后饱和。
+
+```php
+use SuperAICore\Registry\SkillRegistry;
+use SuperAICore\Services\SkillRanker;
+
+$ranker = new SkillRanker(new SkillRegistry(base_path()));
+
+$results = $ranker->rank('外包项目工作量评估', limit: 5);
+foreach ($results as $r) {
+    echo "{$r['skill']->name}  score={$r['score']}  boost={$r['breakdown']['tel_boost']}\n";
+    // breakdown 还包含:bm25、matched（per-term IDF×TF）、metrics（原始遥测行）
+}
+
+// 关掉遥测加成做纯 lexical 排序（比如刚开始接遥测、样本不够）:
+$ranker = new SkillRanker(new SkillRegistry(base_path()), useTelemetry: false);
+
+// 限制成 skill 子集（宿主侧 picker UI 用）:
+$results = $ranker->rank($query, limit: 10, skillNames: ['research', 'plan', 'init']);
+```
+
+CLI 同源:`php artisan skill:rank "你的任务" --no-telemetry --format=json --cwd=/abs/path`。`--cwd` 覆盖对从 `web/public` 起跑的宿主很重要 —— 项目根可能在上级几层。
+
+### FIX 模式演化:`SkillEvolver`
+
+evolver 用当前 SKILL.md（截到 8K 字符）+ 遥测里的最近 5 次失败构造受约束的 LLM prompt，把结果写成 `pending` 状态的 `SkillEvolutionCandidate`，**永不直接改 SKILL.md**。人类通过 `php artisan skill:candidates` 审核队列。
+
+```php
+use SuperAICore\Services\Dispatcher;
+use SuperAICore\Services\SkillEvolver;
+use SuperAICore\Registry\SkillRegistry;
+use SuperAICore\Models\SkillEvolutionCandidate;
+
+$evolver = new SkillEvolver(
+    new SkillRegistry(base_path()),
+    app(Dispatcher::class),   // 可选 —— 只在 dispatch=true 时需要
+);
+
+// 手动触发 —— 不调 LLM，只是把 prompt 写成 candidate
+$candidate = $evolver->proposeFix('research');
+
+// 把 candidate 锚到具体的失败 run
+$candidate = $evolver->proposeFix(
+    skillName: 'research',
+    triggerType: SkillEvolutionCandidate::TRIGGER_FAILURE,
+    executionId: 1234,
+    dispatch: false,
+);
+
+// 烧 token —— 调一次 LLM，把完整响应 + 抽出的 diff 都写回
+$candidate = $evolver->proposeFix('research', dispatch: true);
+echo $candidate->proposed_diff;   // LLM 回 NO_FIX_RECOMMENDED 时为 null
+
+// 扫一遍 —— 把所有 failure_rate > threshold 的 skill 入队（要求至少 N 次）
+// 按现有 pending 行去重。
+$ids = $evolver->sweepDegraded(failureRateThreshold: 0.30, minApplied: 5);
+```
+
+prompt 里硬编的约束:
+
+- "产出**最小可行 patch**，不要重写。"
+- "如果证据中无法识别具体根因，回 `NO_FIX_RECOMMENDED`。"
+- "不要凭证据之外的内容编造失败。"
+- "不要重排 section、不要改 skill 名、不要改 frontmatter `name`、不要往 `allowed-tools` 里加新工具，除非证据明确要求。"
+- 输出格式锁死两节:`Diagnosis`（2-4 句）+ `Patch`（单个 \`\`\`diff fenced block，或字面字符串 `NO_FIX_RECOMMENDED`）。
+
+`--dispatch` 模式走 `Dispatcher::dispatch()`，参数 `capability: 'reasoning'`、`task_type: 'skill_evolution_fix'` —— 你 `RoutingRepository` 里答 `reasoning` 的 provider 来负责。无新 env 变量、无新 config 键。
+
+推荐节奏:夜间 cron，不调 LLM。审核者看到一份遥测打标记的 skill 队列，prompt 已经构造好；他们决定哪些值得烧 token，再用 `php artisan skill:evolve --skill=<name> --dispatch` 单独跑。
+
+```php
+// app/Console/Kernel.php
+$schedule->command('skill:evolve --sweep --threshold=0.30 --min-applied=5')
+         ->daily()
+         ->withoutOverlapping();
+```
+
+### 审核 candidate
+
+```bash
+# 列出 pending
+php artisan skill:candidates
+
+# 过滤
+php artisan skill:candidates --skill=research --status=pending
+
+# 看一个
+php artisan skill:candidates --id=42 --show-prompt --show-diff
+
+# 给 tooling 用的 JSON
+php artisan skill:candidates --id=42 --format=json
+```
+
+状态:`pending`（刚入队）→ `reviewing` → `applied | rejected | superseded`。人工流程直接管道接到 `git apply`:
+
+```bash
+php artisan skill:candidates --id=42 --show-diff --format=text \
+  | sed -n '/^=== Proposed Diff ===$/,$p' \
+  | tail -n +2 \
+  | git apply --check                  # dry-run 校验
+```
+
+应用之后把 candidate 标记为 done:
+
+```php
+SkillEvolutionCandidate::find(42)->update([
+    'status' => SkillEvolutionCandidate::STATUS_APPLIED,
+    'reviewed_at' => now(),
+    'reviewed_by' => auth()->user()->email,
+]);
+```
+
+### 有意没发的东西
+
+- **DERIVED 模式**（自动从成功 run 派生新 skill）—— 需要 LLM 判官来决定一个多轮 run 是否值得提升成 skill，外加策展队列。0.8.6 不在范围。
+- **CAPTURED 模式**（把用户演示的工作流捕获成新 skill）—— 同样的 blocker，加上需要打标 demo 的 UX 面。0.8.6 不在范围。
+- **云端 registry / 跨项目 skill 共享** —— 当前没需求，需要 registry 服务和 skill 签名。
+- **自动应用** —— evolver 永远只入队，永不应用。设计如此 —— 错的 patch 进 SKILL.md 会污染该 skill 此后的每一次执行。
+- **挂到 `bin/superaicore`** —— 六个 artisan 命令只在 `SuperAICoreServiceProvider::boot()` 里注册。独立控制台不自动挂载，因为 skill 遥测是宿主关心的事，不是 Composer-CLI 的事。如果你需要在 Laravel 之外用它们，自己手动注册到 Symfony Console。
 
 ---
 

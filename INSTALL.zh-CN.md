@@ -45,7 +45,7 @@ php artisan vendor:publish --tag=super-ai-core-migrations
 php artisan vendor:publish --tag=super-ai-core-views    # 仅在需要覆写 Blade 模板时执行
 ```
 
-配置文件会放到 `config/super-ai-core.php`。迁移会创建 8 张表：
+配置文件会放到 `config/super-ai-core.php`。迁移会创建 10 张表：
 
 - `integration_configs`
 - `ai_capabilities`
@@ -55,6 +55,8 @@ php artisan vendor:publish --tag=super-ai-core-views    # 仅在需要覆写 Bla
 - `ai_model_settings`
 - `ai_usage_logs`
 - `ai_processes`
+- `skill_executions`（0.8.6+）
+- `skill_evolution_candidates`（0.8.6+）
 
 执行迁移：
 
@@ -554,6 +556,51 @@ $response = $backend->streamChat($prompt, function (string $chunk) {
 3. **`Agent::switchProvider($name, $config, $policy)` 现在可用。** 直接包 `SuperAgentBackend` 并希望进程内对话中途切 provider family 的宿主可以用。SuperAICore 自己的 `FallbackChain` 走的是 CLI 子进程级别（不同的关心面），没有用这个特性。`HandoffPolicy::default() / preserveAll() / freshStart()` 三种预设和跨家族 wire-format 编码规则见 SDK 的 `[0.9.5]` CHANGELOG。
 
 0.8.1 引入的命名空间 typo 修复（`makeProvider()` 当时返回根本不存在的 `\SuperAgent\Providers\LLMProvider`，导致 SuperAgent in-process backend 在 0.8.1 → 0.8.2 期间静默全坏）也是这次发布的一部分。之前发现 `Dispatcher::dispatch(['backend' => 'superagent', …])` 每次都返回 `null` 的宿主，现在应该能看到真实的 envelope 了 —— 用 `bin/superaicore api:status` 对你 SuperAgent 路由的 provider 验证一下，或跑包内测试套件:480 tests / 1380 assertions。
+
+**0.8.6 —— 新增两张表。** 0.6.6 之后第一次有 `php artisan migrate` 真正落新 schema 的版本。Skill engine 走 **hook 接线 opt-in** 路线 —— 安装包 + 跑迁移之后，Claude Code 的 `PreToolUse(Skill)` 与 `Stop` hook 不指向新的 artisan 命令的话，行为零变化。三件值得知道的事：
+
+1. **跑迁移。** 两张新表:`skill_executions`（每次 Claude Code Skill 工具调用一行 —— 遥测）与 `skill_evolution_candidates`（仅供审核的 FIX 模式 patch 候选）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`，`up()` 都用 `Schema::hasTable()` 守卫 —— 重复跑迁移幂等。`down()` 把两张表都 drop —— dev 环境重置安全。
+
+   ```bash
+   composer update forgeomni/superaicore
+   php artisan vendor:publish --tag=super-ai-core-migrations --force
+   php artisan migrate
+   ```
+
+2. **接线 hook（宿主侧，可选）。** 包只发 artisan 接入点 —— Claude Code 的 `.claude/settings.local.json` 才是把 hook 真正绑到命令上的地方:
+
+   ```jsonc
+   {
+     "hooks": {
+       "PreToolUse": [
+         {
+           "matcher": "Skill",
+           "hooks": [{ "type": "command", "command": "php artisan skill:track-start --json" }]
+         }
+       ],
+       "Stop": [
+         {
+           "hooks": [{ "type": "command", "command": "php artisan skill:track-stop --json" }]
+         }
+       ]
+     }
+   }
+   ```
+
+   两个命令都从 stdin 读 Claude Code hook JSON 负载（1.0s 软超时 + 200KB 上限，非阻塞读，遥测出错绝不让 hook 失败），并通过向上找 `.claude/` 目录来自动识别 `host_app`（取上级目录的 basename）。SuperTeam 的同步 commit 演示完整接线。
+
+3. **可选:每天 cron 一次 `skill:evolve --sweep`。** 一旦遥测数据流起来，evolver 可以扫出指标退化的 skill 并入队仅供审核的 candidate，**默认不烧 token**（不调 LLM）。审核队列见 `php artisan skill:candidates`。
+
+   ```php
+   // app/Console/Kernel.php
+   $schedule->command('skill:evolve --sweep --threshold=0.30 --min-applied=5')
+            ->daily()
+            ->withoutOverlapping();
+   ```
+
+   `--sweep` 按现有 `pending` 行去重，跨次运行幂等。加 `--dispatch` 还会通过 `Dispatcher`（`capability: 'reasoning'`）调一次 LLM —— 烧 token，但能给审核者一份真正的 diff。evolver **永不**直接改 SKILL.md。DERIVED / CAPTURED 模式（自动从成功 run 派生新 skill / 把用户演示的工作流捕获成新 skill）有意省略 —— Day 0 的策略是人来策展。
+
+六个 artisan 命令（`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`）都通过 `SuperAICoreServiceProvider::boot()` 注册。**没有**挂到独立的 `bin/superaicore` 控制台 —— 从 Laravel 宿主用 `php artisan` 调用即可。`SkillRanker` 的集成模式（宿主侧 skill 选择器 UI、加权检索、感知遥测的 fallback 链）参见 `docs/advanced-usage.zh-CN.md` §16。
 
 ## 常见问题
 

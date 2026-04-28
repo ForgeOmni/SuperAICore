@@ -45,7 +45,7 @@ php artisan vendor:publish --tag=super-ai-core-migrations
 php artisan vendor:publish --tag=super-ai-core-views    # only if you plan to override Blade templates
 ```
 
-The config lands at `config/super-ai-core.php`. Migrations create eight tables:
+The config lands at `config/super-ai-core.php`. Migrations create ten tables:
 
 - `integration_configs`
 - `ai_capabilities`
@@ -55,6 +55,8 @@ The config lands at `config/super-ai-core.php`. Migrations create eight tables:
 - `ai_model_settings`
 - `ai_usage_logs`
 - `ai_processes`
+- `skill_executions` *(since 0.8.6)*
+- `skill_evolution_candidates` *(since 0.8.6)*
 
 Run them:
 
@@ -559,6 +561,51 @@ See `docs/advanced-usage.md` §12 for the full before/after migration pattern an
 3. **`Agent::switchProvider($name, $config, $policy)` is now available** if you wrap `SuperAgentBackend` directly and want in-process mid-conversation handoff between provider families. SuperAICore's own `FallbackChain` walks across CLI subprocesses (a different concern) so it doesn't use this. See the SDK's CHANGELOG `[0.9.5]` entry for the `HandoffPolicy::default() / preserveAll() / freshStart()` presets and the cross-family wire-format encoding rules.
 
 The fix to the namespace typo introduced in 0.8.1 (`makeProvider()` was returning a non-existent `\SuperAgent\Providers\LLMProvider` and silently breaking the entire SuperAgent in-process backend across 0.8.1 → 0.8.2) is also part of this release. Hosts that noticed `Dispatcher::dispatch(['backend' => 'superagent', …])` returning `null` on every call should now see real envelopes again — verify with `bin/superaicore api:status` against your SuperAgent-routed providers, or run the package suite: 480 tests, 1380 assertions.
+
+**0.8.6 — adds two tables.** First release where `php artisan migrate` lands new schema since 0.6.6. The skill engine is **opt-in via hook wiring** — install the package, run the migration, and zero behaviour changes until you point Claude Code's `PreToolUse(Skill)` and `Stop` hooks at the new artisan commands. Three things worth knowing:
+
+1. **Run the migration.** Two new tables: `skill_executions` (one row per Claude Code Skill tool invocation — telemetry) and `skill_evolution_candidates` (review-only FIX-mode patches the evolver proposes). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. Both `up()` methods are guarded by `Schema::hasTable()` so re-running the migration is idempotent. `down()` drops both — safe to re-bootstrap in dev.
+
+   ```bash
+   composer update forgeomni/superaicore
+   php artisan vendor:publish --tag=super-ai-core-migrations --force
+   php artisan migrate
+   ```
+
+2. **Wire the hooks (host-side, optional).** The package only ships the artisan endpoints — Claude Code's `.claude/settings.local.json` does the actual hook-to-command binding:
+
+   ```jsonc
+   {
+     "hooks": {
+       "PreToolUse": [
+         {
+           "matcher": "Skill",
+           "hooks": [{ "type": "command", "command": "php artisan skill:track-start --json" }]
+         }
+       ],
+       "Stop": [
+         {
+           "hooks": [{ "type": "command", "command": "php artisan skill:track-stop --json" }]
+         }
+       ]
+     }
+   }
+   ```
+
+   Both commands read the Claude Code hook JSON payload from stdin (1.0s soft-deadline + 200KB cap, non-blocking, never fails the hook on telemetry errors) and auto-detect `host_app` by walking up to find a sibling `.claude/` directory and using its parent's basename. SuperTeam's sibling commit demonstrates the full plumbing.
+
+3. **Optional: cron `skill:evolve --sweep` daily.** Once you have telemetry flowing, the evolver can scan for skills with degraded metrics and queue review-only candidates without burning tokens (defaults to no LLM dispatch). Review queue via `php artisan skill:candidates`.
+
+   ```php
+   // app/Console/Kernel.php
+   $schedule->command('skill:evolve --sweep --threshold=0.30 --min-applied=5')
+            ->daily()
+            ->withoutOverlapping();
+   ```
+
+   `--sweep` de-dups against existing `pending` rows so it's idempotent across runs. Add `--dispatch` to also invoke the LLM via `Dispatcher` with `capability: 'reasoning'` — costs tokens, but gives reviewers an actual diff to apply. The evolver **never** modifies SKILL.md directly. DERIVED / CAPTURED modes (auto-deriving new skills from successful runs / capturing user-demonstrated workflows) are intentionally not shipped — humans curate new skills on Day 0.
+
+The six artisan commands (`skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`) are all registered through `SuperAICoreServiceProvider::boot()`. They are **not** mounted on the standalone `bin/superaicore` console — call them via `php artisan` from your Laravel host. See `docs/advanced-usage.md` §16 for `SkillRanker` integration patterns (host-side skill-picker UI, weighted retrieval, telemetry-aware fallback chains).
 
 ## Troubleshooting
 
