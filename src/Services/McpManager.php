@@ -3233,7 +3233,14 @@ class McpManager
                 continue;
             }
 
-            $full = $home . DIRECTORY_SEPARATOR . $relPath;
+            // Use forward slash as the separator — `$relPath` already uses
+            // forward slashes and Win32 file APIs accept them. Don't rewrite
+            // `$home` itself: callers may compare returned paths verbatim
+            // against the string they passed in. Plain
+            // `$home . DIRECTORY_SEPARATOR . $relPath` produced mixed
+            // backslash/forward-slash output on Windows that compared
+            // unequal to what hosts pass in.
+            $full = rtrim($home, '/\\') . '/' . ltrim($relPath, '/\\');
             $dir = dirname($full);
             if (!is_dir($dir)) @mkdir($dir, 0755, true);
 

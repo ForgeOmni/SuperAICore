@@ -119,7 +119,14 @@ final class SideEffectDetector
 
     private function rel(string $path): string
     {
-        $prefix = rtrim($this->cwd, '/') . '/';
-        return str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : $path;
+        // Normalize both sides to forward slashes — `sys_get_temp_dir()`
+        // and explicit `/` concatenation can mix backslashes/forward slashes
+        // on Windows, while `RecursiveDirectoryIterator::getPathname()`
+        // normalizes to backslashes. Without this, `str_starts_with()`
+        // fails for any path under a Windows-style cwd.
+        $normPath   = str_replace('\\', '/', $path);
+        $normCwd    = str_replace('\\', '/', $this->cwd);
+        $prefix     = rtrim($normCwd, '/') . '/';
+        return str_starts_with($normPath, $prefix) ? substr($normPath, strlen($prefix)) : $normPath;
     }
 }

@@ -98,8 +98,13 @@ final class CliInstaller
         };
         if ($binary === null) return false;
 
+        // `where` (Windows) and `which` (Unix) print the resolved path on
+        // stdout and only diagnostics on stderr. Symfony Process captures
+        // stdout/stderr separately, so we don't need a shell stderr
+        // redirect — and `2>/dev/null` is a Unix-only token that cmd.exe
+        // misparses as an output filename, breaking detection on Windows.
         $cmd = PHP_OS_FAMILY === 'Windows' ? "where {$binary}" : "which {$binary}";
-        $p = Process::fromShellCommandline($cmd . ' 2>/dev/null');
+        $p = Process::fromShellCommandline($cmd);
         $p->setTimeout(3);
         $p->run();
         return $p->isSuccessful() && trim($p->getOutput()) !== '';

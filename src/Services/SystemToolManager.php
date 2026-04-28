@@ -198,12 +198,16 @@ class SystemToolManager
     protected static function checkTesseractLanguages(): array
     {
         $tesseract = self::findBinary('tesseract') ?? 'tesseract';
-        $process = Process::fromShellCommandline(escapeshellarg($tesseract) . ' --list-langs 2>/dev/null', null, McpManager::enrichedEnv());
+        // `tesseract --list-langs` writes both header + langs to stderr in
+        // some 5.x builds. Symfony Process captures both streams separately
+        // — merge them after the fact instead of using `2>&1` (cmd.exe
+        // misparses `2>/dev/null` as an output filename on Windows).
+        $process = Process::fromShellCommandline(escapeshellarg($tesseract) . ' --list-langs', null, McpManager::enrichedEnv());
         $process->run();
-        if (!$process->isSuccessful()) {
+        if (!$process->isSuccessful() && $process->getOutput() === '' && $process->getErrorOutput() === '') {
             return [];
         }
-        $output = $process->getOutput();
+        $output = $process->getOutput() . "\n" . $process->getErrorOutput();
         $languages = [];
         foreach (explode("\n", $output) as $line) {
             $line = trim($line);

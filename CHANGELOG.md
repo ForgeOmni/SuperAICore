@@ -4,6 +4,32 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] — 2026-04-28
+
+**Cross-platform CLI detection — Windows compatibility fix.** `CliStatusDetector` and `CliBinaryLocator` were silently broken on Windows because their probe commands embedded the POSIX redirect `2>/dev/null`, which `cmd.exe` misparses as an output filename, aborting the whole command and zeroing out stdout. Symptom: `claude auth status` returned valid JSON to a shell but `auth: null` to the detector — Claude Code disappeared from `/super-ai-core/providers` build-task pickers even when fully logged in. Codex was unaffected (`2>&1` is cross-platform), but every CLI's `--version` probe was broken on Windows.
+
+### Fixed
+
+- **`CliStatusDetector::safeProbeOutput()`** — added `bool $mergeStderr = false` parameter; stripped `2>/dev/null` / `2>&1` / `2>NUL` from every call site. Symfony Process already captures stdout/stderr separately, so shell redirects were pure platform-incompat surface area. Callers that needed merged output (codex `login status`, copilot `--help`) now opt in via the flag.
+- **`CliStatusDetector::childEnv()`** — Windows fallback: `getenv(USERPROFILE)` → `getenv(HOMEDRIVE)+getenv(HOMEPATH)` when `HOME` is empty; mirrors resolved value into both `HOME` and `USERPROFILE` so binaries that read either work. Adds Windows-essential pass-through env vars (`APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `PATHEXT`, `TEMP`, `TMP`, `Program*`) — most Win32 binaries refuse to start without `%SystemRoot%` set, and npm-global CLIs cache OAuth credentials under `%APPDATA%`. POSIX path keeps `posix_getpwuid()` for kernel-level user resolution under FPM `clear_env=yes`.
+- **`CliStatusDetector::findPath()`** — split into three platform branches (`windowsPathCandidates` / `macPathCandidates` / `linuxPathCandidates`) via `match (PHP_OS_FAMILY)`. Windows now probes npm-global, `~/.local/bin`, `~/.npm-global/bin`, `%LOCALAPPDATA%/Programs/<binary>`, `%ProgramFiles%/<binary>`, `%ProgramFiles(x86)%/<binary>`, Scoop shims, and Chocolatey — each base × `{.exe, .cmd, .bat, ''}` extensions. macOS adds `/opt/local/bin` (MacPorts) and prioritizes Apple Silicon homebrew over Intel. Linux adds `/snap/bin` and Linuxbrew. `where`/`which` fallback unchanged but no longer carries shell redirects.
+- **`CliBinaryLocator`** — same three-platform refactor, mirrors the detector's candidate list so spawn-time path resolution matches probe-time path resolution.
+- **`CliInstaller::isToolAvailable()`** — dropped `' 2>/dev/null'` appended to `where`/`which`; was the same Windows misparse bug at the `npm/brew/sh` PATH check.
+- **`SystemToolManager::checkTesseractLanguages()`** — dropped `' 2>/dev/null'` from tesseract probe; merge stderr post-facto via `getOutput() . getErrorOutput()` since some 5.x builds write the language list to stderr.
+- **Late static binding for probes** — `self::safeProbeOutput()` → `static::safeProbeOutput()` throughout `CliStatusDetector` so test subclasses can override the probe without monkey-patching. Existing `static::probeCopilotLive()` already followed this pattern; brought the rest of the file in line.
+
+### Added
+
+- **`tests/Unit/CliStatusDetectorCrossPlatformTest.php`** — covers: (a) no probe command emits `2>/dev/null` or `2>NUL`, (b) codex login-status probe opts into `mergeStderr:true`, (c) `childEnv()` resolves HOME from USERPROFILE on Windows + propagates SystemRoot, (d) POSIX `XDG_CONFIG_HOME` pass-through, (e) `findPath()` candidates differ per platform (Windows must include Scoop/Chocolatey/`Program Files`, macOS must include MacPorts, Linux must include Snap + Linuxbrew). Probe recorder subclass intercepts `safeProbeOutput` via reflection so no real binaries get spawned.
+
+### Fixed (Windows test suite)
+
+The five Windows-only test failures that had been red on the test matrix prior to 0.8.7 are now green. Causes were all path-separator drift between PHP filesystem APIs that return backslashes (`sys_get_temp_dir()`, `RecursiveDirectoryIterator::getPathname()`, `DIRECTORY_SEPARATOR`) and code/test fixtures that used forward slashes.
+
+- **`SideEffectDetector::rel()`** — `str_starts_with($path, $prefix)` failed on Windows because `RecursiveDirectoryIterator` returns paths with backslashes while `cwd` was constructed with forward slashes. Normalize both sides to forward slashes before comparison.
+- **`McpManager::syncAllBackends()`** — joining `$home . DIRECTORY_SEPARATOR . $relPath` on Windows produced mixed-separator paths (`…/kimi-mcp-xxx\.kimi/mcp.json`) that compared unequal to what host code passed in. Use `'/'` as separator (Win32 file APIs accept it) and trim only one trailing separator from `$home` instead of rewriting it.
+- **`tests/Unit/TeeLoggerTest::test_unwritable_path_does_not_throw`** — `'/dev/null/cannot/exist.log'` is writable on Windows (no `/dev/null` device, PHP creates the dirs). Branch on `PHP_OS_FAMILY` and use `'NUL\\cannot\\<invalid>.log'` on Windows — `NUL` is a reserved device name that can't host children, and `<` is forbidden in NTFS paths, so the open is guaranteed to fail.
+
 ## [0.8.6] — 2026-04-27
 
 **Skill engine — telemetry + BM25 ranker + FIX-mode evolution candidates.** Borrowed in spirit from HKUDS/OpenSpace's `skill_engine`, trimmed to the safe subset for production use: every Claude Code Skill tool invocation gets logged via PreToolUse/Stop hooks (`SkillTelemetry`), skills are ranked against arbitrary task text via pure-PHP BM25 with CJK char-tokens and a confidence-weighted telemetry boost (`SkillRanker`), and degrading skills queue review-only FIX-mode candidates that a human applies via `php artisan skill:candidates` (`SkillEvolver`). DERIVED and CAPTURED modes are intentionally omitted — humans curate new skills on Day 0; the evolver never modifies SKILL.md directly. Cloud registry omitted — no cross-project sharing need yet. Two new tables (`sac_skill_executions`, `sac_skill_evolution_candidates`) and six artisan commands ship. The track-* commands read JSON from stdin so they plug directly into Claude Code's PreToolUse / Stop hook contracts; SuperTeam wires them in a sibling commit.

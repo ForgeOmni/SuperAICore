@@ -82,9 +82,15 @@ final class TeeLoggerTest extends TestCase
 
     public function test_unwritable_path_does_not_throw(): void
     {
-        // Path inside /dev/null/ — never writable. Constructor must not
-        // throw; subsequent writes silently no-op.
-        $logger = new TeeLogger('/dev/null/cannot/exist.log');
+        // Pick a path the OS guarantees we can't open. POSIX has /dev/null
+        // (a special file, can't host children); Windows reserves NUL
+        // similarly and rejects paths containing `<` / `>` / `|` / `?` /
+        // `*` outright. Either way the constructor must not throw and
+        // subsequent writes must silently no-op.
+        $path = PHP_OS_FAMILY === 'Windows'
+            ? 'NUL\\cannot\\<invalid>.log'
+            : '/dev/null/cannot/exist.log';
+        $logger = new TeeLogger($path);
         $this->assertFalse($logger->isOpen());
         $logger->write('lost');
         $logger->close();

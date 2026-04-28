@@ -103,9 +103,16 @@ class CliStatusDetector
      * not surface failures to callers, since `cli:status` and `/providers` are
      * called from request paths that assume the detector is infallible.
      *
+     * `$mergeStderr` opts into merging stderr into the returned string —
+     * needed when the CLI prints status to stderr (codex `login status`,
+     * copilot `--help`). Always prefer this over baking `2>&1` into the
+     * command string: cmd.exe on Windows treats `2>/dev/null` as an output
+     * filename and aborts the whole command (#175), and Symfony Process
+     * already captures the streams separately for us.
+     *
      * @param array<string,string> $env
      */
-    protected static function safeProbeOutput(string $command, array $env, int $timeoutSeconds): ?string
+    protected static function safeProbeOutput(string $command, array $env, int $timeoutSeconds, bool $mergeStderr = false): ?string
     {
         $p = Process::fromShellCommandline($command, null, $env);
         $p->setTimeout($timeoutSeconds);
@@ -115,6 +122,12 @@ class CliStatusDetector
             return null;
         }
         $out = trim($p->getOutput());
+        if ($mergeStderr) {
+            $err = trim($p->getErrorOutput());
+            if ($err !== '') {
+                $out = $out === '' ? $err : ($out . "\n" . $err);
+            }
+        }
         return $out === '' ? null : $out;
     }
 
@@ -132,7 +145,7 @@ class CliStatusDetector
         }
 
         $env = self::childEnv();
-        $version = self::safeProbeOutput("\"{$path}\" --version 2>/dev/null", $env, 5);
+        $version = static::safeProbeOutput("\"{$path}\" --version", $env, 5);
 
         $auth = self::detectAuth($binary, $path);
 
@@ -149,25 +162,47 @@ class CliStatusDetector
      * Build a minimally complete env for CLI child processes.
      *
      * Why this exists: PHP's built-in dev server (`php artisan serve`), FPM
-     * with `clear_env=yes`, and some supervisor setups strip HOME/USER/
-     * LOGNAME/TMPDIR from the request worker's environment. CLI tools
-     * (`claude auth status`, `codex login status`, copilot keychain lookups)
-     * need HOME to locate their credential stores — without it they report
-     * "not signed in" even though the user is authenticated.
+     * with `clear_env=yes`, supervisor, IIS workers, and stock `cmd.exe`
+     * sessions all strip or never set the env vars CLI tools need to find
+     * their credential stores. Without HOME (POSIX) or USERPROFILE (Windows),
+     * `claude auth status`, `codex login status`, gemini OAuth file lookups,
+     * and copilot keychain lookups all silently report "not signed in" even
+     * when the user is authenticated.
      *
-     * We rebuild the essentials from `posix_getpwuid()` (the kernel knows
-     * the real user regardless of PHP env scrubbing) and inherit anything
-     * already set so hosts can still inject OAuth tokens via env vars.
+     * Resolution order:
+     *   - POSIX: `getenv(HOME)` → `posix_getpwuid()` (kernel-level, immune
+     *     to PHP env scrubbing).
+     *   - Windows: `getenv(USERPROFILE)` → `getenv(HOMEDRIVE)+getenv(HOMEPATH)`.
+     *   - We mirror the resolved value into both HOME and USERPROFILE so
+     *     downstream binaries find it regardless of which one they read.
+     *
+     * Inherited values from the PHP parent process are preserved so hosts
+     * can still inject OAuth tokens (ANTHROPIC_API_KEY, GH_TOKEN, …) via
+     * env vars in supervisord/systemd configs.
      */
     protected static function childEnv(): array
     {
         $home = getenv('HOME') ?: ($_SERVER['HOME'] ?? '');
         $user = getenv('USER') ?: getenv('LOGNAME') ?: ($_SERVER['USER'] ?? '');
 
-        if ((!$home || !$user) && function_exists('posix_getpwuid') && function_exists('posix_getuid')) {
+        if (PHP_OS_FAMILY === 'Windows') {
+            if (!$home) {
+                $home = getenv('USERPROFILE') ?: ($_SERVER['USERPROFILE'] ?? '');
+                if (!$home) {
+                    $drive = getenv('HOMEDRIVE') ?: '';
+                    $path  = getenv('HOMEPATH')  ?: '';
+                    if ($drive && $path) {
+                        $home = $drive . $path;
+                    }
+                }
+            }
+            if (!$user) {
+                $user = getenv('USERNAME') ?: ($_SERVER['USERNAME'] ?? '');
+            }
+        } elseif ((!$home || !$user) && function_exists('posix_getpwuid') && function_exists('posix_getuid')) {
             $pw = @posix_getpwuid(posix_getuid());
             if (is_array($pw)) {
-                $home = $home ?: ($pw['dir'] ?? '');
+                $home = $home ?: ($pw['dir']  ?? '');
                 $user = $user ?: ($pw['name'] ?? '');
             }
         }
@@ -175,19 +210,48 @@ class CliStatusDetector
         $env = [];
         if ($home) {
             $env['HOME'] = $home;
+            // Mirror to Windows-native names so binaries that only read
+            // USERPROFILE still resolve. Cheap and harmless on POSIX too.
+            if (PHP_OS_FAMILY === 'Windows') {
+                $env['USERPROFILE'] = $home;
+            }
         }
         if ($user) {
-            $env['USER'] = $user;
+            $env['USER']    = $user;
             $env['LOGNAME'] = $user;
+            if (PHP_OS_FAMILY === 'Windows') {
+                $env['USERNAME'] = $user;
+            }
         }
-        $env['PATH'] = getenv('PATH') ?: '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin';
-        // Keychain-backed auth on macOS needs TMPDIR; Linux CLI tools sometimes
-        // read XDG_CONFIG_HOME. Pass through when present.
-        foreach (['TMPDIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
-                  'LANG', 'LC_ALL', 'LC_CTYPE',
-                  // Host-provided OAuth/token overrides for each CLI.
-                  'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY',
-                  'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'] as $k) {
+
+        // Sensible PATH fallback per platform when PHP wasn't given one.
+        $env['PATH'] = getenv('PATH') ?: (PHP_OS_FAMILY === 'Windows'
+            ? 'C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\Wbem'
+            : '/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin');
+
+        // Pass-through env vars: cross-platform first, then platform-specific
+        // additions. Windows binaries need APPDATA/LOCALAPPDATA for credential
+        // stores (npm-global tools cache OAuth there) and SystemRoot — most
+        // Win32 binaries refuse to start without %SystemRoot% set. POSIX
+        // binaries care about TMPDIR (mac keychain) and XDG_* (Linux conf).
+        $passthrough = [
+            'LANG', 'LC_ALL', 'LC_CTYPE',
+            'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY',
+            'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN',
+        ];
+        if (PHP_OS_FAMILY === 'Windows') {
+            $passthrough = array_merge($passthrough, [
+                'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+                'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
+                'SystemRoot', 'SystemDrive', 'COMSPEC', 'PATHEXT',
+                'TEMP', 'TMP',
+            ]);
+        } else {
+            $passthrough = array_merge($passthrough, [
+                'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
+            ]);
+        }
+        foreach ($passthrough as $k) {
             $v = getenv($k);
             if ($v !== false && $v !== '') {
                 $env[$k] = $v;
@@ -206,12 +270,13 @@ class CliStatusDetector
     {
         $env = self::childEnv();
         if ($binary === 'claude') {
-            $out = self::safeProbeOutput("\"{$path}\" auth status 2>/dev/null", $env, 5) ?? '';
+            $out = static::safeProbeOutput("\"{$path}\" auth status", $env, 5) ?? '';
             $decoded = json_decode($out, true);
             return is_array($decoded) ? $decoded : null;
         }
         if ($binary === 'codex') {
-            $out = self::safeProbeOutput("\"{$path}\" login status 2>&1", $env, 5) ?? '';
+            // Codex 0.5+ writes "Logged in …" to stderr when piped — merge.
+            $out = static::safeProbeOutput("\"{$path}\" login status", $env, 5, mergeStderr: true) ?? '';
             $normalized = strtolower($out);
             return [
                 'loggedIn' => str_contains($normalized, 'logged in'),
@@ -434,18 +499,12 @@ class CliStatusDetector
         if (isset(self::$copilotLiveCache[$path])) {
             return self::$copilotLiveCache[$path];
         }
-        $p = Process::fromShellCommandline("\"{$path}\" --help 2>&1", null, self::childEnv());
-        $p->setTimeout(3);
-        try {
-            $p->run();
-        } catch (\Throwable) {
-            return self::$copilotLiveCache[$path] = false;
-        }
-        $out = (string) $p->getOutput();
-        // Be lenient: any non-empty help text containing a known Copilot keyword
-        // is enough. We're verifying "binary runs and responds", not parsing
-        // help grammar.
-        $live = $p->isSuccessful() && $out !== '' && (
+        // Be lenient: any non-empty help text containing a known Copilot
+        // keyword is enough. We're verifying "binary runs and responds",
+        // not parsing help grammar. Some copilot builds print --help to
+        // stderr, so merge.
+        $out = static::safeProbeOutput("\"{$path}\" --help", self::childEnv(), 3, mergeStderr: true) ?? '';
+        $live = $out !== '' && (
             stripos($out, 'copilot') !== false || stripos($out, 'usage') !== false
         );
         return self::$copilotLiveCache[$path] = $live;
@@ -473,43 +532,122 @@ class CliStatusDetector
     protected static function findPath(string $binary): ?string
     {
         $env = self::childEnv();
-        if (PHP_OS_FAMILY === 'Windows') {
-            $appdata = $env['APPDATA'] ?? getenv('APPDATA');
-            $candidates = [];
-            if ($appdata) {
-                $candidates[] = "{$appdata}/npm/{$binary}.cmd";
-                $candidates[] = "{$appdata}/npm/{$binary}";
-            }
-        } else {
-            $home = self::resolvedHome() ?: '/root';
-            $candidates = [
-                "{$home}/.npm-global/bin/{$binary}",
-                "{$home}/.local/bin/{$binary}",
-                "/usr/local/bin/{$binary}",
-                "/usr/bin/{$binary}",
-                "/opt/homebrew/bin/{$binary}",
-            ];
-            $nodeVerP = Process::fromShellCommandline('node -v 2>/dev/null', null, $env);
-            $nodeVerP->setTimeout(3);
-            $nodeVerP->run();
-            $nodeVer = trim($nodeVerP->getOutput());
-            if ($nodeVer) {
-                $candidates[] = "{$home}/.nvm/versions/node/{$nodeVer}/bin/{$binary}";
-            }
-        }
+        $candidates = match (PHP_OS_FAMILY) {
+            'Windows' => self::windowsPathCandidates($binary, $env),
+            'Darwin'  => self::macPathCandidates($binary, $env),
+            default   => self::linuxPathCandidates($binary, $env),
+        };
 
         foreach ($candidates as $p) {
             if ($p && file_exists($p)) return $p;
         }
 
-        $cmd = PHP_OS_FAMILY === 'Windows' ? "where {$binary} 2>NUL" : "which {$binary} 2>/dev/null";
-        $p = Process::fromShellCommandline($cmd, null, $env);
-        $p->setTimeout(3);
-        $p->run();
-        $result = trim($p->getOutput());
+        // Last resort: ask the OS resolver. `where` (Windows) and `which`
+        // (Unix) both print only the path on stdout when found and only
+        // diagnostics on stderr when not — Symfony Process captures the
+        // streams separately so no shell redirect is needed.
+        $cmd = PHP_OS_FAMILY === 'Windows' ? "where {$binary}" : "which {$binary}";
+        $result = static::safeProbeOutput($cmd, $env, 3);
         if ($result) {
             return explode("\n", $result)[0] ?: null;
         }
         return null;
+    }
+
+    /**
+     * Windows install locations, in resolution-priority order.
+     *
+     * Covers: npm-global (most Node-based CLIs), pip --user / pipx / cargo,
+     * VS Code-style per-user installs, system Program Files, Scoop shims,
+     * Chocolatey. Each base is probed with `.exe`, `.cmd`, `.bat`, and
+     * extension-less so we catch every conventional Windows binary form.
+     *
+     * @param array<string,string> $env
+     * @return string[]
+     */
+    protected static function windowsPathCandidates(string $binary, array $env): array
+    {
+        $home         = $env['HOME'] ?? '';
+        $appdata      = $env['APPDATA']            ?? (getenv('APPDATA') ?: '');
+        $localApp     = $env['LOCALAPPDATA']       ?? (getenv('LOCALAPPDATA') ?: '');
+        $progFiles    = $env['ProgramFiles']       ?? (getenv('ProgramFiles') ?: '');
+        $progFilesX86 = $env['ProgramFiles(x86)']  ?? (getenv('ProgramFiles(x86)') ?: '');
+
+        $exts = ['.exe', '.cmd', '.bat', ''];
+
+        $bases = array_filter([
+            $appdata ? "{$appdata}/npm" : null,
+            $home    ? "{$home}/.local/bin" : null,
+            $home    ? "{$home}/.npm-global/bin" : null,
+            $localApp ? "{$localApp}/Programs/{$binary}" : null,
+            $progFiles ? "{$progFiles}/{$binary}" : null,
+            $progFilesX86 ? "{$progFilesX86}/{$binary}" : null,
+            $home    ? "{$home}/scoop/shims" : null,
+            'C:/ProgramData/chocolatey/bin',
+        ]);
+
+        $candidates = [];
+        foreach ($bases as $base) {
+            foreach ($exts as $ext) {
+                $candidates[] = "{$base}/{$binary}{$ext}";
+            }
+        }
+        return $candidates;
+    }
+
+    /**
+     * macOS install locations: Homebrew (Apple Silicon at /opt/homebrew,
+     * Intel at /usr/local), MacPorts at /opt/local, npm-global / pip --user
+     * under $HOME, plus nvm if `node -v` resolves an active version.
+     *
+     * @param array<string,string> $env
+     * @return string[]
+     */
+    protected static function macPathCandidates(string $binary, array $env): array
+    {
+        $home = $env['HOME'] ?? '';
+        $candidates = [];
+        if ($home) {
+            $candidates[] = "{$home}/.npm-global/bin/{$binary}";
+            $candidates[] = "{$home}/.local/bin/{$binary}";
+        }
+        // Apple Silicon homebrew first — it's the modern default and shadows
+        // the Intel path on M-series machines that still keep /usr/local.
+        $candidates[] = "/opt/homebrew/bin/{$binary}";
+        $candidates[] = "/usr/local/bin/{$binary}";
+        $candidates[] = "/opt/local/bin/{$binary}"; // MacPorts
+        $candidates[] = "/usr/bin/{$binary}";
+
+        $nodeVer = static::safeProbeOutput('node -v', $env, 3);
+        if ($home && $nodeVer) {
+            $candidates[] = "{$home}/.nvm/versions/node/{$nodeVer}/bin/{$binary}";
+        }
+        return $candidates;
+    }
+
+    /**
+     * Linux/BSD install locations: distro package paths, Snap, Linuxbrew,
+     * npm-global / pip --user under $HOME, plus nvm if active.
+     *
+     * @param array<string,string> $env
+     * @return string[]
+     */
+    protected static function linuxPathCandidates(string $binary, array $env): array
+    {
+        $home = $env['HOME'] ?: '/root';
+        $candidates = [
+            "{$home}/.npm-global/bin/{$binary}",
+            "{$home}/.local/bin/{$binary}",
+            "/usr/local/bin/{$binary}",
+            "/usr/bin/{$binary}",
+            "/snap/bin/{$binary}",
+            "/home/linuxbrew/.linuxbrew/bin/{$binary}",
+        ];
+
+        $nodeVer = static::safeProbeOutput('node -v', $env, 3);
+        if ($nodeVer) {
+            $candidates[] = "{$home}/.nvm/versions/node/{$nodeVer}/bin/{$binary}";
+        }
+        return $candidates;
     }
 }

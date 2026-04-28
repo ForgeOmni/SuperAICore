@@ -12,15 +12,21 @@ use SuperAICore\Services\EngineCatalog;
  * location the same way. Binary name comes from `EngineCatalog->cliBinary`
  * — no host switch statement needed.
  *
- * Probe order on *nix (matches host's historical order):
+ * Probe order on Linux/BSD:
  *   1. $HOME/.npm-global/bin/<binary>
  *   2. $HOME/.local/bin/<binary>
  *   3. /usr/local/bin/<binary>
  *   4. /usr/bin/<binary>
- *   5. /opt/homebrew/bin/<binary>
- *   6. $HOME/.nvm/versions/node/<active-node-version>/bin/<binary>
+ *   5. /snap/bin/<binary>
+ *   6. /home/linuxbrew/.linuxbrew/bin/<binary>
+ *   7. $HOME/.nvm/versions/node/<active>/bin/<binary>
  *
- * On Windows: $APPDATA/npm/<binary>(.cmd), $LOCALAPPDATA/npm/<binary>.cmd.
+ * macOS adds /opt/homebrew/bin (Apple Silicon) before /usr/local/bin
+ * (Intel) and includes /opt/local/bin (MacPorts).
+ *
+ * Windows probes %APPDATA%/npm, $HOME/.local/bin, $HOME/.npm-global/bin,
+ * %LOCALAPPDATA%/Programs/<binary>, %ProgramFiles%/<binary>, Scoop, and
+ * Chocolatey — each base × {.exe, .cmd, .bat, ''} extension form.
  *
  * Falls back to the binary's bare name (e.g. `"claude"`) when nothing
  * is found — `PATH` resolution still gets a chance at exec time.
@@ -48,31 +54,11 @@ class CliBinaryLocator
         $engine = $this->catalog->get($engineKey);
         $binary = $engine?->cliBinary ?: $engineKey;
 
-        $paths = [];
-        if ($this->isWindows()) {
-            $appdata = getenv('APPDATA');
-            if ($appdata) {
-                $paths[] = "{$appdata}/npm/{$binary}.cmd";
-                $paths[] = "{$appdata}/npm/{$binary}";
-            }
-            $localAppData = getenv('LOCALAPPDATA');
-            if ($localAppData) {
-                $paths[] = "{$localAppData}/npm/{$binary}.cmd";
-            }
-        } else {
-            $home = getenv('HOME') ?: '/root';
-            $paths = [
-                "{$home}/.npm-global/bin/{$binary}",
-                "{$home}/.local/bin/{$binary}",
-                '/usr/local/bin/' . $binary,
-                '/usr/bin/' . $binary,
-                '/opt/homebrew/bin/' . $binary,
-            ];
-            $nodeVer = trim((string) @shell_exec('node -v 2>/dev/null'));
-            if ($nodeVer) {
-                $paths[] = "{$home}/.nvm/versions/node/{$nodeVer}/bin/{$binary}";
-            }
-        }
+        $paths = match (PHP_OS_FAMILY) {
+            'Windows' => $this->windowsCandidates($binary),
+            'Darwin'  => $this->macCandidates($binary),
+            default   => $this->linuxCandidates($binary),
+        };
 
         foreach ($paths as $path) {
             if ($path && file_exists($path)) {
@@ -96,8 +82,74 @@ class CliBinaryLocator
         unset($this->cache[$engineKey]);
     }
 
-    protected function isWindows(): bool
+    /** @return string[] */
+    protected function windowsCandidates(string $binary): array
     {
-        return strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        $home         = getenv('USERPROFILE') ?: getenv('HOME') ?: '';
+        $appdata      = getenv('APPDATA') ?: '';
+        $localApp     = getenv('LOCALAPPDATA') ?: '';
+        $progFiles    = getenv('ProgramFiles') ?: '';
+        $progFilesX86 = getenv('ProgramFiles(x86)') ?: '';
+
+        $exts = ['.exe', '.cmd', '.bat', ''];
+
+        $bases = array_filter([
+            $appdata ? "{$appdata}/npm" : null,
+            $home    ? "{$home}/.local/bin" : null,
+            $home    ? "{$home}/.npm-global/bin" : null,
+            $localApp ? "{$localApp}/Programs/{$binary}" : null,
+            $progFiles ? "{$progFiles}/{$binary}" : null,
+            $progFilesX86 ? "{$progFilesX86}/{$binary}" : null,
+            $home    ? "{$home}/scoop/shims" : null,
+            'C:/ProgramData/chocolatey/bin',
+        ]);
+
+        $candidates = [];
+        foreach ($bases as $base) {
+            foreach ($exts as $ext) {
+                $candidates[] = "{$base}/{$binary}{$ext}";
+            }
+        }
+        return $candidates;
+    }
+
+    /** @return string[] */
+    protected function macCandidates(string $binary): array
+    {
+        $home = getenv('HOME') ?: '';
+        $candidates = [];
+        if ($home) {
+            $candidates[] = "{$home}/.npm-global/bin/{$binary}";
+            $candidates[] = "{$home}/.local/bin/{$binary}";
+        }
+        $candidates[] = "/opt/homebrew/bin/{$binary}";
+        $candidates[] = "/usr/local/bin/{$binary}";
+        $candidates[] = "/opt/local/bin/{$binary}";
+        $candidates[] = "/usr/bin/{$binary}";
+
+        $nodeVer = trim((string) @shell_exec('node -v 2>/dev/null'));
+        if ($home && $nodeVer) {
+            $candidates[] = "{$home}/.nvm/versions/node/{$nodeVer}/bin/{$binary}";
+        }
+        return $candidates;
+    }
+
+    /** @return string[] */
+    protected function linuxCandidates(string $binary): array
+    {
+        $home = getenv('HOME') ?: '/root';
+        $candidates = [
+            "{$home}/.npm-global/bin/{$binary}",
+            "{$home}/.local/bin/{$binary}",
+            "/usr/local/bin/{$binary}",
+            "/usr/bin/{$binary}",
+            "/snap/bin/{$binary}",
+            "/home/linuxbrew/.linuxbrew/bin/{$binary}",
+        ];
+        $nodeVer = trim((string) @shell_exec('node -v 2>/dev/null'));
+        if ($nodeVer) {
+            $candidates[] = "{$home}/.nvm/versions/node/{$nodeVer}/bin/{$binary}";
+        }
+        return $candidates;
     }
 }
