@@ -135,6 +135,16 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 \SuperAICore\Console\Commands\McpSyncBackendsCommand::class,
                 \SuperAICore\Console\Commands\ApiStatusCommand::class,
                 \SuperAICore\Console\Commands\KimiSyncCommand::class,
+
+                // Skill telemetry / ranking / evolution (0.8.1+ — borrowed
+                // from OpenSpace's skill_engine; FIX-mode only, never
+                // auto-applied. See SkillEvolver.php docblock.)
+                \SuperAICore\Console\Commands\SkillTrackStartCommand::class,
+                \SuperAICore\Console\Commands\SkillTrackStopCommand::class,
+                \SuperAICore\Console\Commands\SkillStatsCommand::class,
+                \SuperAICore\Console\Commands\SkillRankCommand::class,
+                \SuperAICore\Console\Commands\SkillEvolveCommand::class,
+                \SuperAICore\Console\Commands\SkillCandidatesCommand::class,
             ]);
         }
 
