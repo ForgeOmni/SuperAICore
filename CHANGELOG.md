@@ -4,6 +4,20 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.9] — 2026-04-28
+
+**Backend availability gate — fix false-negative for SDK backends.** Hosts using `findCliPath($backend)` non-null as the "is this backend installed?" gate were locking out every provider routed through `superagent` (MINIMAX / Qwen / GLM / OpenRouter / Kimi-direct / LM Studio …). SuperAgent is an in-process PHP SDK with no CLI binary, so the path probe always returns null and the host shows `SuperAgent is not installed or not available on this server.` even when `forgeomni/superagent` is fully installed and `class_exists(\SuperAgent\Agent::class)` is true.
+
+### Added
+
+- **`CliStatusDetector::isInstalled(string $backend): bool`** — lightweight yes/no check intended for host gating paths (task-create, run-execute). Distinct from `detect()`:
+  - `superagent` → `class_exists(\SuperAgent\Agent::class)`. No path probe.
+  - Built-in CLI engines (`claude`/`codex`/`gemini`/`copilot`/`kimi`) → `findPath()` only, skips the `<binary> --version` probe (~100-300ms cold) that `detectBinary()` runs to populate the version cell.
+  - Catalog-registered CLI engines → `findPath($cliBinary)`.
+  - Catalog-registered non-CLI engines → catalog presence is sufficient; the backend's own dispatch path will surface specific runtime errors.
+
+Hosts should replace `if (!ClaudeRunner::findCliPath($backend))`-style gates with the new method (or a thin wrapper that delegates to it). Existing `detect()` / `all()` calls are unchanged.
+
 ## [0.8.8] — 2026-04-28
 
 **Cross-platform CLI prompt delivery — Windows large-argv fix.** Every CLI backend's `stream()` / `generate()` was appending the user prompt as the trailing argv element. On Windows, Symfony Process wraps every command in `cmd /V:ON /E:ON /D /C "(...)"` regardless of whether the args came in as an array or a string — and `cmd.exe` has a hard 8191-char command-line cap. Markdown agent prompts at our typical 25K size were silently truncated; the CLI either failed to start or, like Claude, reported `Error: Input must be provided either through stdin or as a prompt argument when using --print`. macOS/Linux argv limits (`getconf ARG_MAX`, typically 128K+) absorbed the same calls without complaint, so the bug only surfaced on Windows.

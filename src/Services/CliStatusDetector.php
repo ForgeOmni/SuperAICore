@@ -53,6 +53,46 @@ class CliStatusDetector
     }
 
     /**
+     * Lightweight "is this backend reachable on this host?" check.
+     *
+     * Hosts use this as a precondition gate before dispatching a task to
+     * a backend (e.g. `if (!isInstalled($backend)) { show error; return; }`).
+     * Distinct from `detect()` because:
+     *
+     *   - SDK backends (superagent) have no CLI binary — `class_exists` is
+     *     the truth, not a path lookup. Calling `findCliPath()` on these
+     *     always returns null and falsely reports "not installed".
+     *   - CLI backends only need their binary on disk to be considered
+     *     reachable here. `detect()` additionally runs `<binary> --version`
+     *     (~100-300ms cold) which is wasted work for a yes/no gate.
+     *
+     * The host's previous shortcut — treating `findCliPath()` non-null as
+     * the install gate — broke MINIMAX/Qwen/GLM/etc. providers (they all
+     * route through the `superagent` backend) by demanding a non-existent
+     * `superagent` binary. Use this method instead for boolean gating.
+     */
+    public static function isInstalled(string $backend): bool
+    {
+        if ($backend === 'superagent') {
+            return class_exists(\SuperAgent\Agent::class);
+        }
+        if (in_array($backend, ['claude', 'codex', 'gemini', 'copilot', 'kimi'], true)) {
+            return self::findPath($backend) !== null;
+        }
+        $engine = self::catalogEngine($backend);
+        if ($engine && ($engine->isCli ?? false) && !empty($engine->cliBinary)) {
+            return self::findPath((string) $engine->cliBinary) !== null;
+        }
+        // Catalog-registered non-CLI engine (future SDK-style backends):
+        // catalog presence + dispatcher class registered is enough — actual
+        // runtime errors will surface through the backend's own error path.
+        if ($engine !== null && !($engine->isCli ?? false)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Full list of backends to probe: built-in CLIs + any extra CLI engines
      * a host registered via config. Returns built-ins first so the render
      * order stays stable across installs.
