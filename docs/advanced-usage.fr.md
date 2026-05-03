@@ -24,6 +24,11 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 14. [Adaptateur host-config SuperAgent — `createForHost`](#14-adaptateur-host-config-superagent--createforhost)
 15. [Handoff de provider en milieu de conversation (`Agent::switchProvider`)](#15-handoff-de-provider-en-milieu-de-conversation-agentswitchprovider)
 16. [Moteur de skills — télémétrie, ranking, évolution mode FIX](#16-moteur-de-skills--télémétrie-ranking-évolution-mode-fix)
+17. [Reranker sémantique de skills via SPI `EmbeddingProvider` (0.9.0)](#17-reranker-sémantique-de-skills-via-spi-embeddingprovider-090)
+18. [Drapeaux d'outils `agent_grep` + `browser` (0.9.0)](#18-drapeaux-doutils-agent_grep--browser-090)
+19. [Boucle de captures d'écran navigateur (0.9.0)](#19-boucle-de-captures-décran-navigateur-090)
+20. [Découpage `usage_source` — `user` vs `ambient` (0.9.0)](#20-découpage-usage_source--user-vs-ambient-090)
+21. [Reprise de session cross-harness (0.9.0)](#21-reprise-de-session-cross-harness-090)
 
 ---
 
@@ -1036,6 +1041,401 @@ SkillEvolutionCandidate::find(42)->update([
 - **Registry cloud / partage de skills inter-projets** — pas de besoin actuel ; nécessiterait un service de registry et signature de skills.
 - **Auto-apply** — l'evolver stage toujours, n'applique jamais. Par design — un mauvais patch dans SKILL.md empoisonne chaque exécution future de ce skill.
 - **Montage sur `bin/superaicore`** — les six commandes artisan sont enregistrées via `SuperAICoreServiceProvider::boot()` uniquement. La console standalone ne les auto-monte pas car la télémétrie skill est un concern hôte, pas Composer-CLI. Si vous en avez besoin hors Laravel, enregistrez-les sur votre propre Symfony Console manuellement.
+
+---
+
+## 17. Reranker sémantique de skills via SPI `EmbeddingProvider` (0.9.0)
+
+*Depuis 0.9.0 — `Memory\Embeddings\EmbeddingProvider` du SuperAgent SDK 0.9.7.*
+
+La passe sémantique optionnelle au-dessus du top-N BM25 de `SkillRanker` (introduite en 0.9.0) embarquait avant un client HTTP Ollama fait main + un adaptateur callable. 0.9.0 remplace les deux par la SPI `EmbeddingProvider` du SDK, pour que le reranker, le `SemanticSkillRouter` du SDK et tout `OnnxEmbeddingProvider` fourni par l'hôte partagent un singleton conteneur unique + un cache unique.
+
+### Chemin de moindre résistance — Ollama
+
+```dotenv
+AI_CORE_EMBEDDINGS_OLLAMA_URL=http://127.0.0.1:11434
+AI_CORE_EMBEDDINGS_OLLAMA_MODEL=nomic-embed-text
+```
+
+```bash
+ollama pull nomic-embed-text   # 768 dims, ~270 Mo
+```
+
+C'est tout. `EmbeddingProviderFactory` construit en lazy un `SuperAgent\Memory\Embeddings\OllamaEmbeddingProvider` au premier usage, et `SemanticSkillReranker` le consomme de manière transparente. Le ranking de skills commence à booster par sémantique d'intention au-dessus du match lexical BM25 — `php artisan skill:rank "重构认证模块"` préfère désormais aussi un skill dont la description dit « auth refactor » même quand aucun token chinois littéral n'apparaît.
+
+### Apportez le vôtre — instance `EmbeddingProvider`
+
+Pour ONNX, OpenAI, Cohere, cache pré-construit, ou tout chemin non-Ollama, enregistrez le provider typé directement :
+
+```php
+// app/Providers/AppServiceProvider.php
+use SuperAgent\Memory\Embeddings\OnnxEmbeddingProvider;
+
+$this->app->bind(
+    \SuperAgent\Memory\Embeddings\EmbeddingProvider::class,
+    fn () => new OnnxEmbeddingProvider('/abs/path/to/all-MiniLM-L6-v2.onnx', dimensions: 384)
+);
+```
+
+Puis pointez la factory sur le binding (ou définissez `super-ai-core.embeddings.provider` dans la config publiée à une instance). L'`OnnxEmbeddingProvider` du SDK requiert soit `ext-onnxruntime`, soit le binding userland `ankane/onnxruntime` plus un fichier modèle — voir le docblock de son constructeur pour le chemin d'erreur d'installation.
+
+### Apportez le vôtre — closure (forme legacy)
+
+Si vous avez déjà une closure embedder de SuperAICore pré-0.9.0, passez-la comme `super-ai-core.embeddings.callback`. Le `CallableEmbeddingProvider` du SDK auto-détecte si la closure prend `array $texts` (forme batch préférée) ou `string $text` (forme single-shot legacy), pour que le code hôte existant continue de fonctionner :
+
+```php
+// config/super-ai-core.php — les deux formes marchent
+return [
+    'embeddings' => [
+        // Forme batch — préférée
+        'callback'    => fn (array $texts) => $myBatchEmbedder->embedAll($texts),
+        // OU forme single-text (forme legacy VectorMemoryProvider)
+        // 'callback' => fn (string $text) => $myEmbedder->embed($text),
+        'fingerprint' => 'my-bge-large-v1.5',  // bumpez pour invalider le cache au changement de modèle
+    ],
+];
+```
+
+Le `fingerprint` est la clé d'invalidation du cache — changez-le quand vous swappez le modèle sous-jacent pour que les vecteurs cachés soient flushés proprement sans polluer les entrées non liées.
+
+### L'échec par ligne reste gracieux
+
+Quand l'embedder retourne `[]` pour un texte spécifique (flake du daemon Ollama, OOM ONNX sur une entrée), le reranker garde le score BM25 pour ce hit au lieu de planter tout l'appel. Les autres lignes obtiennent quand même le boost cosinus. Le vecteur de la query est mis en cache par `fingerprint() . sha1(query)` pour que les appels répétés avec la même query (typique en ranking batch / harnais de tests) ne ré-embeddent pas.
+
+### Partage avec le `SemanticSkillRouter` du SDK
+
+Les hôtes qui pilotent le SDK directement (sans passer par le Dispatcher de SuperAICore) peuvent récupérer la même instance depuis le conteneur pour que le reranker et le router SDK partagent un cache :
+
+```php
+use SuperAICore\Services\EmbeddingProviderFactory;
+use SuperAgent\Skills\SemanticSkillRouter;
+
+$embedder = app(EmbeddingProviderFactory::class)->make();
+if ($embedder !== null) {
+    $router = new SemanticSkillRouter(
+        skillManager: $myManager,
+        embedder: $embedder,           // même instance que le reranker
+        threshold: 0.55,
+        topK: 3,
+    );
+}
+```
+
+`SuperAgentBackend` forwarde aussi l'`EmbeddingProvider` résolu dans le bag d'options forwardées d'`Agent` (sous `embedding_provider`) pour que de futurs consommateurs SDK le récupèrent via `Agent::getOptions()` sans câblage par appel.
+
+---
+
+## 18. Drapeaux d'outils `agent_grep` + `browser` (0.9.0)
+
+*Depuis 0.9.0 — `AgentGrepTool` + `FirefoxBridgeTool` du SuperAgent SDK 0.9.7.*
+
+Deux drapeaux d'injection d'outils sur `super-ai-core.tools`. Tous deux ne se déclenchent **que** quand l'appelant n'a pas fourni de tableau `load_tools` explicite (la souveraineté de l'appelant gagne). Et tous deux ne se déclenchent **que** pour les dispatches backend SuperAgent qui pilotent réellement une boucle agentique avec outils — les appels one-shot (`max_turns=1`, sans `load_tools`) et les dispatches CLI (`claude_cli`, `codex_cli`, etc.) ne sont absolument pas affectés.
+
+### `agent_grep` — activé par défaut
+
+```dotenv
+AI_CORE_TOOLS_AGENT_GREP=true   # défaut — mettez false pour opt-out
+```
+
+Quand activé, `SuperAgentBackend` ajoute `'agent_grep'` en tête de la liste `load_tools` implicite. L'outil siège dans le `BuiltinToolRegistry::classMap` du SDK, donc `ToolLoader` le résout en lazy quand l'agent dispatche son premier appel d'outil.
+
+Ce qu'il apporte par rapport à l'outil `grep` simple :
+
+1. **Injection du symbole englobant** — chaque ligne de match est annotée avec le `class::function` (ou `function` top-level) dans laquelle elle se trouve, pour les fichiers PHP / JS / TS / Python / Go. Extracteur par défaut : regex pure-PHP — `~95%` de précision sur du code typique, sans dépendance externe.
+2. **Troncature des chunks vus dans la session** — les requêtes répétées sur le même tuple `(file, line range, sha)` au sein d'une session sont tronquées en marqueur `... (lines N–M previously shown to you in this session)`. L'état vit dans `ToolStateManager` indexé par `(file, lineRange, sha)` pour que l'isolation swarm fonctionne sans fuite du registre seen-chunk d'un agent vers un autre.
+
+Pour la précision tree-sitter (intéressant sur des codebases Rust / Ruby / Java / C++ que l'extracteur regex couvre mal), sous-classez `AgentGrepTool` et passez un `CompositeSymbolExtractor([new TreeSitterSymbolExtractor(), new RegexSymbolExtractor()])` — voir le docblock de la classe SDK à `vendor/forgeomni/superagent/src/Tools/Builtin/AgentGrepTool.php` pour le chemin d'installation. Nécessite le binaire CLI `tree-sitter` sur `$PATH` et les grammaires correspondantes ; SuperAICore ne les auto-vendor pas.
+
+Vous voulez la parité `grep` pure (par exemple pour un script qui munit la sortie ripgrep brute) ? Passez juste un `load_tools` explicite qui exclut `agent_grep` — les listes fournies par l'appelant gagnent :
+
+```php
+$dispatcher->dispatch([
+    'backend'    => 'superagent',
+    'load_tools' => ['grep', 'read_file', 'web_fetch'],   // explicite — pas d'agent_grep
+    'max_turns'  => 5,
+    // …
+]);
+```
+
+### `browser` — installation manuelle requise
+
+```dotenv
+AI_CORE_TOOLS_BROWSER=true
+SUPERAGENT_BROWSER_BRIDGE_PATH=/abs/path/to/forgeomni-bridge-launcher
+```
+
+L'outil `browser` n'est pas dans `BuiltinToolRegistry::classMap`, donc `load_tools` ne peut pas l'atteindre. `SuperAgentBackend::attachBrowserTool()` instancie `FirefoxBridgeTool` et le `Agent::addTool()` directement quand le drapeau est activé et que la classe SDK est disponible.
+
+L'outil pilote un onglet Firefox ou Chromium réel via Native Messaging — actions : `navigate`, `screenshot`, `click`, `type`, `eval`, `wait`, `close`. Le côté PHP (`FirefoxBridgeTool` + `NativeMessagingTransport` + `FirefoxBridge`) est pleinement self-contained dans le SDK ; l'hôte installe trois choses :
+
+1. **Firefox** (ou tout navigateur basé Chromium avec support WebExtension).
+2. **Forgeomni Bridge WebExtension** — `manifest.json` minimal + script de fond ~150 LoC qui ouvre `runtime.connectNative('forgeomni_bridge')` et dispatche les messages entrants vers les API `tabs.*` / `webNavigation.*`. Walkthrough dans le docblock de `vendor/forgeomni/superagent/src/Tools/Browser/FirefoxBridge.php`.
+3. **Binaire launcher Native Messaging** — n'importe quel exécutable qui pipe du JSON length-prefixé entre Firefox et le processus PHP. Le binaire Rust de jcode marche tel quel, ou écrivez un shim Node / Go de 50 lignes.
+
+Tant que le launcher n'est pas installé et que `SUPERAGENT_BROWSER_BRIDGE_PATH` n'y pointe pas, chaque action retourne une erreur explicative pour que l'agent apprenne à demander de l'aide d'installation au lieu de boucler. Activer le drapeau avant d'installer le launcher est sûr.
+
+Pour outrepasser la lookup d'env var pour un dispatch (rare), passez `launcherArgv` :
+
+```php
+$dispatcher->dispatch([
+    'backend'              => 'superagent',
+    'browser_launcher_argv' => ['/opt/bridge/launcher', '--profile=staging'],
+    // …
+]);
+```
+
+### Surface de capacités serrée
+
+`FirefoxBridgeTool` n'expose délibérément que les sept actions ci-dessus. Pas de gestion d'onglets, cookies, history, downloads, ou API extension — celles-ci élargiraient significativement le rayon d'explosion d'abus et ne sont pas nécessaires pour le workload typique « utiliser la page comme un humain ». Les hôtes qui ont besoin de plus le câblent directement via `FirefoxBridge::evalJs()` depuis un outil custom.
+
+---
+
+## 19. Boucle de captures d'écran navigateur (0.9.0)
+
+*Depuis 0.9.0.*
+
+Quand l'outil `browser` exécute `action: 'screenshot'`, `FirefoxBridgeTool::execute()` retourne un `ToolResult::success(['format' => 'png', 'base64' => $data, 'bytes' => N])`. Le contenu est encodé en JSON et stocké sur le bloc de contenu `ToolResultMessage` dans le trail de messages d'`AgentResult`.
+
+`SuperAgentBackend::persistLatestScreenshot()` parcourt ce trail post-dispatch :
+
+1. Indexer chaque bloc `tool_use` dont `toolName === 'browser'` par `toolUseId`.
+2. Pour chaque bloc `tool_result` ultérieur dont `toolUseId` matche et `isError !== true`, décoder le contenu JSON et lire `base64`.
+3. Garder le DERNIER avec succès — un long agent run peut prendre plusieurs captures et seule la plus récente est opérationnellement intéressante.
+4. L'écrire dans `BrowserScreenshotStore` indexé par le process_id du dispatch (priorité : `options['process_id']` → `external_label` → `metadata.session_id` → `session_id` → hex aléatoire).
+5. Exposer l'URL résultante sur l'envelope dispatch comme `latest_screenshot_url`.
+
+### Round-trip avec `AiProcessSource`
+
+`AiProcessSource::list()` lit `BrowserScreenshotStore::latest()` contre l'`external_label` (puis la clé composite `aiprocess.<id>`) de la ligne `ai_processes` quand elle construit chaque `ProcessEntry`. La vue `/processes` rend un badge `📷 screenshot` jaune sur les lignes qui ont une capture ; cliquer ouvre l'image inline dans le panneau latéral (le offcanvas drawer B1).
+
+Au reap (PID meurt, statut bascule à FINISHED), `AiProcessSource` appelle `BrowserScreenshotStore::purgeFor()` contre les mêmes clés pour que les captures n'accumulent pas au-delà de la durée utile du run.
+
+### Configurer le backend de stockage
+
+```dotenv
+AI_CORE_BROWSER_SHOTS_DISK=local                                # n'importe quel disk Laravel filesystem
+AI_CORE_BROWSER_SHOTS_DIR=super-ai-core/browser-screenshots     # relatif à la racine du disk
+```
+
+Conseil prod : utilisez un disk tmpfs par-pod (montez `tmpfs` à `/var/cache/super-ai-core/screenshots`, configurez un disk `local` qui pointe là), ou un disk S3 avec une lifecycle rule courte. Le défaut `local` marche sur une install Laravel mono-machine et pendant le développement.
+
+### UI custom
+
+Les hôtes qui veulent leur propre rendu de captures (carousel, history, pipeline OCR) lisent directement depuis le store :
+
+```php
+use SuperAICore\Services\BrowserScreenshotStore;
+
+$store = app(BrowserScreenshotStore::class);
+$url = $store->latest($externalLabel);   // null quand aucune frame sur disque
+```
+
+Pour des archives multi-frames (plutôt que juste la dernière), wrappez le call site pour écrire votre propre slot indexé via `store($key, $base64Png)` avec un suffixe de clé par frame (ex. `"task:42:frame:7"`).
+
+---
+
+## 20. Découpage `usage_source` — `user` vs `ambient` (0.9.0)
+
+*Depuis 0.9.0.*
+
+Le `Swarm\AmbientWorker` du SuperAgent SDK 0.9.7 fait tourner des scans memory-dedup et staleness en arrière-plan sur un tick. Son callback `tagUsage` se déclenche à chaque pass complétée avec `usage_source: 'ambient'`, mais avant 0.9.0 SuperAICore n'avait aucun moyen de bucketer ces lignes séparément sur `/usage` — elles se mélangeaient à la dépense user-facing.
+
+`Dispatcher::resolveUsageSource()` extrait maintenant la source de `options['usage_source']` ou `options['metadata']['usage_source']` et l'écrit comme clé top-level `metadata.usage_source` (défaut `'user'`). Contraint à `[a-z0-9_-]{1,32}` contre les fuites typo-en-bucket-fantôme.
+
+### Câbler l'AmbientWorker
+
+Le worker lui-même vit dans le SDK ; SuperAICore câble un callback `tagUsage` qui dispatche un appel comptable no-op pour enregistrer la dépense :
+
+```php
+// app/Console/Commands/AmbientTickCommand.php
+use SuperAgent\Memory\Palace\PalaceStorage;
+use SuperAgent\Memory\Palace\MemoryDeduplicator;
+use SuperAgent\Swarm\AmbientWorker;
+use SuperAICore\Services\Dispatcher;
+
+class AmbientTickCommand extends Command
+{
+    protected $signature = 'super-ai-core:ambient-tick';
+
+    public function handle(PalaceStorage $palace, MemoryDeduplicator $dedup, Dispatcher $dispatcher): int
+    {
+        $worker = new AmbientWorker(
+            storage: $palace,
+            deduplicator: $dedup,
+            config: [
+                'dedup_interval_seconds'       => 600,   // 10m
+                'stale_check_interval_seconds' => 3600,  // 1h
+                'pass_budget_seconds'          => 5,
+            ],
+            tagUsage: function (string $passName, array $stats) use ($dispatcher) {
+                // Enregistrer une ligne synthétique étiquetée 'ambient' pour
+                // que /usage la groupe. Pas de prompt, pas d'appel modèle —
+                // on veut juste la ligne metadata. La plupart des hôtes
+                // écrivent déjà leurs propres lignes ambient directement
+                // via UsageRecorder ; le chemin dispatch ici est illustratif.
+            },
+        );
+
+        $report = $worker->tick();
+        $this->table(['pass', 'ran', 'stats'], collect($report)->map(fn ($r, $p) => [
+            $p,
+            $r['ran'] ? 'yes' : '—',
+            json_encode($r['stats'] ?? null),
+        ])->all());
+        return self::SUCCESS;
+    }
+}
+```
+
+```php
+// app/Console/Kernel.php
+$schedule->command('super-ai-core:ambient-tick')
+         ->everyFiveMinutes()
+         ->withoutOverlapping();
+```
+
+Les hôtes qui pilotent des dispatches mode-ambient via `Dispatcher` (par exemple re-résumé en arrière-plan de longs drawers de mémoire) passent juste la source à chaque appel :
+
+```php
+$dispatcher->dispatch([
+    'prompt'   => 'Summarise drawers above 20K tokens.',
+    'backend'  => 'superagent',
+    'metadata' => ['usage_source' => 'ambient'],
+    // …
+]);
+```
+
+### Lire le découpage sur `/usage`
+
+La carte « By Source » du tableau de bord siège à côté de By Task Type / By Model / By Backend. L'en-tête montre un badge « N ambient · $X » quand de l'activité ambient s'est produite, pour que les opérateurs voient d'un coup d'œil combien de dépense de fond porte la fenêtre courante. La mise en page se reflow à `col-lg-3` sur les viewports larges pour que les cartes existantes restent lisibles.
+
+Le `whereJsonContains` / la lookup de chemin JSON ne sont pas nécessaires — l'écrivain Dispatcher tire `usage_source` à la clé metadata top-level sur chaque ligne, donc le contrôleur groupe en PHP via les méthodes Eloquent collection. Marche sur MySQL 5.7, PostgreSQL 9 et SQLite sans ops JSON spécifiques au driver.
+
+### Buckets de source custom
+
+L'allowlist accepte n'importe quelle chaîne `[a-z0-9_-]{1,32}`. Les sources définies par l'hôte (`'eval'`, `'audit'`, `'replay'`) marchent direct :
+
+```php
+$dispatcher->dispatch([
+    'metadata' => ['usage_source' => 'eval'],   // apparaît comme son propre bucket sur /usage
+    // …
+]);
+```
+
+Tout ce qui sort de l'allowlist (majuscules, caractères spéciaux, > 32 chars) est normalisé — l'écrivain applique `mb_strtolower(preg_replace('/[^a-z0-9_-]+/i', '', $c))` puis tronque à 32 chars. Les lignes avec des valeurs non parsables retombent à `'user'`.
+
+---
+
+## 21. Reprise de session cross-harness (0.9.0)
+
+*Depuis 0.9.0 — famille `Conversation\HarnessImporter` du SuperAgent SDK 0.9.7.*
+
+La page /processes gagne une liste déroulante « Resume from… » quand `super-ai-core.resume.enabled` est activé. Les opérateurs choisissent une session Claude Code (`~/.claude/projects/<hash>/<uuid>.jsonl`) ou Codex (`~/.codex/sessions/**/*.jsonl`) depuis le picker et soit inspectent la transcription inline, soit laissent l'hôte la re-dispatcher dans un backend.
+
+### Activer la fonctionnalité
+
+Désactivé par défaut — les importeurs voient l'historique de session de chaque opérateur sur les machines partagées :
+
+```dotenv
+AI_CORE_RESUME_ENABLED=true
+```
+
+Cela démasque la liste déroulante sur `/processes` et ouvre trois endpoints sous `/super-ai-core/resume` :
+
+- `GET /resume` — lister les harnesses disponibles sur cette machine
+- `GET /resume/{harness}` — lister les sessions, plus récentes en premier (paramètre query `limit`, défaut 30, max 200)
+- `POST /resume/{harness}/load` — charger une session, retourne transcription + payload hôte optionnel
+
+### Le callback `on_load` — hook de re-dispatch hôte
+
+Sans callback, l'endpoint `/load` retourne juste la transcription parsée en JSON. Les hôtes qui veulent un « resume into chat with provider X » en un clic câblent un callable qui retourne `{redirect: '<url>'}` :
+
+```php
+// config/super-ai-core.php
+use SuperAgent\Messages\Message;
+
+return [
+    'resume' => [
+        'enabled' => env('AI_CORE_RESUME_ENABLED', false),
+        'on_load' => function (string $harness, string $sessionId, array $messages): array {
+            // $messages est list<Message> — alimentez direct Agent::loadMessages($messages)
+            // ou passez par Conversation\Transcoder::encode() pour une famille de wire différente.
+            $session = ChatSession::createFromHarnessImport($harness, $sessionId, $messages);
+            return [
+                'redirect' => route('chat.show', $session),
+                'session_id' => $session->id,
+            ];
+        },
+    ],
+];
+```
+
+Le modal frontend vérifie `host_payload.redirect` — quand présent, il navigue là plutôt que de rendre la transcription inline.
+
+### Accès programmatique depuis un contrôleur
+
+Les hôtes qui veulent leur propre UI « Resume » résolvent le resolver et construisent le flow qu'ils veulent :
+
+```php
+use SuperAICore\Services\HarnessSessionResolver;
+
+class MyResumeController extends Controller
+{
+    public function __construct(protected HarnessSessionResolver $resolver) {}
+
+    public function pickAndResume(Request $request)
+    {
+        $harness = $request->input('harness', 'claude');
+        if (!in_array($harness, $this->resolver->availableHarnesses(), true)) {
+            return back()->withErrors(['harness' => 'Unsupported harness']);
+        }
+
+        $sessions = $this->resolver->listSessions($harness, limit: 50);
+        // → [['id' => '8e2c-…', 'project' => 'shopify-autopilot',
+        //     'started_at' => '2026-04-30T…', 'message_count' => 47,
+        //     'first_user_message' => 'Refactor the checkout flow…'], …]
+
+        // Une fois que l'utilisateur en a choisi une :
+        $payload = $this->resolver->loadTranscript($harness, $sessionId);
+        // → ['harness' => 'claude', 'session' => '8e2c-…',
+        //    'transcript' => [['role' => 'user', 'content' => '…'], …],
+        //    'host_payload' => /* ce que votre on_load a retourné */]
+
+        return view('my.resume.review', compact('payload'));
+    }
+}
+```
+
+### Continuation cross-wire via le Transcoder SDK
+
+Les importeurs retournent du SuperAgent `Message[]` dans la représentation interne du SDK. Pour reprendre sur une famille de provider différente (commencer en Claude, continuer en Kimi), passez les messages par le `Conversation\Transcoder` 0.9.5 du SDK :
+
+```php
+use SuperAgent\Agent;
+use SuperAgent\Conversation\Transcoder;
+
+$messages = $this->resolver->loadTranscript('claude', $sessionId)['transcript'];
+// Hydratez le tableau transcription en instances Message si vous l'avez sérialisé.
+// (HarnessImporter::load() retourne directement des instances Message — utilisez
+//  ce chemin quand vous re-dispatchez depuis un processus hôte qui n'a pas
+//  traversé une frontière JSON.)
+
+$agent = new Agent([
+    'provider' => /* LLMProvider Kimi construit par l'hôte */,
+    'max_turns' => 10,
+]);
+$agent->loadMessages($messages);   // Le Transcoder gère la conversion de wire-shape
+$agent->run('Continuez là où la session précédente s\'est arrêtée — écrivez les tests unitaires.');
+```
+
+### Ce qui est lossy à travers les harnesses
+
+Les importeurs sont délibérément tolérants — les lignes malformées / types d'event inconnus sont skipped silencieusement plutôt que de rejeter toute la session. Les vrais session logs des vrais harnesses sont sales (drift de schéma Claude Code 1.x vs 2.x, changements de format de rollout Codex CLI). Le Transcoder strip les artefacts que le wire shape cible ne peut pas porter — les blocs thinking signés Anthropic ne survivent pas un saut vers OpenAI, et les items reasoning chiffrés OpenAI Responses ne survivent pas un saut vers Anthropic. Les ids tool-call round-trip correctement à travers toutes les familles depuis 0.9.5.
+
+### Ce qui n'est pas livré
+
+- **Auto-découverte des fichiers de session jcode / pi / OpenCode** — le set d'importeurs 0.9.7 du SDK couvre Claude Code et Codex. Les hôtes qui ont besoin d'autres harnesses implémentent `HarnessImporter` directement et droppent un binding service-provider pour enregistrer l'implémentation.
+- **UI de re-dispatch pour l'historique `ai_processes` propre à SuperAICore** — `/processes` est live-only par contrat depuis 0.6.7 (il montre les PIDs en cours, pas les lignes finies). La liste déroulante Resume sert au pickup de session cross-harness, pas à rejouer les runs SuperAICore antérieurs. Les hôtes qui veulent « refaire cette tâche finie avec un provider différent » construisent leur propre UI au-dessus de l'audit log `ai_processes`.
 
 ---
 
