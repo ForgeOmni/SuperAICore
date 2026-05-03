@@ -18,6 +18,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Moteurs d'exécution + types de provider](#moteurs-dexécution--types-de-provider)
   - [Exécuteur de skills & sous-agents](#exécuteur-de-skills--sous-agents)
   - [Moteur de skills — télémétrie, ranking, évolution](#moteur-de-skills--télémétrie-ranking-évolution)
+  - [Vague d'outils jcode (0.9.0 / SDK 0.9.7)](#vague-doutils-jcode-090--sdk-097)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -89,6 +90,26 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague d'outils jcode (0.9.0 / SDK 0.9.7)
+
+Cinq primitives inspirées de jcode livrées dans SuperAgent SDK 0.9.7 et
+exposées par SuperAICore 0.9.0. Chacune est opt-in via env flag et dégrade
+en no-op quand son câblage hôte est absent — comportement pré-0.9.7
+strictement préservé sauf si vous activez le drapeau correspondant. Seul
+`agent_grep` est **activé par défaut** (lecture seule, sans dépendance
+externe). Contrainte Composer remontée à `^0.9.7`.
+
+- **Outil `agent_grep` — activé par défaut** *(0.9.0)* — quand l'appelant ne fournit pas de `load_tools`, `SuperAgentBackend` ajoute automatiquement `'agent_grep'` à la liste de chargement (`AI_CORE_TOOLS_AGENT_GREP=true` par défaut). L'outil injecte le contexte du symbole englobant (PHP/JS/TS/Py/Go) dans chaque résultat de grep et tronque les chunks que l'agent a déjà vus dans la session. Sur-ensemble strict de `grep` ; ne se déclenche que sur les dispatches qui entrent réellement dans une boucle agentique avec outils. Mettez `AI_CORE_TOOLS_AGENT_GREP=false` pour un comportement octet-à-octet identique à 0.9.7.
+- **Câblage de l'outil `browser`** *(0.9.0)* — `AI_CORE_TOOLS_BROWSER=true` fait que `SuperAgentBackend` instancie `FirefoxBridgeTool` du SDK 0.9.7 (pilote Firefox / Chromium via Native Messaging) et le `Agent::addTool()`. Nécessite que `SUPERAGENT_BROWSER_BRIDGE_PATH` pointe sur le launcher ; sinon chaque action renvoie une erreur explicative pour que l'agent arrête de boucler.
+- **Boucle `BrowserScreenshotStore`** *(0.9.0)* — quand l'outil `browser` émet un PNG base64, `SuperAgentBackend` l'écrit dans `BrowserScreenshotStore` indexé par `process_id` / `external_label` / `metadata.session_id`, et expose l'URL sur l'envelope dispatch comme `latest_screenshot_url`. `AiProcessSource` lit `latest()` contre l'`external_label` de la ligne (puis l'id composite) en construisant `ProcessEntry`, et `purgeFor()` ces clés au reap. Boucle bouclée sans glue côté hôte. Disque + répertoire configurables via `super-ai-core.browser_screenshots`.
+- **`SemanticSkillReranker` via SPI `EmbeddingProvider`** *(0.9.0)* — la passe sémantique optionnelle au-dessus du top-N BM25 de `SkillRanker` résout maintenant un `EmbeddingProvider` du SDK 0.9.7 via `EmbeddingProviderFactory` (`super-ai-core.embeddings.{provider,callback,ollama_url}`). Le reranker, le `SemanticSkillRouter` du SDK et tout `OnnxEmbeddingProvider` fourni par l'hôte partagent un singleton conteneur unique + un cache unique. Un échec par ligne (vecteur `[]`) garde le score BM25 pour ce hit au lieu de planter tout l'appel. Retombe sur l'ordre BM25 quand aucun embedder n'est configuré.
+- **Découpage `usage_source` pour l'attribution des coûts** *(0.9.0)* — `Dispatcher::resolveUsageSource()` promeut `options['usage_source']` / `options['metadata']['usage_source']` en clé top-level `metadata.usage_source` (défaut `'user'`). `/usage` gagne une carte « By Source » avec un badge « N ambient · $X » pour que les ticks de dédoublonnage / staleness étiquetés par l'`AmbientWorker` de SuperAgent soient visibles d'un coup d'œil sans réinstrumenter le code de coûts hôte.
+- **Reprise de session cross-harness** *(0.9.0)* — `HarnessSessionResolver` enveloppe la famille `Conversation\HarnessImporter` du SDK 0.9.7 (`ClaudeCodeImporter` lit `~/.claude/projects/<hash>/<uuid>.jsonl`, `CodexImporter` lit `~/.codex/sessions/**/*.jsonl`). `/processes` gagne une liste déroulante « Resume from… » + modal de transcription gardé par `super-ai-core.resume.enabled`. L'hôte câble `super-ai-core.resume.on_load` (callable) pour réellement re-dispatcher dans un backend ; sinon le modal montre la transcription inline pour inspection.
+
+Recettes complètes (câblage Ollama, mise en place launcher browser, boucle
+tick AmbientWorker, callback de reprise harness) : [docs/advanced-usage.fr.md
+§17–§21](docs/advanced-usage.fr.md).
 
 ### Installateur CLI & santé
 
@@ -379,7 +400,7 @@ Tous les repositories sont des interfaces. Le service provider lie automatiqueme
 
 ## Usage avancé
 
-- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6).
+- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), et la **vague jcode 0.9.0** — SPI `EmbeddingProvider`, drapeaux d'outils `agent_grep` / `browser`, boucle `BrowserScreenshotStore`, découpage des coûts ambient, reprise de session cross-harness.
 - **[Démarrage Task runner](docs/task-runner-quickstart.md)** — référence d'options complète de `TaskRunner`.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, formats de stream par backend, `onChunk`.
 - **[Protocole spawn plan](docs/spawn-plan-protocol.md)** — émulation agent codex/gemini.

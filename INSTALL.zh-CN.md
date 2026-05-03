@@ -602,6 +602,76 @@ $response = $backend->streamChat($prompt, function (string $chunk) {
 
 六个 artisan 命令（`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`）都通过 `SuperAICoreServiceProvider::boot()` 注册。**没有**挂到独立的 `bin/superaicore` 控制台 —— 从 Laravel 宿主用 `php artisan` 调用即可。`SkillRanker` 的集成模式（宿主侧 skill 选择器 UI、加权检索、感知遥测的 fallback 链）参见 `docs/advanced-usage.zh-CN.md` §16。
 
+**0.9.0 —— 不需要 migration;SDK 约束升至 `^0.9.7`。** 6 项基于 SuperAgent SDK 0.9.7 的 jcode 启发增量集成。全部按需通过 env 开关激活,关闭时行为与 0.9.7 之前完全一致 —— 仅 `agent_grep` **默认开启**(只读、无外部依赖)。
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+# 0.9.0 没有 schema 变更,无需 php artisan migrate
+```
+
+新增 env 开关(全部可选,除非另注明):
+
+```dotenv
+# ─── 内置 SuperAgent 工具(0.9.7) ───
+# jcode 风格 `agent_grep` —— 包含符号上下文 + 会话内 chunk 截断。
+# 默认开启,因为它是只读且只在真正进入工具循环的 dispatch 上生效。
+# 设为 false 可恢复 0.9.7 之前的行为。
+AI_CORE_TOOLS_AGENT_GREP=true
+
+# SDK 0.9.7 FirefoxBridgeTool(`browser`) —— 通过 Native Messaging 驱动
+# Firefox / Chromium。默认关闭;装好 launcher 后再 true。
+AI_CORE_TOOLS_BROWSER=false
+# WebExtension 期待的 launcher 二进制路径。launcher 缺失时工具自身返回
+# 解释性错误,所以提前打开 AI_CORE_TOOLS_BROWSER=true 也不会让循环崩。
+SUPERAGENT_BROWSER_BRIDGE_PATH=/abs/path/to/forgeomni-bridge-launcher
+
+# ─── 浏览器截图存储(0.9.7) ───
+# 支撑 ProcessEntry::$latest_screenshot_url。SuperAgentBackend 写入
+# `browser` 工具返回的每张 base64 PNG;AiProcessSource 在 reap 时清理。
+AI_CORE_BROWSER_SHOTS_DISK=local
+AI_CORE_BROWSER_SHOTS_DIR=super-ai-core/browser-screenshots
+
+# ─── Embedding(SemanticSkillReranker + SDK SemanticSkillRouter 共用) ───
+# 可选 Ollama daemon。未设置时 reranker 退化到 BM25 排序 —— 没接入的
+# host 行为不变。
+AI_CORE_EMBEDDINGS_OLLAMA_URL=http://127.0.0.1:11434
+AI_CORE_EMBEDDINGS_OLLAMA_MODEL=nomic-embed-text
+AI_CORE_EMBEDDINGS_TIMEOUT_MS=10000
+
+# ─── 跨 harness 会话恢复(0.9.7) ───
+# 默认关闭 —— importer 在共享机器上能看到所有 operator 的
+# ~/.claude / ~/.codex 历史,所以默认 opt-in。
+AI_CORE_RESUME_ENABLED=false
+```
+
+升级时值得复核的 6 件事:
+
+1. **`agent_grep` 自动加进每个 SuperAgent 工具循环 dispatch。** 工具在 SDK 的 `BuiltinToolRegistry::classMap` 里,`load_tools` 经 `ToolLoader` 解析 —— 只在真正跑工具的 dispatch 上生效(即 `max_turns > 1` 或显式给了 `load_tools` 数组)。一次性调用和 CLI 后端的 dispatch 完全不受影响。如果你有断言确切工具列表的测试,设 `AI_CORE_TOOLS_AGENT_GREP=false`。
+
+2. **`browser` 工具需手动安装。** SDK 自带 `FirefoxBridgeTool`,但 WebExtension 与 launcher 二进制要 host 自己装。安装步骤见 SDK 类 docblock:`vendor/forgeomni/superagent/src/Tools/Browser/FirefoxBridge.php`。launcher 装好且 `SUPERAGENT_BROWSER_BRIDGE_PATH` 配好之前,工具返回解释性错误避免 agent 死循环 —— 提前打开 flag 是安全的。
+
+3. **截图 round-trip 通过 `external_label` 联动。** `SuperAgentBackend::resolveScreenshotKey()` 与 `AiProcessSource::screenshotKeys()` 都优先用 `external_label`,然后回退到 `aiprocess.<id>` 复合 key。Host 在 `Dispatcher::dispatch()` 上传 `external_label`(0.6.6 起的标准约定)就能自动 round-trip。没传的会按随机 key 存,Process Monitor 显示不出来 —— 在 dispatch 里加上 `external_label` 即可对齐。
+
+4. **`SemanticSkillReranker` 现在通过 SDK 解析。** 0.9.0 之前手写的 Ollama HTTP 客户端和 callback 适配代码都删了 —— reranker 从 `EmbeddingProviderFactory` 构造的容器单例里取 SuperAgent SDK 0.9.7 的 `EmbeddingProvider`。三种解析路径:显式 `super-ai-core.embeddings.provider`(host 自带实现)、`super-ai-core.embeddings.callback`(自动包成 `CallableEmbeddingProvider`)、`super-ai-core.embeddings.ollama_url`(`OllamaEmbeddingProvider`)。都没设时 reranker 是干净 no-op —— 契约不变。
+
+5. **`/usage` 多了 "By Source" 卡片。** `Dispatcher::resolveUsageSource()` 写入 `metadata.usage_source`(默认 `'user'`)。SuperAgent 的 `AmbientWorker` 通过 `tagUsage` 回调把后台 tick 标成 `'ambient'` —— 接好 worker,这些行就出现在新卡片里,不需要重写 host 成本统计。宽屏布局自动切到 `col-lg-3`,原有的 By Task Type / By Model / By Backend 卡片也仍然清楚。
+
+6. **`/processes` Resume 下拉默认关闭。** `AI_CORE_RESUME_ENABLED=false` 时下拉隐藏、controller 接口返回 403。仅在"暴露所有 operator 的 `~/.claude` / `~/.codex` 历史可接受"的机器上设 `true`。要让 host 真正"恢复进 backend",而不只是显示文字记录,把 `super-ai-core.resume.on_load` 设为返回 `{redirect: '<url>'}` 的 callable:
+
+    ```php
+    // config/super-ai-core.php
+    'resume' => [
+        'enabled' => env('AI_CORE_RESUME_ENABLED', true),
+        'on_load' => function (string $harness, string $sessionId, array $messages) {
+            // $messages 是 list<\SuperAgent\Messages\Message> —— 投喂给你的 runner
+            $task = MyChatSession::createFromHarnessImport($harness, $sessionId, $messages);
+            return ['redirect' => route('chat.show', $task)];
+        },
+    ],
+    ```
+
+完整菜谱(Ollama embedder 接线、browser launcher 准备、AmbientWorker tick 循环、harness 恢复回调模式)见 [docs/advanced-usage.zh-CN.md §17–§21](docs/advanced-usage.zh-CN.md)。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

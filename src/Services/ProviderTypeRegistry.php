@@ -246,6 +246,23 @@ class ProviderTypeRegistry
                 'sdk_provider'     => 'lmstudio',
             ],
 
+            // 0.9.6 — first-class DeepSeek provider (V4-Pro / V4-Flash, both
+            // 1M context). Uses the SDK's `DeepSeekProvider` which is an
+            // OpenAI-wire `ChatCompletionsProvider` subclass; the dedicated
+            // env var keeps it independent from the host's OPENAI_API_KEY
+            // even when both providers are configured side by side. The
+            // Anthropic-wire endpoint at https://api.deepseek.com/anthropic
+            // is reached through a regular `anthropic-proxy` row — the SDK's
+            // AnthropicProvider already accepts a custom base_url.
+            AiProvider::TYPE_DEEPSEEK => [
+                'icon'             => 'bi-search-heart',
+                'fields'           => ['api_key'],
+                'default_backend'  => AiProvider::BACKEND_SUPERAGENT,
+                'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT],
+                'env_key'          => 'DEEPSEEK_API_KEY',
+                'sdk_provider'     => 'deepseek',
+            ],
+
             AiProvider::TYPE_KIRO_API => [
                 'icon'             => 'bi-magic',
                 'fields'           => ['api_key'],

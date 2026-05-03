@@ -27,6 +27,10 @@ class UsageController extends Controller
         $filtersApplied = $request->boolean('filters_applied');
         $hideEmpty = $filtersApplied ? $request->boolean('hide_empty') : true;
         $hideTests = $filtersApplied ? $request->boolean('hide_tests') : true;
+        // Defaults to off so /usage still shows full traffic on first visit;
+        // toggling it on reveals only rows the dispatcher flagged with a
+        // cache_warning (jcode-style cache-cold heuristic, see Dispatcher).
+        $coldOnly = $filtersApplied ? $request->boolean('cold_only') : false;
 
         $from = Carbon::now()->subDays($days)->startOfDay();
 
@@ -44,8 +48,28 @@ class UsageController extends Controller
                 $qq->whereNull('task_type')->orWhere('task_type', '!=', 'test_connection');
             });
         }
+        if ($coldOnly) {
+            $q->whereNotNull('metadata->cache_warning');
+        }
 
         $logs = $q->orderByDesc('created_at')->limit(500)->get();
+
+        $coldCount = $logs->filter(fn ($r) => !empty(($r->metadata ?? [])['cache_warning']))->count();
+
+        // 0.9.7 — usage_source split (user / ambient / host-defined).
+        // Reads `metadata.usage_source` (Dispatcher writes 'user' as the
+        // default); rows older than 0.9.7 lack the key and bucket as
+        // 'user' for backwards compatibility on the dashboard.
+        $bySource = $logs->groupBy(
+            fn ($r) => (string) (($r->metadata ?? [])['usage_source'] ?? 'user')
+        )->map(fn ($g) => [
+            'runs'        => $g->count(),
+            'cost'        => (float) $g->sum('cost_usd'),
+            'shadow_cost' => (float) $g->sum('shadow_cost_usd'),
+        ])->sortByDesc(fn ($r) => max($r['cost'], $r['shadow_cost']));
+
+        $ambientRuns = (int) ($bySource['ambient']['runs'] ?? 0);
+        $ambientCost = (float) ($bySource['ambient']['cost'] ?? 0);
 
         $summary = [
             'total_runs'          => $logs->count(),
@@ -53,6 +77,9 @@ class UsageController extends Controller
             'total_shadow_cost'   => (float) $logs->sum('shadow_cost_usd'),
             'total_input_tokens'  => (int) $logs->sum('input_tokens'),
             'total_output_tokens' => (int) $logs->sum('output_tokens'),
+            'total_cache_cold'    => $coldCount,
+            'total_ambient_runs'  => $ambientRuns,
+            'total_ambient_cost'  => $ambientCost,
         ];
 
         $byModel = $logs->groupBy('model')->map(fn ($g) => [
@@ -94,8 +121,8 @@ class UsageController extends Controller
             : collect();
 
         return view('super-ai-core::usage.index', compact(
-            'logs', 'summary', 'byModel', 'byBackend', 'byTaskType',
-            'filters', 'days', 'hideEmpty', 'hideTests',
+            'logs', 'summary', 'byModel', 'byBackend', 'byTaskType', 'bySource',
+            'filters', 'days', 'hideEmpty', 'hideTests', 'coldOnly',
             'allModels', 'allTaskTypes', 'allBackends',
             'providers', 'services'
         ));

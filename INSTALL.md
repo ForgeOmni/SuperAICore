@@ -607,6 +607,81 @@ The fix to the namespace typo introduced in 0.8.1 (`makeProvider()` was returnin
 
 The six artisan commands (`skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`) are all registered through `SuperAICoreServiceProvider::boot()`. They are **not** mounted on the standalone `bin/superaicore` console — call them via `php artisan` from your Laravel host. See `docs/advanced-usage.md` §16 for `SkillRanker` integration patterns (host-side skill-picker UI, weighted retrieval, telemetry-aware fallback chains).
 
+**0.9.0 — no migration; SDK pin moves to `^0.9.7`.** Six additive integrations of jcode-borrowed primitives shipped in SuperAgent SDK 0.9.7. All opt-in via env flag and degrade to no-op when their host wiring is absent — pre-0.9.7 behaviour preserved unless you flip the corresponding switch. Only `agent_grep` is **on by default** (read-only, no external deps).
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+# no `php artisan migrate` needed — no schema change in 0.9.0
+```
+
+New env knobs (all optional except where noted):
+
+```dotenv
+# ─── Builtin SuperAgent tools (0.9.7) ───
+# jcode-style `agent_grep` — enclosing-symbol context + per-session
+# seen-chunk truncation. Default ON because it's read-only and only
+# fires on dispatches that actually drive an agentic loop with tools.
+# Set to false for byte-identical pre-0.9.7 behaviour.
+AI_CORE_TOOLS_AGENT_GREP=true
+
+# SDK 0.9.7 FirefoxBridgeTool (`browser`) — drives a real Firefox /
+# Chromium tab via Native Messaging. Default off; flip to true when
+# the launcher is installed.
+AI_CORE_TOOLS_BROWSER=false
+# Path to the launcher binary expected by the WebExtension. The tool
+# itself returns an explanatory error when this isn't set, so you can
+# leave AI_CORE_TOOLS_BROWSER=true without crashing the loop.
+SUPERAGENT_BROWSER_BRIDGE_PATH=/abs/path/to/forgeomni-bridge-launcher
+
+# ─── Browser-screenshot store (0.9.7) ───
+# Backs ProcessEntry::$latest_screenshot_url. SuperAgentBackend writes
+# every base64 PNG the `browser` tool returns; AiProcessSource purges
+# on reap. Defaults are sensible.
+AI_CORE_BROWSER_SHOTS_DISK=local
+AI_CORE_BROWSER_SHOTS_DIR=super-ai-core/browser-screenshots
+
+# ─── Embeddings (used by SemanticSkillReranker + SDK SemanticSkillRouter) ───
+# Optional Ollama daemon for the semantic skill reranker. When unset
+# the reranker degrades to BM25 ordering — no behaviour change for
+# hosts that haven't opted in.
+AI_CORE_EMBEDDINGS_OLLAMA_URL=http://127.0.0.1:11434
+AI_CORE_EMBEDDINGS_OLLAMA_MODEL=nomic-embed-text
+AI_CORE_EMBEDDINGS_TIMEOUT_MS=10000
+
+# ─── Cross-harness session resume (0.9.7) ───
+# Off by default — the importers can see every operator's history on
+# shared machines (~/.claude, ~/.codex), so opt-in only.
+AI_CORE_RESUME_ENABLED=false
+```
+
+Six things worth reviewing on upgrade:
+
+1. **`agent_grep` quietly enriches every SuperAgent tool-loop dispatch.** The tool is in the SDK's `BuiltinToolRegistry::classMap`, so `load_tools` resolves it through `ToolLoader` — only fires when the dispatch actually runs tools (i.e. `max_turns > 1` or an explicit `load_tools` array). One-shot calls and CLI-backed dispatches are completely unaffected. Set `AI_CORE_TOOLS_AGENT_GREP=false` if your tests assert on the exact tool list.
+
+2. **`browser` tool is a manual install.** The SDK ships `FirefoxBridgeTool` but not the WebExtension or the launcher binary. Setup walkthrough lives in the SDK class docblock at `vendor/forgeomni/superagent/src/Tools/Browser/FirefoxBridge.php`. Until the launcher is installed and `SUPERAGENT_BROWSER_BRIDGE_PATH` points at it, the tool returns explanatory errors so the agent stops looping — safe to enable the flag ahead of installing the launcher.
+
+3. **Browser screenshots round-trip via `external_label`.** `SuperAgentBackend::resolveScreenshotKey()` and `AiProcessSource::screenshotKeys()` both prefer `external_label` first, then the composite `aiprocess.<id>` key. Hosts that already pass `external_label` on `Dispatcher::dispatch()` (the standard convention since 0.6.6) get the round-trip for free. Hosts that don't will see screenshots stored under random keys — set `external_label` on dispatch to align them with the Process Monitor row.
+
+4. **`SemanticSkillReranker` now resolves through the SDK.** The pre-0.9.0 hand-rolled Ollama HTTP client and callback adapter are gone — the reranker pulls a SuperAgent SDK 0.9.7 `EmbeddingProvider` from the container singleton built by `EmbeddingProviderFactory`. Three resolution paths: explicit `super-ai-core.embeddings.provider` (host wires its own), `super-ai-core.embeddings.callback` (auto-wraps as `CallableEmbeddingProvider`), or `super-ai-core.embeddings.ollama_url` (`OllamaEmbeddingProvider`). When none is set, the reranker is a clean no-op — same contract as before.
+
+5. **`/usage` gains a "By Source" card.** `Dispatcher::resolveUsageSource()` writes `metadata.usage_source` (default `'user'`). SuperAgent's `AmbientWorker` tags background ticks with `'ambient'` via its `tagUsage` callback — when you wire the worker, those rows show up in the new dashboard card without re-instrumenting host cost code. Layout reflows to `col-lg-3` on wide viewports so existing By Task Type / By Model / By Backend cards stay legible.
+
+6. **`/processes` Resume dropdown is opt-in.** `AI_CORE_RESUME_ENABLED=false` keeps the dropdown hidden and the controller endpoints return 403. Set to `true` only on machines where exposing every operator's `~/.claude` / `~/.codex` history to the dashboard is acceptable. To wire host-side re-dispatch (rather than just inline transcript display), set `super-ai-core.resume.on_load` to a callable returning `{redirect: '<url>'}`:
+
+    ```php
+    // config/super-ai-core.php
+    'resume' => [
+        'enabled' => env('AI_CORE_RESUME_ENABLED', true),
+        'on_load' => function (string $harness, string $sessionId, array $messages) {
+            // $messages is list<\SuperAgent\Messages\Message> — feed into your runner.
+            $task = MyChatSession::createFromHarnessImport($harness, $sessionId, $messages);
+            return ['redirect' => route('chat.show', $task)];
+        },
+    ],
+    ```
+
+See [docs/advanced-usage.md §17–§21](docs/advanced-usage.md) for full recipes — Ollama embedder wiring, browser launcher setup, AmbientWorker tick loop, harness resume callback patterns.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

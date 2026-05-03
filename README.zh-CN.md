@@ -18,6 +18,7 @@
   - [执行引擎 + provider 类型](#执行引擎--provider-类型)
   - [Skill 与 sub-agent 运行器](#skill-与-sub-agent-运行器)
   - [Skill engine —— 遥测 / 排序 / 演化](#skill-engine--遥测--排序--演化)
+  - [jcode 配套工具波次（0.9.0 / SDK 0.9.7）](#jcode-配套工具波次090--sdk-097)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -89,6 +90,23 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### jcode 配套工具波次（0.9.0 / SDK 0.9.7）
+
+五项 jcode 启发的能力随 SuperAgent SDK 0.9.7 上线,SuperAICore 0.9.0
+配套接入。**全部按需通过 env 开关激活**,关闭时行为与 0.9.7 之前完全一致 ——
+仅 `agent_grep` 默认开启(只读、无外部依赖)。Composer 约束升至 `^0.9.7`。
+
+- **`agent_grep` 工具 —— 默认开启** *(0.9.0)* —— 调用方未显式传 `load_tools` 时,`SuperAgentBackend` 自动把 `'agent_grep'` 加入加载列表(默认 `AI_CORE_TOOLS_AGENT_GREP=true`)。该工具为每条 grep 命中注入所在符号上下文(PHP/JS/TS/Py/Go),并截断本会话内已经返回过的 chunk。是 `grep` 的严格超集;只在真正进入工具循环的 dispatch 上生效。设 `AI_CORE_TOOLS_AGENT_GREP=false` 可恢复 0.9.7 之前的行为。
+- **`browser` 工具接入** *(0.9.0)* —— `AI_CORE_TOOLS_BROWSER=true` 时,`SuperAgentBackend` 实例化 SDK 0.9.7 的 `FirefoxBridgeTool`(通过 Native Messaging 驱动 Firefox / Chromium)并经 `Agent::addTool()` 注册。需 `SUPERAGENT_BROWSER_BRIDGE_PATH` 指向启动器,否则每个动作都返回解释性错误,避免 agent 死循环。
+- **`BrowserScreenshotStore` 闭环** *(0.9.0)* —— 当 `browser` 工具产出 base64 PNG 时,`SuperAgentBackend` 按 `process_id` / `external_label` / `metadata.session_id` 优先级写入 `BrowserScreenshotStore`,并在 dispatch envelope 上挂 `latest_screenshot_url`。`AiProcessSource` 构造 `ProcessEntry` 时按 `external_label`(再回退到复合 id)读 `latest()`,reap 时调 `purgeFor()`。无需 host 端胶水代码即可端到端联通。Disk + 目录可经 `super-ai-core.browser_screenshots` 配置。
+- **`SemanticSkillReranker` 改用 `EmbeddingProvider` SPI** *(0.9.0)* —— 跑在 `SkillRanker` BM25 top-N 之后的可选语义重排,现在通过 `EmbeddingProviderFactory` 解析 SDK 0.9.7 的 `EmbeddingProvider`(`super-ai-core.embeddings.{provider,callback,ollama_url}`)。Reranker、SDK 自带的 `SemanticSkillRouter`、host 自带的 `OnnxEmbeddingProvider` 共用一个容器单例 + 一份缓存。某条向量返回空(`[]`)时保留该条 BM25 得分,而不是整批回退。无 embedder 时降级到纯 BM25 排序。
+- **`usage_source` 成本归属切分** *(0.9.0)* —— `Dispatcher::resolveUsageSource()` 把 `options['usage_source']` / `options['metadata']['usage_source']` 拍平到 `metadata.usage_source` 顶层(默认 `'user'`)。`/usage` 增加"By Source"卡片 + "N ambient · $X" 徽章,这样 SuperAgent `AmbientWorker` 在去重 / 失效扫描时打的标签即可在仪表盘显示,host 不需要重写成本统计代码。
+- **跨 harness 会话恢复** *(0.9.0)* —— `HarnessSessionResolver` 包装 SDK 0.9.7 的 `Conversation\HarnessImporter` 系列(`ClaudeCodeImporter` 读 `~/.claude/projects/<hash>/<uuid>.jsonl`,`CodexImporter` 读 `~/.codex/sessions/**/*.jsonl`)。`/processes` 增加"Resume from…"下拉 + 文字记录 modal,通过 `super-ai-core.resume.enabled` 开关。Host 实现 `super-ai-core.resume.on_load` callable 把消息再分发回某个 backend;否则 modal 仅显示文字记录供查看。
+
+完整菜谱(Ollama embedder 接线、browser launcher 准备、ambient worker
+tick 循环、harness 恢复回调):见 [docs/advanced-usage.zh-CN.md
+§17–§21](docs/advanced-usage.zh-CN.md)。
 
 ### CLI 安装器与健康检查
 
@@ -379,7 +397,7 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+),以及 **0.9.0 jcode 波次** —— `EmbeddingProvider` SPI、`agent_grep` / `browser` 工具开关、`BrowserScreenshotStore` 闭环、ambient 成本切分、跨 harness 会话恢复。
 - **[Task runner 快速入门](docs/task-runner-quickstart.md)** —— 完整 `TaskRunner` 选项参考。
 - **[Streaming backends](docs/streaming-backends.md)** —— `mcp_mode`、每后端流格式、`onChunk`。
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** —— codex/gemini agent 模拟。

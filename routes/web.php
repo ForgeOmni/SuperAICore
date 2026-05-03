@@ -10,6 +10,7 @@
 
 use SuperAICore\Http\Controllers\AiServiceController;
 use SuperAICore\Http\Controllers\CostDashboardController;
+use SuperAICore\Http\Controllers\HarnessResumeController;
 use SuperAICore\Http\Controllers\IntegrationController;
 use SuperAICore\Http\Controllers\LocaleController;
 use SuperAICore\Http\Controllers\ProcessController;
@@ -93,3 +94,15 @@ Route::post('processes/kill', [ProcessController::class, 'kill'])->name('process
 Route::get('processes/{process}/log', [ProcessController::class, 'log'])
     ->where('process', '[A-Za-z0-9_.-]+')
     ->name('processes.log');
+
+// ─── Cross-harness session resume (0.9.7) ───
+// Backed by SuperAgent SDK 0.9.7's HarnessImporter SPI. Gated by
+// `super-ai-core.resume.enabled` so on shared machines an operator's
+// ~/.claude or ~/.codex history isn't exposed to the dashboard by default.
+Route::get('resume', [HarnessResumeController::class, 'index'])->name('resume.index');
+Route::get('resume/{harness}', [HarnessResumeController::class, 'listSessions'])
+    ->where('harness', '[a-z][a-z0-9_-]*')
+    ->name('resume.list');
+Route::post('resume/{harness}/load', [HarnessResumeController::class, 'load'])
+    ->where('harness', '[a-z][a-z0-9_-]*')
+    ->name('resume.load');

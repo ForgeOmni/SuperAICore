@@ -4,6 +4,321 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-05-03
+
+**SuperAgent SDK pinned to 0.9.7 + DeepSeek V4 first-class + the full
+jcode-inspired operator UX wave (roadmap items 1–9 + B1–B5).** Catches
+up on the SDK's three new headline capabilities from 0.9.6
+(`DeepSeekProvider`, cross-provider `reasoning_content` channel,
+catalog-driven model deprecation warnings) plus the full 0.9.7 jcode
+companion-tools wave (`AgentGrepTool` + `SymbolExtractor` SPI,
+`EmbeddingProvider` SPI with Ollama/ONNX concretes, `FirefoxBridge` +
+Native Messaging transport, `Swarm\FileLedger` / `AmbientWorker`,
+`Conversation\HarnessImporter` for cross-harness session resume),
+then lands every borrowing from [jcode](https://github.com/1jehuang/jcode)
+that the original 0.9.0 plan deferred — multi-account
+`provider:rotate`, inline mermaid renderer, semantic skill reranker,
+cache-cold operator surface, right-hand side panel, browser-screenshot
+store. Composer constraint moves to `^0.9.7`; everything else is
+additive and backward compatible. Per project
+convention, every change in this cycle (originally tagged for 0.9.1
+and 0.9.2 internally) lands in 0.9.0.
+
+### Added — SDK 0.9.6 surface
+
+- **`SuperAgentBackend` envelope gains `thinking`** when the upstream
+  provider emitted reasoning text. Sources: Anthropic native `thinking`
+  blocks, DeepSeek V4-thinking / Kimi-thinking / Qwen-reasoning /
+  GLM-thinking / OpenAI o-series via the SDK's
+  `delta.reasoning_content` rebroadcast (single concatenated string,
+  separated by blank lines). Key omitted on non-thinking turns so
+  envelope shape stays byte-identical to 0.8.9 for callers that don't
+  render reasoning. `Dispatcher` writes a cheap `thinking_chars` proxy
+  to `ai_usage_logs.metadata` for dashboards that want to badge
+  reasoning depth without storing the full text.
+- **Catalog deprecation surfacing.** `SuperAgentBackend::resolveDeprecation()`
+  consults the SDK's new `ModelCatalog::deprecation()` per dispatch and
+  attaches `{model, deprecated_until, replaced_by, days_left}` to the
+  envelope when the resolved model is flagged for retirement (`days_left`
+  is negative once the window has lapsed). Dispatcher writes the same
+  blob to `ai_usage_logs.metadata.deprecation` so admin pages can render
+  a "you have N days to migrate to <X>" banner. Mirrors the SDK's
+  one-shot `error_log` warning rather than replacing it — operators on
+  CI silence both with `SUPERAGENT_SUPPRESS_DEPRECATION=1`.
+- **`UsageRecorder` accepts the `cache_hit_tokens` alias** alongside
+  `cache_read_tokens`. DeepSeek V3 / R1 wires emit the legacy field
+  name, and SDK 0.9.6 normalises but does not rename it; accepting the
+  alias here means hosts that captured the raw provider envelope (instead
+  of going through `Usage::cacheReadInputTokens`) stop silently dropping
+  the cache slice.
+
+### Added — DeepSeek V4 provider type
+
+- **`AiProvider::TYPE_DEEPSEEK = 'deepseek'`** registered in `TYPES`,
+  added to `BACKEND_TYPES[BACKEND_SUPERAGENT]`, and to the api-key
+  fallback list in `requiresApiKey()`. The Anthropic-wire endpoint at
+  `https://api.deepseek.com/anthropic` is reached via a regular
+  `anthropic-proxy` row pointing `base_url` there — both wire shapes are
+  first-class on DeepSeek's side.
+- **`ProviderTypeRegistry` bundled descriptor** for the type:
+  `fields: ['api_key']`, `env_key: 'DEEPSEEK_API_KEY'`,
+  `sdk_provider: 'deepseek'`, `allowed_backends: [SUPERAGENT]`,
+  `icon: 'bi-search-heart'`. Surfaces automatically in the providers UI,
+  the env-injection path, and `AiProvider::requiresApiKey()`.
+- **`EngineCatalog` superagent seed** gains `deepseek-v4-pro` and
+  `deepseek-v4-flash` so model pickers show V4 ids without depending on
+  the live SDK catalog probe (offline / catalog stale / composer dep
+  missing all degrade gracefully).
+- **`config('super-ai-core.model_pricing')`** gains four DeepSeek rows:
+  `deepseek-v4-pro` (\$0.55 / \$2.20), `deepseek-v4-flash` (\$0.14 /
+  \$0.55), plus deprecated `deepseek-chat` / `deepseek-reasoner`
+  routed to the V4 successors so cost dashboards keep working past
+  the 2026-07-24 cutover.
+
+### Added — jcode-inspired (operator UX)
+
+- **`provider:add` artisan command** — borrowed in spirit from
+  `jcode provider add`. One-shot file-driven row insertion into
+  `ai_providers` for CI / container `entrypoint.sh` / scripted bootstrap.
+  Secret-safe via `--api-key-stdin` (recommended) or `--api-key-env`
+  (env-var reference, no key persisted). Validates backend + type combo
+  against `ProviderTypeRegistry` before touching the DB. `--activate`
+  flips the row to active and de-activates siblings in the same
+  scope+backend. `--json` emits `{id, scope, backend, type, name,
+  active, has_api_key, …}` for downstream scripts.
+  ```bash
+  printf '%s' "$DEEPSEEK_API_KEY" | php artisan provider:add deepseek-prod \
+      --backend=superagent --type=deepseek \
+      --model=deepseek-v4-pro --api-key-stdin --activate --json
+  ```
+- **`provider:rotate <backend>`** — multi-account quick swap, jcode
+  `/account` style. Auto-rotation on `QuotaExceededException` is opt-in
+  via `super-ai-core.auto_rotate.enabled`. Stamps
+  `extra_config.last_rotation_*` on the freshly-activated row so
+  dashboards show "rotated 5m ago because: quota_exceeded".
+- **`McpManager::readConfig()` walks a configurable fallback list**.
+  Default order matches jcode's three-layer chain plus the SuperAICore
+  canonical: `<project>/.mcp.json` → `<project>/.claude/mcp.json` →
+  `~/.jcode/mcp.json` → `~/.claude/mcp.json`. Hosts override
+  `super-ai-core.mcp.search_paths` to reorder / augment; `{project}`
+  and `{home}` (and `~`) tokens expand at lookup time. Operators can
+  drop the file at the location matching their mental model and every
+  CLI in the host picks it up.
+
+### Added — jcode-inspired (cost / cache observability)
+
+- **Cache-cold warning for Anthropic backends.** `Dispatcher::detectCacheCold()`
+  flags result envelopes (`cache_warning: 'cache_likely_cold'`) when the
+  current dispatch had zero cache reads AND the most recent same-session
+  Anthropic call was longer ago than
+  `super-ai-core.cache_cold_warning.threshold_seconds` (default 270 — leaves
+  30s headroom under the 5-minute TTL). Computed before the usage write
+  so the warning lands on the same `ai_usage_logs.metadata.cache_warning`
+  row that dashboards read. Requires `metadata.session_id` on dispatch;
+  degrades silently when absent.
+- **`EloquentUsageRepository::findLatestForSession()`** — driver-portable
+  JSON path lookup (`metadata->session_id`) that wires up the cache-cold
+  heuristic above. Hosts that pass `metadata.session_id` see the warning
+  fire automatically against MySQL 8 / PostgreSQL 14+ / SQLite 3.38+.
+  Older drivers degrade to "no signal" — never false-positive.
+- **Cache-cold UI badge in `/usage`** — Recent calls table renders a
+  yellow `❄ cold` badge next to the model when
+  `metadata.cache_warning` is present (warning text in the tooltip). A
+  banner above the table shows the cold-call count for the window with a
+  one-click drill-in; a `Cache-cold only` filter checkbox scopes the
+  whole page (driven by `whereNotNull('metadata->cache_warning')`).
+  Roadmap item B5.
+- **Passive `rate_limit` envelope passthrough.** Dispatcher copies
+  `result['rate_limit']` (when the SDK populates it from upstream
+  `x-ratelimit-*` response headers) onto `ai_usage_logs.metadata.rate_limit`.
+  No-op until the SDK exposes it; wire is now ready.
+
+### Added — jcode-inspired (browser bridge surface, B4)
+
+- **`Services\BrowserScreenshotStore`** — thin filesystem-backed
+  registry for browser-bridge screenshots, decoupled from whatever
+  tool produced them (today: SuperAgent's `FirefoxBridgeTool`;
+  tomorrow: Playwright / Puppeteer wrappers). `store($id, $base64Png)`
+  → URL; `latest($id)` → URL or null; `purgeFor($id)` for the Process
+  Monitor's reaper. Configurable disk + directory so hosts can point
+  it at S3 or per-pod tmpfs without schema changes.
+- **`ProcessEntry::$latest_screenshot_url`** — optional field that
+  carries the URL `BrowserScreenshotStore::latest()` returned. Hosts
+  populate it when constructing entries; the `/processes` row renders
+  a yellow `📷 screenshot` badge that opens the side panel (B1) with
+  the inline `<img>` so operators get jcode's "see what the agent
+  sees" experience without the right-pane log viewer needing a
+  rewrite.
+
+### Added — jcode-inspired (rendering)
+
+- **Mermaid rendering on every Blade page** — bundled layout loads
+  mermaid.js from the CDN under `super-ai-core.ui.mermaid_enabled`
+  (default on; flip off for air-gapped hosts). The Process Monitor log
+  viewer detects ` ```mermaid ` fences in streamed output and renders
+  them as live SVGs in place. Includes `window.SuperAICoreMermaid.run()`
+  / `.upgrade(node)` helpers for any host view.
+- **Right-hand side panel + info-widget marker grammar (B1).** Bootstrap
+  offcanvas drawer baked into the layout, hidden until invoked. JS API
+  `window.SuperAICorePanel.show({title, type, content, footer})` with
+  `type ∈ {html, mermaid, json, iframe, text}` (mermaid bodies re-paint
+  via the existing renderer). Streamed agent output can drop a
+  `<!-- side-panel: {…json…} -->` comment marker which the auto-binder
+  rewrites into an "Open" button on `DOMContentLoaded`; server-rendered
+  views can wire `[data-side-panel-trigger='{…json…}']` directly. First
+  in-tree consumer: `/usage` row metadata inspector. Toggleable via
+  `super-ai-core.ui.side_panel_enabled`.
+
+### Added — jcode-inspired (semantic skill ranking)
+
+- **`SemanticSkillReranker`** — optional second pass over `SkillRanker`
+  BM25 top-N. Resolves an SDK 0.9.7
+  `SuperAgent\Memory\Embeddings\EmbeddingProvider` via
+  `EmbeddingProviderFactory` (which reads
+  `super-ai-core.embeddings.{provider,callback,ollama_url}`) so the
+  reranker, the SDK's own `SemanticSkillRouter`, and any host-supplied
+  `OnnxEmbeddingProvider` share one container singleton + one cache.
+  The HTTP / shape-detection code that lived here in 0.9.0 is now in
+  the SDK; on a flaky embedder per-row failures (`[]` vector) keep the
+  BM25 score for that hit instead of bailing the whole call. Falls
+  back to BM25 ordering when no embedder is configured. `SkillRanker`
+  accepts the reranker via constructor — null-safe, no-op when absent.
+- **`EmbeddingProviderFactory`** — container-bound singleton that
+  builds the bundled `EmbeddingProvider` once per request from
+  `super-ai-core.embeddings.*`. `SuperAgentBackend` and
+  `SemanticSkillReranker` both pull through it, so the wired embedder
+  is shared across the dispatch lifecycle.
+
+### Added — jcode-inspired (browser bridge wiring)
+
+- **`SuperAgentBackend` browser tool wiring** — when
+  `super-ai-core.tools.browser_enabled` is on, `SuperAgentBackend`
+  instantiates SDK 0.9.7's `FirefoxBridgeTool` (`browser`) and
+  `Agent::addTool()`'s it directly. Not in `BuiltinToolRegistry::classMap`,
+  so `load_tools` can't reach it — this is the official wiring path.
+  Requires `SUPERAGENT_BROWSER_BRIDGE_PATH`; without that the tool
+  itself returns explanatory errors so the agent stops looping.
+- **`SuperAgentBackend` agent_grep auto-load** — when
+  `super-ai-core.tools.agent_grep_enabled` is on (**default true** —
+  read-only, dependency-free, only fires on dispatches that opt into
+  an agentic loop with tools) and the caller didn't supply an explicit
+  `load_tools`, the backend prepends `'agent_grep'` to the load list.
+  Both flags only fire on the implicit path; explicit `load_tools`
+  keeps full control. Set `AI_CORE_TOOLS_AGENT_GREP=false` for
+  byte-identical pre-0.9.7 behaviour.
+- **`SuperAgentBackend::persistLatestScreenshot()`** — pairs
+  `tool_use → tool_result` blocks with `toolName === 'browser'` and
+  decodes the JSON content (`{format,base64,bytes}` from
+  `FirefoxBridgeTool::execute` case 'screenshot') to extract the
+  latest base64 PNG. The frame is written to `BrowserScreenshotStore`
+  keyed by (in priority order) `process_id`, `external_label`,
+  `metadata.session_id`, `session_id`, or a random hex id, and the
+  resulting URL is surfaced on the dispatch envelope as
+  `latest_screenshot_url`. Key omitted when no browser activity
+  occurred.
+- **`AiProcessSource` screenshot round-trip** — reads
+  `BrowserScreenshotStore::latest()` against the row's
+  `external_label` (then composite id) when constructing
+  `ProcessEntry`, and `purgeFor()`'s those keys on reap. Closes the
+  loop end-to-end: any backend run that took screenshots through
+  `browser` shows the latest frame inline on `/processes` without
+  host-side glue.
+
+### Added — jcode-inspired (cost source attribution)
+
+- **`Dispatcher::resolveUsageSource()`** — promotes
+  `options['usage_source']` / `options['metadata']['usage_source']` to
+  a top-level `metadata.usage_source` key (default `'user'`) so
+  `/usage` can group on it without JSON-path nesting. Constrained to
+  `[a-z0-9_-]{1,32}` against typo-as-phantom-bucket leaks. SuperAgent's
+  `AmbientWorker` (its `tagUsage` callback writes
+  `usage_source: 'ambient'`) lights up the dashboard split for free —
+  hosts that spawn the worker get a separate ambient bar without
+  re-instrumenting their cost code.
+- **`/usage` "By Source" card** — sits alongside By Task Type / By
+  Model / By Backend (layout reflows to `col-lg-3` on wide viewports).
+  Header shows an "N ambient · $X" badge when ambient activity
+  occurred so operators see at a glance how much background spend the
+  current window carries.
+
+### Added — jcode-inspired (cross-harness session resume)
+
+- **`HarnessSessionResolver`** — wraps SDK 0.9.7's
+  `Conversation\HarnessImporter` family (`ClaudeCodeImporter`,
+  `CodexImporter`) so the dashboard has a single seam. `listSessions(harness, limit)`
+  returns the picker rows; `loadTranscript(harness, sessionId)`
+  serialises `Message[]` into a transport-friendly array and forwards
+  to the optional host callback `super-ai-core.resume.on_load`
+  (signature `fn($harness, $sessionId, $messages): mixed`).
+- **`HarnessResumeController` + routes** — `/super-ai-core/resume`,
+  `/resume/{harness}`, `POST /resume/{harness}/load`. Gated by
+  `super-ai-core.resume.enabled` (off by default — the importers can
+  see every operator's history on shared machines).
+- **`/processes` Resume dropdown + transcript modal** — picker UI for
+  Claude Code / Codex sessions. When the host returns
+  `{redirect: '…'}` from the `on_load` callback the modal redirects
+  there; otherwise it shows the transcript inline so operators can
+  copy / paste / inspect.
+
+### Composer
+
+- `forgeomni/superagent` constraint bumped from `^0.9.5` to `^0.9.7`. The
+  caret range was already wide enough to pull 0.9.7, but the explicit
+  bump locks it for hosts on `composer.lock` and signposts the new
+  behaviour (DeepSeek V4 + reasoning channel + catalog deprecation from
+  0.9.6, plus `AgentGrepTool` / `EmbeddingProvider` SPI / `FirefoxBridge`
+  / `Swarm\FileLedger` + `AmbientWorker` / `Conversation\HarnessImporter`
+  from 0.9.7) in `composer require` output.
+
+### Configuration additions
+
+- `super-ai-core.cache_cold_warning.threshold_seconds`
+- `super-ai-core.auto_rotate.{enabled,window_seconds,min_failures}`
+- `super-ai-core.ui.mermaid_enabled`
+- `super-ai-core.ui.side_panel_enabled`
+- `super-ai-core.embeddings.{provider,callback,fingerprint,ollama_url,ollama_model,timeout_ms}`
+- `super-ai-core.browser_screenshots.{disk,dir}`
+- `super-ai-core.tools.{agent_grep_enabled,browser_enabled}`
+- `super-ai-core.resume.{enabled,on_load}`
+- `super-ai-core.mcp.search_paths`
+- `super-ai-core.model_pricing` (DeepSeek V4 rows)
+
+### Migration path
+
+`composer update forgeomni/superagent` is the only required step. New
+DeepSeek provider rows are created via the standard `/providers` UI or
+the new `provider:add` command. Existing rows continue to behave
+identically; hosts that don't touch `metadata.session_id` opt out of the
+cache-cold warning automatically. The new offcanvas side panel renders
+nothing until a view drops a marker / data-attribute, so existing layouts
+gain only ~3KB of script + a hidden DOM node.
+
+For the SuperAgent-side jcode borrowings landed in the same cycle (agent
+grep, swarm file-shift events, ambient mode, semantic skill router,
+cross-harness session resume), see the SuperAgent 0.9.7 changelog.
+
+### Notes
+
+- **DeepSeek V3 deprecation.** Users on `deepseek-chat` / `deepseek-reasoner`
+  see the SDK's one-shot `error_log` warning per process and the
+  Dispatcher's `metadata.deprecation` row. Both surface the same
+  `replaced_by` recommendation. Set `SUPERAGENT_SUPPRESS_DEPRECATION=1`
+  to silence the SDK warning in CI; the metadata row is informational
+  only and does not block dispatch.
+- **Reasoning channel is provider-driven.** SuperAICore does not request
+  reasoning unless the caller passes `extra_body.reasoning` /
+  `features.thinking` etc. through to the SDK. The new `thinking` envelope
+  field surfaces whatever the upstream chose to emit; absent reasoning
+  text means absent envelope key, byte-compatible with 0.8.9.
+- **Cache-cold heuristic is opt-in.** Without `metadata.session_id`,
+  there's nothing to correlate against; the warning never fires. Hosts
+  that already pass a session marker (SuperTeam's `session_id` column,
+  PPT's `job_id`) get the warning automatically.
+- **Side panel is host-trusted.** `SuperAICorePanel` renders
+  `type: 'html'` content as-is — payloads must be sanitised at the
+  source. Stick to `mermaid` / `json` / `text` / `iframe` whenever the
+  upstream is agent-generated.
+
 ## [0.8.9] — 2026-04-28
 
 **Backend availability gate — fix false-negative for SDK backends.** Hosts using `findCliPath($backend)` non-null as the "is this backend installed?" gate were locking out every provider routed through `superagent` (MINIMAX / Qwen / GLM / OpenRouter / Kimi-direct / LM Studio …). SuperAgent is an in-process PHP SDK with no CLI binary, so the path probe always returns null and the host shows `SuperAgent is not installed or not available on this server.` even when `forgeomni/superagent` is fully installed and `class_exists(\SuperAgent\Agent::class)` is true.

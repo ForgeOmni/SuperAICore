@@ -46,10 +46,25 @@
         <input class="form-check-input" type="checkbox" name="hide_tests" value="1" id="hideTests" @checked($hideTests)>
         <label class="form-check-label" for="hideTests">Hide test_connection</label>
     </div>
+    <div class="col-auto form-check form-switch" title="Show only rows the dispatcher flagged as cache-cold (Anthropic 5-min TTL heuristic)">
+        <input class="form-check-input" type="checkbox" name="cold_only" value="1" id="coldOnly" @checked($coldOnly)>
+        <label class="form-check-label" for="coldOnly">Cache-cold only</label>
+    </div>
     <div class="col-auto">
         <button type="submit" class="btn btn-sm btn-primary">Apply</button>
     </div>
 </form>
+
+@if(($summary['total_cache_cold'] ?? 0) > 0 && !$coldOnly)
+    <div class="alert alert-warning py-2 px-3 small d-flex align-items-center">
+        <i class="bi bi-snow me-2"></i>
+        <span>
+            <strong>{{ $summary['total_cache_cold'] }}</strong> of {{ $summary['total_runs'] }} recent calls hit a cold prompt cache
+            (5-min TTL elapsed). Re-running them inside the window would cut input cost.
+        </span>
+        <a class="ms-auto small" href="{{ request()->fullUrlWithQuery(['cold_only' => 1, 'filters_applied' => 1]) }}">show only those →</a>
+    </div>
+@endif
 
 <div class="row g-3 mb-3">
     <div class="col-md-2">
@@ -95,7 +110,45 @@
 </div>
 
 <div class="row g-3 mb-3">
-    <div class="col-md-4">
+    <div class="col-lg-3 col-md-6">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span>By Source</span>
+                @if(!empty($summary['total_ambient_runs']))
+                    <span class="badge bg-secondary" title="Background dedup / staleness ticks. SuperAgent's AmbientWorker tags these so user-facing spend stays comparable across periods.">
+                        <i class="bi bi-moon-stars"></i>
+                        {{ $summary['total_ambient_runs'] }} ambient · ${{ number_format($summary['total_ambient_cost'], 4) }}
+                    </span>
+                @endif
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <thead><tr><th>Source</th><th class="text-end">Runs</th><th class="text-end">Cost</th><th class="text-end">Shadow</th></tr></thead>
+                    <tbody>
+                    @forelse($bySource as $src => $d)
+                        <tr>
+                            <td class="small">
+                                @if($src === 'ambient')
+                                    <span class="badge bg-secondary"><i class="bi bi-moon-stars"></i> ambient</span>
+                                @elseif($src === 'user')
+                                    <span class="badge bg-primary"><i class="bi bi-person"></i> user</span>
+                                @else
+                                    <code>{{ $src }}</code>
+                                @endif
+                            </td>
+                            <td class="text-end">{{ $d['runs'] }}</td>
+                            <td class="text-end">${{ number_format($d['cost'], 4) }}</td>
+                            <td class="text-end text-info">${{ number_format($d['shadow_cost'], 4) }}</td>
+                        </tr>
+                    @empty
+                        <tr><td colspan="4" class="text-center text-muted small py-3">No source-tagged rows yet.</td></tr>
+                    @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6">
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white">By Task Type</div>
             <div class="card-body p-0">
@@ -117,7 +170,7 @@
             </div>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-lg-3 col-md-6">
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white">By Model</div>
             <div class="card-body p-0">
@@ -137,7 +190,7 @@
             </div>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-lg-3 col-md-6">
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white">By Backend</div>
             <div class="card-body p-0">
@@ -189,7 +242,16 @@
                     <td><code>{{ $row->task_type ?? '—' }}</code></td>
                     <td class="text-muted small">{{ $row->capability ?? '—' }}</td>
                     <td>{{ $row->backend }}</td>
-                    <td class="font-monospace">{{ $row->model }}</td>
+                    <td class="font-monospace">
+                        {{ $row->model }}
+                        @php($cacheWarn = ($row->metadata ?? [])['cache_warning'] ?? null)
+                        @if($cacheWarn)
+                            <span class="badge bg-warning-subtle text-warning border border-warning-subtle ms-1"
+                                  title="{{ $cacheWarn }}">
+                                <i class="bi bi-snow"></i> cold
+                            </span>
+                        @endif
+                    </td>
                     <td class="small">
                         @if ($row->provider_id)
                             <span class="badge bg-secondary-subtle text-secondary" title="provider #{{ $row->provider_id }}">
@@ -216,7 +278,19 @@
                     <td class="text-end">{{ number_format($row->output_tokens) }}</td>
                     <td class="text-end">${{ number_format((float) $row->cost_usd, 6) }}</td>
                     <td class="text-end text-info">{{ $row->shadow_cost_usd !== null ? '$' . number_format((float) $row->shadow_cost_usd, 6) : '—' }}</td>
-                    <td class="text-end text-muted">{{ $row->duration_ms !== null ? $row->duration_ms . 'ms' : '—' }}</td>
+                    <td class="text-end text-muted">
+                        {{ $row->duration_ms !== null ? $row->duration_ms . 'ms' : '—' }}
+                        @if(!empty($row->metadata))
+                            <a href="#" class="ms-1 text-decoration-none" title="Inspect metadata"
+                               data-side-panel-trigger='@json([
+                                    "title" => "Usage row #" . $row->id,
+                                    "type"  => "json",
+                                    "content" => json_encode($row->metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                               ])'>
+                                <i class="bi bi-window-sidebar"></i>
+                            </a>
+                        @endif
+                    </td>
                 </tr>
             @endforeach
             </tbody>

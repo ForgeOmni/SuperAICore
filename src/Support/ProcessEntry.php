@@ -43,6 +43,13 @@ class ProcessEntry
         public readonly ?string $resolved_model = null,
         public readonly bool $is_scheduled = false,
         public readonly ?int $quality_score = null,
+
+        // ─── Browser bridge (jcode B4) ───
+        // Latest screenshot URL captured by a browser-bridge tool. Hosts
+        // populate this from `BrowserScreenshotStore::latest($id)` so the
+        // /processes view can render the live frame without coupling to
+        // a specific automation library.
+        public readonly ?string $latest_screenshot_url = null,
     ) {}
 
     /**

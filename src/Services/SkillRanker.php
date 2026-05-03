@@ -38,6 +38,12 @@ class SkillRanker
     public function __construct(
         private readonly SkillRegistry $registry,
         private readonly bool $useTelemetry = true,
+        // 0.9.0 — optional jcode-style semantic reranker. When null, the
+        // ranker stays pure-BM25 (current behaviour). When supplied, BM25
+        // top-N (default 20, override via $rerankWindow) feeds the
+        // reranker; everything past the window is left in BM25 order.
+        private readonly ?SemanticSkillReranker $reranker = null,
+        private readonly int $rerankWindow = 20,
     ) {}
 
     /**
@@ -118,6 +124,18 @@ class SkillRanker
         }
 
         usort($results, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        if ($this->reranker !== null && $results !== []) {
+            // Hand the BM25 top-N (window) to the reranker; rows past
+            // the window stay in pure BM25 order. Reranker returns the
+            // same shape with optional `cosine` / `rerank_alpha` /
+            // `rerank_source` keys merged into `breakdown`.
+            $window = array_slice($results, 0, $this->rerankWindow);
+            $tail   = array_slice($results, $this->rerankWindow);
+            $window = $this->reranker->rerank($query, $window);
+            $results = array_merge($window, $tail);
+        }
+
         return array_slice($results, 0, $limit);
     }
 

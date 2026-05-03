@@ -1698,20 +1698,89 @@ class McpManager
     }
 
     /**
-     * Read .mcp.json config.
+     * Read MCP config from the first matching path in the configured
+     * fallback list. Default order (preserves the historical behaviour):
+     *
+     *   1. <projectRoot>/.mcp.json                — current project, SuperAICore-canonical
+     *   2. <projectRoot>/.claude/mcp.json         — Claude Code project scope
+     *   3. ~/.jcode/mcp.json                      — global jcode (since 0.9.0)
+     *   4. ~/.claude/mcp.json                     — global Claude Code
+     *
+     * Hosts override the order via `super-ai-core.mcp.search_paths`. Tokens
+     * `{project}` and `{home}` are expanded to the real project root and
+     * the user's home dir respectively, so the host can reorder /
+     * augment without hard-coding absolute paths.
+     *
+     * Borrowed in spirit from jcode's three-layer MCP fallback chain — same
+     * goal: let an operator drop a file in the place that matches their
+     * mental model and have every CLI in the host find it.
      */
     public static function readConfig(): array
     {
-        $path = self::projectRoot() . DIRECTORY_SEPARATOR . '.mcp.json';
-
-        if (!file_exists($path)) {
-            return ['mcpServers' => []];
+        foreach (self::resolveSearchPaths() as $path) {
+            if (!is_string($path) || $path === '' || !file_exists($path)) continue;
+            $content = @file_get_contents($path);
+            if ($content === false || $content === '') continue;
+            $data = json_decode($content, true);
+            if (is_array($data)) {
+                return $data + ['mcpServers' => []];
+            }
         }
+        return ['mcpServers' => []];
+    }
 
-        $content = file_get_contents($path);
-        $data = json_decode($content, true);
+    /**
+     * Expand `super-ai-core.mcp.search_paths` (with sensible defaults).
+     * Returns absolute paths, in lookup order. Falls back to the legacy
+     * `<projectRoot>/.mcp.json` only when config isn't reachable.
+     *
+     * @return list<string>
+     */
+    protected static function resolveSearchPaths(): array
+    {
+        $root = self::projectRoot();
+        $home = self::userHome();
 
-        return $data ?: ['mcpServers' => []];
+        $configured = function_exists('config')
+            ? (config('super-ai-core.mcp.search_paths') ?? null)
+            : null;
+
+        $paths = is_array($configured) && $configured !== []
+            ? $configured
+            : [
+                '{project}/.mcp.json',
+                '{project}/.claude/mcp.json',
+                '{home}/.jcode/mcp.json',
+                '{home}/.claude/mcp.json',
+            ];
+
+        $expanded = [];
+        foreach ($paths as $entry) {
+            if (!is_string($entry) || $entry === '') continue;
+            $resolved = strtr($entry, [
+                '{project}' => $root,
+                '{home}'    => $home,
+                '~'         => $home,
+            ]);
+            // Normalise Windows mixed separators so `file_exists()` doesn't
+            // miss a hit because the configured value used forward slashes.
+            $resolved = str_replace(['\\\\', '\\'], '/', $resolved);
+            $expanded[] = $resolved;
+        }
+        return $expanded;
+    }
+
+    /** Best-effort cross-platform home dir. */
+    protected static function userHome(): string
+    {
+        $home = getenv('HOME');
+        if (is_string($home) && $home !== '') return $home;
+        $userprofile = getenv('USERPROFILE');
+        if (is_string($userprofile) && $userprofile !== '') return $userprofile;
+        $drive = (string) (getenv('HOMEDRIVE') ?: '');
+        $path  = (string) (getenv('HOMEPATH')  ?: '');
+        if ($drive !== '' && $path !== '') return $drive . $path;
+        return '';
     }
 
     public static function codexMcpServers(?array $config = null, bool $includeSuperfeed = true): array

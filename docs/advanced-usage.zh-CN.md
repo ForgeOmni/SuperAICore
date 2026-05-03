@@ -24,6 +24,11 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 14. [SuperAgent host-config adapter —— `createForHost`](#14-superagent-host-config-adapter--createforhost)
 15. [对话中途切换 provider（`Agent::switchProvider`）](#15-对话中途切换-provideragentswitchprovider)
 16. [Skill engine —— 遥测、排序、FIX 模式演化](#16-skill-engine--遥测排序fix-模式演化)
+17. [SemanticSkillReranker 改用 `EmbeddingProvider` SPI（0.9.0）](#17-semanticskillreranker-改用-embeddingprovider-spi090)
+18. [`agent_grep` + `browser` 工具开关（0.9.0）](#18-agent_grep--browser-工具开关090)
+19. [浏览器截图闭环（0.9.0）](#19-浏览器截图闭环090)
+20. [`usage_source` 切分 —— `user` 与 `ambient`（0.9.0）](#20-usage_source-切分--user-与-ambient090)
+21. [跨 harness 会话恢复（0.9.0）](#21-跨-harness-会话恢复090)
 
 ---
 
@@ -1034,6 +1039,399 @@ SkillEvolutionCandidate::find(42)->update([
 - **云端 registry / 跨项目 skill 共享** —— 当前没需求，需要 registry 服务和 skill 签名。
 - **自动应用** —— evolver 永远只入队，永不应用。设计如此 —— 错的 patch 进 SKILL.md 会污染该 skill 此后的每一次执行。
 - **挂到 `bin/superaicore`** —— 六个 artisan 命令只在 `SuperAICoreServiceProvider::boot()` 里注册。独立控制台不自动挂载，因为 skill 遥测是宿主关心的事，不是 Composer-CLI 的事。如果你需要在 Laravel 之外用它们，自己手动注册到 Symfony Console。
+
+---
+
+## 17. SemanticSkillReranker 改用 `EmbeddingProvider` SPI（0.9.0）
+
+*自 0.9.0 起 —— SuperAgent SDK 0.9.7 的 `Memory\Embeddings\EmbeddingProvider`。*
+
+`SkillRanker` 跑完 BM25 之后的可选语义重排,在 0.9.0 里把手写的 Ollama HTTP 客户端 + callable 适配代码全删了,改成统一通过 SDK 的 `EmbeddingProvider` SPI 解析。reranker、SDK 自带的 `SemanticSkillRouter`、host 自定义的 `OnnxEmbeddingProvider` 全部共用一个容器单例 + 一份缓存。
+
+### 最省事的路径 —— Ollama
+
+```dotenv
+AI_CORE_EMBEDDINGS_OLLAMA_URL=http://127.0.0.1:11434
+AI_CORE_EMBEDDINGS_OLLAMA_MODEL=nomic-embed-text
+```
+
+```bash
+ollama pull nomic-embed-text   # 768 维,约 270MB
+```
+
+够了。`EmbeddingProviderFactory` 在首次调用时懒构造一个 `SuperAgent\Memory\Embeddings\OllamaEmbeddingProvider`,`SemanticSkillReranker` 透明消费。skill 排序开始在 BM25 词法匹配之上叠加意图语义 —— `php artisan skill:rank "重构认证模块"` 现在哪怕没有字面的中文 token 出现,也会更倾向于一个描述写"auth refactor"的 skill。
+
+### 自带 —— `EmbeddingProvider` 实例
+
+ONNX、OpenAI、Cohere、预制缓存或任何非 Ollama 路径,直接注册类型化 provider:
+
+```php
+// app/Providers/AppServiceProvider.php
+use SuperAgent\Memory\Embeddings\OnnxEmbeddingProvider;
+
+$this->app->bind(
+    \SuperAgent\Memory\Embeddings\EmbeddingProvider::class,
+    fn () => new OnnxEmbeddingProvider('/abs/path/to/all-MiniLM-L6-v2.onnx', dimensions: 384)
+);
+```
+
+然后让 factory 指向这个绑定(或在已发布 config 中把 `super-ai-core.embeddings.provider` 设为实例)。SDK 的 `OnnxEmbeddingProvider` 需要 `ext-onnxruntime` 或 `ankane/onnxruntime` userland 绑定 + 模型文件 —— 安装错误路径见其构造函数 docblock。
+
+### 自带 —— 闭包(legacy 形态)
+
+如果你在 0.9.0 之前已经有一个 embedder 闭包,把它放到 `super-ai-core.embeddings.callback` 里。SDK 的 `CallableEmbeddingProvider` 自动检测闭包接 `array $texts`(优先批处理形态)还是 `string $text`(legacy 单条形态),原有 host 代码继续工作:
+
+```php
+// config/super-ai-core.php —— 两种形态都行
+return [
+    'embeddings' => [
+        // 批处理形态 —— 推荐
+        'callback'    => fn (array $texts) => $myBatchEmbedder->embedAll($texts),
+        // 或单条形态(legacy VectorMemoryProvider 形态)
+        // 'callback' => fn (string $text) => $myEmbedder->embed($text),
+        'fingerprint' => 'my-bge-large-v1.5',  // 模型变更时改这个失效缓存
+    ],
+];
+```
+
+`fingerprint` 是缓存失效 key —— 切换底层模型时改它,缓存向量会干净 flush 而不污染无关条目。
+
+### 单条失败优雅降级
+
+embedder 对某条文本返回 `[]`(Ollama daemon 抖、ONNX 在某条上 OOM)时,reranker 保留该 hit 的 BM25 分数,而不是整批回退。其他行仍获得余弦提升。query 向量按 `fingerprint() . sha1(query)` 缓存,因此相同 query 的重复调用(批量排序 / 测试 harness 常见)不会重复 embed。
+
+### 与 SDK 自带的 `SemanticSkillRouter` 共享
+
+直接驱动 SDK 的 host(不走 SuperAICore Dispatcher)从容器里取同一实例,reranker 与 SDK router 共用一份缓存:
+
+```php
+use SuperAICore\Services\EmbeddingProviderFactory;
+use SuperAgent\Skills\SemanticSkillRouter;
+
+$embedder = app(EmbeddingProviderFactory::class)->make();
+if ($embedder !== null) {
+    $router = new SemanticSkillRouter(
+        skillManager: $myManager,
+        embedder: $embedder,           // reranker 用的同一实例
+        threshold: 0.55,
+        topK: 3,
+    );
+}
+```
+
+`SuperAgentBackend` 还会把解析到的 `EmbeddingProvider` 转发进 `Agent` 的 forward options bag(键 `embedding_provider`),方便未来 SDK 消费者通过 `Agent::getOptions()` 拿,无需逐次调用接线。
+
+---
+
+## 18. `agent_grep` + `browser` 工具开关(0.9.0)
+
+*自 0.9.0 起 —— SuperAgent SDK 0.9.7 的 `AgentGrepTool` + `FirefoxBridgeTool`。*
+
+`super-ai-core.tools` 上的两个工具注入开关。两者都**只在**调用方未传显式 `load_tools` 数组时生效(调用方主权优先)。两者都**只在**真正进入工具循环的 SuperAgent backend dispatch 上生效 —— 一次性调用(`max_turns=1`,无 `load_tools`)和 CLI backend dispatch(`claude_cli` / `codex_cli` 等)完全不受影响。
+
+### `agent_grep` —— 默认开启
+
+```dotenv
+AI_CORE_TOOLS_AGENT_GREP=true   # 默认值,设 false 关闭
+```
+
+打开时,`SuperAgentBackend` 把 `'agent_grep'` 加到隐式 `load_tools` 列表前面。该工具在 SDK 的 `BuiltinToolRegistry::classMap` 中,`ToolLoader` 在 agent 第一次工具调用时懒解析。
+
+相比普通 `grep` 多了什么:
+
+1. **包含符号注入** —— 每条匹配行附上其所在的 `class::function`(或顶层 `function`),覆盖 PHP / JS / TS / Python / Go。默认提取器是纯 PHP 正则 —— 在典型代码上 `~95%` 准确,无外部依赖。
+2. **会话内 chunk 截断** —— 同一会话内对同一 `(file, line range, sha)` 元组的重复查询被截断为 `... (lines N–M previously shown to you in this session)` 标记。状态存在 `ToolStateManager`,按 `(file, lineRange, sha)` 索引,因此 swarm 隔离工作时不会泄漏一个 agent 的 seen-chunk 账本到另一个。
+
+要 tree-sitter 精度(在正则提取器覆盖不好的 Rust / Ruby / Java / C++ 代码库上值得),子类化 `AgentGrepTool` 并传入 `CompositeSymbolExtractor([new TreeSitterSymbolExtractor(), new RegexSymbolExtractor()])` —— 安装路径见 SDK 类 docblock `vendor/forgeomni/superagent/src/Tools/Builtin/AgentGrepTool.php`。需要 `tree-sitter` CLI 二进制在 `$PATH` 上 + 对应 grammar;SuperAICore 不自动 vendor。
+
+要纯 `grep` 一致(比如脚本要消化原始 ripgrep 输出)?直接传一个不含 `agent_grep` 的显式 `load_tools` —— 调用方列表赢:
+
+```php
+$dispatcher->dispatch([
+    'backend'    => 'superagent',
+    'load_tools' => ['grep', 'read_file', 'web_fetch'],   // 显式 —— 没有 agent_grep
+    'max_turns'  => 5,
+    // …
+]);
+```
+
+### `browser` —— 需手动安装
+
+```dotenv
+AI_CORE_TOOLS_BROWSER=true
+SUPERAGENT_BROWSER_BRIDGE_PATH=/abs/path/to/forgeomni-bridge-launcher
+```
+
+`browser` 工具不在 `BuiltinToolRegistry::classMap` 中,因此 `load_tools` 够不到。flag 打开且 SDK 类可用时,`SuperAgentBackend::attachBrowserTool()` 实例化 `FirefoxBridgeTool` 并直接 `Agent::addTool()`。
+
+工具通过 Native Messaging 驱动真实 Firefox 或 Chromium tab —— 动作:`navigate` / `screenshot` / `click` / `type` / `eval` / `wait` / `close`。PHP 侧(`FirefoxBridgeTool` + `NativeMessagingTransport` + `FirefoxBridge`)在 SDK 内自包含;host 装三样东西:
+
+1. **Firefox**(或任何支持 WebExtension 的 Chromium-based 浏览器)。
+2. **Forgeomni Bridge WebExtension** —— 极简 `manifest.json` + ~150 行后台脚本,通过 `runtime.connectNative('forgeomni_bridge')` 打开,把入消息分派到 `tabs.*` / `webNavigation.*` API。详见 `vendor/forgeomni/superagent/src/Tools/Browser/FirefoxBridge.php` 类 docblock。
+3. **Native Messaging launcher 二进制** —— 任何把长度前缀 JSON 在 Firefox 与 PHP 进程间管道的可执行文件。jcode 的 Rust 二进制开箱即用,或写个 50 行 Node / Go shim。
+
+launcher 装好且 `SUPERAGENT_BROWSER_BRIDGE_PATH` 配好之前,所有动作返回解释性错误,让 agent 学会请求安装帮助而非死循环。flag 提前打开是安全的。
+
+要为某次 dispatch 显式覆盖 env 查找(罕见),传 `launcherArgv`:
+
+```php
+$dispatcher->dispatch([
+    'backend'              => 'superagent',
+    'browser_launcher_argv' => ['/opt/bridge/launcher', '--profile=staging'],
+    // …
+]);
+```
+
+### 紧凑能力面
+
+`FirefoxBridgeTool` 故意只暴露上面 7 个动作。没有 tab 管理、cookie、history、downloads、extension API —— 那些会显著扩大滥用爆炸半径,且典型"像人一样用页面"工作量也用不上。需要更多功能的 host 通过自定义工具直接调 `FirefoxBridge::evalJs()`。
+
+---
+
+## 19. 浏览器截图闭环(0.9.0)
+
+*自 0.9.0 起。*
+
+`browser` 工具跑 `action: 'screenshot'` 时,`FirefoxBridgeTool::execute()` 返回 `ToolResult::success(['format' => 'png', 'base64' => $data, 'bytes' => N])`。返回内容被 JSON 编码后存到 `AgentResult` 消息流的 `ToolResultMessage` 内容块。
+
+`SuperAgentBackend::persistLatestScreenshot()` 在 dispatch 后扫描该流:
+
+1. 索引每一个 `toolName === 'browser'` 的 `tool_use` 块(按 `toolUseId`)。
+2. 对每一个后续的、`toolUseId` 匹配且 `isError !== true` 的 `tool_result` 块,解码 JSON content 读 `base64`。
+3. 留住最后一张成功的 —— 长 agent run 可能截多张图,只有最近的有运营意义。
+4. 按 dispatch 的 process_id 写入 `BrowserScreenshotStore`(优先级:`options['process_id']` → `external_label` → `metadata.session_id` → `session_id` → 随机 hex)。
+5. 把 URL 挂到 dispatch envelope 的 `latest_screenshot_url` 字段。
+
+### 与 `AiProcessSource` 的 round-trip
+
+`AiProcessSource::list()` 构造每个 `ProcessEntry` 时,按 `ai_processes` 行的 `external_label`(再回退到 `aiprocess.<id>` 复合 key)读 `BrowserScreenshotStore::latest()`。`/processes` 视图给有截图的行渲染黄色 `📷 screenshot` 徽章;点击在侧面板(B1 offcanvas)打开内嵌图。
+
+reap 时(PID 死掉、状态切到 FINISHED),`AiProcessSource` 用同样 keys 调 `BrowserScreenshotStore::purgeFor()`,截图不会超过 run 的有效寿命累积。
+
+### 配置存储 backend
+
+```dotenv
+AI_CORE_BROWSER_SHOTS_DISK=local                                # 任意 Laravel filesystem disk
+AI_CORE_BROWSER_SHOTS_DIR=super-ai-core/browser-screenshots     # disk root 下的相对路径
+```
+
+生产建议:用 per-pod tmpfs disk(把 `tmpfs` 挂到 `/var/cache/super-ai-core/screenshots`,配一个指向那里的 `local` disk),或带短 lifecycle rule 的 S3 disk。`local` 默认值在单机 Laravel 安装和开发阶段都够用。
+
+### 自定义 UI
+
+要自家截图渲染(carousel、history、OCR pipeline)的 host 直接读 store:
+
+```php
+use SuperAICore\Services\BrowserScreenshotStore;
+
+$store = app(BrowserScreenshotStore::class);
+$url = $store->latest($externalLabel);   // 没有截图返回 null
+```
+
+要多帧存档(而非只留最新),在调用点 wrap 一层,用带逐帧后缀的 key 自己写每个 slot(比如 `"task:42:frame:7"`)。
+
+---
+
+## 20. `usage_source` 切分 —— `user` 与 `ambient`(0.9.0)
+
+*自 0.9.0 起。*
+
+SuperAgent SDK 0.9.7 的 `Swarm\AmbientWorker` 在 tick 上跑后台 memory dedup + staleness 扫描。它的 `tagUsage` 回调每完成一次 pass 触发,带 `usage_source: 'ambient'`,但 0.9.0 之前 SuperAICore 没办法在 `/usage` 上把这些行单独 bucket —— 它们混入用户面向的开销。
+
+`Dispatcher::resolveUsageSource()` 现在从 `options['usage_source']` 或 `options['metadata']['usage_source']` 提取,写入顶层 `metadata.usage_source` 键(默认 `'user'`)。约束在 `[a-z0-9_-]{1,32}` 防 typo 泄漏成幻影 bucket。
+
+### 接线 AmbientWorker
+
+worker 本身在 SDK 里;SuperAICore 接一个 `tagUsage` 回调发一个 no-op 记账调用记录开销:
+
+```php
+// app/Console/Commands/AmbientTickCommand.php
+use SuperAgent\Memory\Palace\PalaceStorage;
+use SuperAgent\Memory\Palace\MemoryDeduplicator;
+use SuperAgent\Swarm\AmbientWorker;
+use SuperAICore\Services\Dispatcher;
+
+class AmbientTickCommand extends Command
+{
+    protected $signature = 'super-ai-core:ambient-tick';
+
+    public function handle(PalaceStorage $palace, MemoryDeduplicator $dedup, Dispatcher $dispatcher): int
+    {
+        $worker = new AmbientWorker(
+            storage: $palace,
+            deduplicator: $dedup,
+            config: [
+                'dedup_interval_seconds'       => 600,   // 10 分钟
+                'stale_check_interval_seconds' => 3600,  // 1 小时
+                'pass_budget_seconds'          => 5,
+            ],
+            tagUsage: function (string $passName, array $stats) use ($dispatcher) {
+                // 记一行打 'ambient' 标签的合成行,这样 /usage 能 group 出来。
+                // 没有 prompt,没有 model 调用 —— 只是想要 metadata 行。
+                // 多数 host 已经直接通过 UsageRecorder 写自己的 ambient 行;
+                // 这里 dispatch 路径只是示意。
+            },
+        );
+
+        $report = $worker->tick();
+        $this->table(['pass', 'ran', 'stats'], collect($report)->map(fn ($r, $p) => [
+            $p,
+            $r['ran'] ? 'yes' : '—',
+            json_encode($r['stats'] ?? null),
+        ])->all());
+        return self::SUCCESS;
+    }
+}
+```
+
+```php
+// app/Console/Kernel.php
+$schedule->command('super-ai-core:ambient-tick')
+         ->everyFiveMinutes()
+         ->withoutOverlapping();
+```
+
+通过 `Dispatcher` 驱动 ambient-mode dispatch 的 host(比如长 memory drawer 的后台再总结)在每次调用上传 source 即可:
+
+```php
+$dispatcher->dispatch([
+    'prompt'   => 'Summarise drawers above 20K tokens.',
+    'backend'  => 'superagent',
+    'metadata' => ['usage_source' => 'ambient'],
+    // …
+]);
+```
+
+### 在 `/usage` 上读取切分
+
+仪表盘的 "By Source" 卡片和 By Task Type / By Model / By Backend 并排。表头在 ambient 活动出现时显示 "N ambient · $X" 徽章,operator 一眼看到当前窗口的后台开销占比。宽屏布局自动切到 `col-lg-3`,原有卡片仍清楚。
+
+不需要 `whereJsonContains` / JSON path —— Dispatcher 写入器把每行的 `usage_source` 拍平到顶层 metadata 键,因此 controller 在 PHP 通过 Eloquent collection 方法 group。在 MySQL 5.7、PostgreSQL 9、SQLite 上都不需要 driver 特定 JSON ops。
+
+### 自定义 source bucket
+
+allowlist 接受任何 `[a-z0-9_-]{1,32}` 字符串。host 自定义 source(`'eval'` / `'audit'` / `'replay'`)直接工作:
+
+```php
+$dispatcher->dispatch([
+    'metadata' => ['usage_source' => 'eval'],   // 在 /usage 显示成自己的 bucket
+    // …
+]);
+```
+
+allowlist 之外的(大写、特殊字符、>32 字符)被规范化 —— 写入器执行 `mb_strtolower(preg_replace('/[^a-z0-9_-]+/i', '', $c))` 然后截到 32 字符。完全无法解析的值回退到 `'user'`。
+
+---
+
+## 21. 跨 harness 会话恢复(0.9.0)
+
+*自 0.9.0 起 —— SuperAgent SDK 0.9.7 的 `Conversation\HarnessImporter` 系列。*
+
+`super-ai-core.resume.enabled` 打开时,`/processes` 页面增加"Resume from…"下拉。Operator 从 picker 里选一个 Claude Code(`~/.claude/projects/<hash>/<uuid>.jsonl`)或 Codex(`~/.codex/sessions/**/*.jsonl`)会话,然后或在 modal 里查看 transcript,或让 host 把它再分发回 backend。
+
+### 启用功能
+
+默认关闭 —— 在共享机器上 importer 能看到所有 operator 的会话历史:
+
+```dotenv
+AI_CORE_RESUME_ENABLED=true
+```
+
+这会在 `/processes` 上把下拉揭开,并打开 `/super-ai-core/resume` 下的 3 个 endpoints:
+
+- `GET /resume` —— 列出本机可用 harness
+- `GET /resume/{harness}` —— 列出会话(最新优先,`limit` query 参数,默认 30,最大 200)
+- `POST /resume/{harness}/load` —— 加载某会话,返回 transcript + 可选 host payload
+
+### `on_load` 回调 —— host 端再分发钩子
+
+没有回调时,`/load` endpoint 仅返回解析后的 transcript JSON。要"一键恢复进 X provider 的聊天"的 host 接一个返回 `{redirect: '<url>'}` 的 callable:
+
+```php
+// config/super-ai-core.php
+use SuperAgent\Messages\Message;
+
+return [
+    'resume' => [
+        'enabled' => env('AI_CORE_RESUME_ENABLED', false),
+        'on_load' => function (string $harness, string $sessionId, array $messages): array {
+            // $messages 是 list<Message> —— 直接喂 Agent::loadMessages($messages)
+            // 或经过 Conversation\Transcoder::encode() 切到不同 wire family。
+            $session = ChatSession::createFromHarnessImport($harness, $sessionId, $messages);
+            return [
+                'redirect' => route('chat.show', $session),
+                'session_id' => $session->id,
+            ];
+        },
+    ],
+];
+```
+
+前端 modal 检查 `host_payload.redirect` —— 存在时 navigate 过去,而不是把 transcript 内嵌渲染。
+
+### 控制器端编程访问
+
+要自家 "Resume" UI 的 host 直接 resolve resolver,自己造流程:
+
+```php
+use SuperAICore\Services\HarnessSessionResolver;
+
+class MyResumeController extends Controller
+{
+    public function __construct(protected HarnessSessionResolver $resolver) {}
+
+    public function pickAndResume(Request $request)
+    {
+        $harness = $request->input('harness', 'claude');
+        if (!in_array($harness, $this->resolver->availableHarnesses(), true)) {
+            return back()->withErrors(['harness' => 'Unsupported harness']);
+        }
+
+        $sessions = $this->resolver->listSessions($harness, limit: 50);
+        // → [['id' => '8e2c-…', 'project' => 'shopify-autopilot',
+        //     'started_at' => '2026-04-30T…', 'message_count' => 47,
+        //     'first_user_message' => 'Refactor the checkout flow…'], …]
+
+        // 用户选了一个之后:
+        $payload = $this->resolver->loadTranscript($harness, $sessionId);
+        // → ['harness' => 'claude', 'session' => '8e2c-…',
+        //    'transcript' => [['role' => 'user', 'content' => '…'], …],
+        //    'host_payload' => /* on_load 返回的内容 */]
+
+        return view('my.resume.review', compact('payload'));
+    }
+}
+```
+
+### 通过 SDK Transcoder 跨 wire 续聊
+
+importer 返回 SDK 内部表示的 SuperAgent `Message[]`。要在不同 provider family 上续聊(在 Claude 起,在 Kimi 续),把消息过一遍 SDK 0.9.5 的 `Conversation\Transcoder`:
+
+```php
+use SuperAgent\Agent;
+use SuperAgent\Conversation\Transcoder;
+
+$messages = $this->resolver->loadTranscript('claude', $sessionId)['transcript'];
+// 如果你 JSON 序列化过,把 transcript 数组 hydrate 回 Message 实例。
+// (HarnessImporter::load() 直接返回 Message 实例 —— host 进程不跨 JSON 边界
+//  时用这条路径再分发。)
+
+$agent = new Agent([
+    'provider' => /* host-built 的 Kimi LLMProvider */,
+    'max_turns' => 10,
+]);
+$agent->loadMessages($messages);   // Transcoder 处理 wire-shape 转换
+$agent->run('继续上次没做完的 —— 写单测。');
+```
+
+### 跨 harness 有损吗
+
+importer 故意宽容 —— 格式错的行 / 未知 event 类型被静默跳过,而不是拒掉整个会话。真实 harness 的真实 session log 是脏的(Claude Code 1.x vs 2.x schema 漂移、Codex CLI rollout 格式变迁)。Transcoder 会剥掉目标 wire shape 不能携带的产物 —— Anthropic 签名的 thinking block 跳到 OpenAI 时活不下来,OpenAI Responses 加密 reasoning items 跳到 Anthropic 也活不下来。Tool-call ids 自 0.9.5 起跨所有 family round-trip 正确。
+
+### 没有的功能
+
+- **自动发现 jcode / pi / OpenCode session 文件** —— SDK 0.9.7 的 importer 集合覆盖 Claude Code 与 Codex。需要其他 harness 的 host 自己实现 `HarnessImporter` 并 drop 一个 service-provider 绑定登记实现。
+- **SuperAICore 自家 `ai_processes` 历史的 re-dispatch UI** —— `/processes` 自 0.6.7 起按合约就是 live-only(只显示运行中 PID,不显示 finished 行)。Resume 下拉是为跨 harness session 拾取设计的,不是为重放此前 SuperAICore 运行设计。要"用不同 provider 重跑这个 finished task"的 host 在 `ai_processes` 审计日志之上自建 UI。
 
 ---
 

@@ -53,6 +53,119 @@ return [
     // tokens, navbar and container.
     'layout' => env('SUPER_AI_CORE_LAYOUT', 'super-ai-core::layouts.app'),
 
+    // ─── Embeddings (0.9.0+) ───
+    // Optional embedding backend used by SemanticSkillReranker, the SDK's
+    // own SemanticSkillRouter (when the host wires one), and any future
+    // jcode-borrowed semantic feature. `EmbeddingProviderFactory`
+    // resolves the first match below into an SDK 0.9.7
+    // `SuperAgent\Memory\Embeddings\EmbeddingProvider`:
+    //
+    //   1. provider     — already-instantiated EmbeddingProvider (host
+    //                     wires its own `OnnxEmbeddingProvider`, OpenAI-
+    //                     backed adapter, prebuilt-cache reader, …).
+    //   2. callback     — closure: `fn(list<string>): list<list<float>>`
+    //                     OR legacy `fn(string): list<float>`. SDK's
+    //                     `CallableEmbeddingProvider` auto-detects the
+    //                     parameter type so old hand-rolled embedders
+    //                     keep working.
+    //   3. ollama_url   — local Ollama daemon (`/api/embeddings` with
+    //                     `ollama_model`, default `nomic-embed-text`).
+    //
+    // When none is set, SemanticSkillReranker degrades to a no-op and
+    // SkillRanker returns BM25 ordering. `fingerprint` is used as the
+    // cache invalidation key for the callback adapter; change it when
+    // the underlying model changes so cached vectors flush cleanly.
+    'embeddings' => [
+        'provider'     => null,
+        'callback'     => null,
+        'fingerprint'  => env('AI_CORE_EMBEDDINGS_FINGERPRINT', null),
+        'ollama_url'   => env('AI_CORE_EMBEDDINGS_OLLAMA_URL', null),
+        'ollama_model' => env('AI_CORE_EMBEDDINGS_OLLAMA_MODEL', 'nomic-embed-text'),
+        'timeout_ms'   => (int) env('AI_CORE_EMBEDDINGS_TIMEOUT_MS', 10_000),
+    ],
+
+    // ─── Browser-screenshot store (0.9.7) ───
+    // Backs `ProcessEntry::$latest_screenshot_url` for `/processes` rows
+    // when an agent invoked SDK 0.9.7's `FirefoxBridgeTool` (`browser`).
+    // `disk` — Laravel filesystem disk to write into. Default 'local';
+    //          point at 's3' or a per-pod tmpfs disk for production.
+    // `dir`  — relative directory under the disk.
+    'browser_screenshots' => [
+        'disk' => env('AI_CORE_BROWSER_SHOTS_DISK', 'local'),
+        'dir'  => env('AI_CORE_BROWSER_SHOTS_DIR', 'super-ai-core/browser-screenshots'),
+    ],
+
+    // ─── Cross-harness session resume (0.9.7) ───
+    // Backed by SuperAgent SDK 0.9.7's HarnessImporter SPI
+    // (`ClaudeCodeImporter` reads ~/.claude/projects/<hash>/<uuid>.jsonl;
+    // `CodexImporter` reads ~/.codex/sessions/**/*.jsonl). The `/processes`
+    // page surfaces a "Resume from…" dropdown when this is on.
+    //
+    // `enabled`  — gate the entire feature. Off by default since on shared
+    //              machines the importer can see every operator's history.
+    // `on_load`  — optional callable invoked after the importer returns:
+    //              `fn(string $harness, string $sessionId, list<Message> $messages): mixed`
+    //              Whatever the callable returns is forwarded to the front-
+    //              end as `host_payload` so hosts can redirect into a
+    //              chat URL pre-loaded with the messages. Without a hook,
+    //              the response just carries the transcript JSON.
+    'resume' => [
+        'enabled' => (bool) env('AI_CORE_RESUME_ENABLED', false),
+        'on_load' => null,
+    ],
+
+    // ─── Builtin SuperAgent tools (0.9.7) ───
+    // jcode-style auxiliary tools that ship with SuperAgent SDK 0.9.7 but
+    // aren't in its default tool set. Flip these on to have
+    // SuperAgentBackend prepend them to `load_tools` automatically when
+    // the caller doesn't supply an explicit list. Hosts that already pass
+    // their own `load_tools` retain full control — these flags only fire
+    // on the implicit path.
+    'tools' => [
+        // jcode-style `agent_grep` — enclosing-symbol context + per-session
+        // seen-chunk truncation. Strict superset of `grep` for long-running
+        // agents on big repos. Lazy-loaded via SDK's BuiltinToolRegistry
+        // classMap, so this just adds the name to load_tools. Default ON
+        // because it's read-only, dependency-free, and only ever fires on
+        // dispatches that opt into a real agentic loop with tools (one-shot
+        // calls and CLI-backed dispatches don't see it). Flip to false to
+        // force-disable when you want byte-identical pre-0.9.7 behaviour.
+        'agent_grep_enabled' => filter_var(
+            env('AI_CORE_TOOLS_AGENT_GREP', true),
+            FILTER_VALIDATE_BOOLEAN,
+            FILTER_NULL_ON_FAILURE,
+        ) ?? true,
+
+        // SDK 0.9.7 `FirefoxBridgeTool` (`browser`) — drives a real
+        // Firefox / Chromium tab via Native Messaging. Requires
+        // `SUPERAGENT_BROWSER_BRIDGE_PATH` to point at the launcher
+        // binary; without that, every action returns an explanatory
+        // error so the agent learns to ask for setup help instead of
+        // looping. The tool isn't in BuiltinToolRegistry's classMap so
+        // SuperAgentBackend instantiates + addTool()'s it directly when
+        // this flag is on.
+        'browser_enabled'    => (bool) env('AI_CORE_TOOLS_BROWSER', false),
+    ],
+
+    // ─── UI features (0.9.0) ───
+    'ui' => [
+        // jcode-style inline mermaid rendering. When enabled, the bundled
+        // layout loads mermaid.js from the CDN and exposes
+        // `window.SuperAICoreMermaid.run()` / `.upgrade(node)`. The
+        // /processes log viewer auto-detects ```mermaid fences and
+        // renders them as live SVGs. Disable for air-gapped hosts that
+        // can't reach jsdelivr.
+        'mermaid_enabled' => (bool) env('AI_CORE_UI_MERMAID', true),
+
+        // jcode-style right-hand offcanvas drawer for auxiliary content
+        // (file diffs, mermaid, JSON inspectors). Renders nothing until a
+        // view drops a `<!-- side-panel: {…json…} -->` marker or wires a
+        // `[data-side-panel-trigger]` button. JS API:
+        // `window.SuperAICorePanel.show({title, type, content, footer})`.
+        // Disable to drop the offcanvas markup + script entirely.
+        'side_panel_enabled' => (bool) env('AI_CORE_UI_SIDE_PANEL', true),
+    ],
+
     // ─── Backends ───
     // Which backends are usable. Disable ones you don't need.
     'backends' => [
@@ -143,11 +256,53 @@ return [
         'retain_days' => (int) env('AI_CORE_USAGE_RETAIN_DAYS', 180),
     ],
 
+    // ─── Auto-rotate on quota errors (0.9.0) ───
+    // When SuperAgentBackend catches QuotaExceededException twice within
+    // `window_seconds`, run `provider:rotate` for the affected backend
+    // with reason='quota_exceeded'. Off by default — opt in to avoid
+    // surprising operators whose fallback provider isn't actually viable
+    // (different model availability, missing api key, etc.).
+    'auto_rotate' => [
+        'enabled'          => env('AI_CORE_AUTO_ROTATE', false),
+        'window_seconds'   => (int) env('AI_CORE_AUTO_ROTATE_WINDOW', 60),
+        'min_failures'     => (int) env('AI_CORE_AUTO_ROTATE_THRESHOLD', 2),
+    ],
+
+    // ─── Cache cold warning (0.9.0) ───
+    // Anthropic prompt cache TTL is 5 minutes. When a follow-up call to
+    // the same session arrives after the window has closed, the user
+    // pays the full input price for the entire prefix again.
+    // Dispatcher::detectCacheCold() flags such cases on the result envelope
+    // (`cache_warning: 'cache_likely_cold'`) so dashboards / hosts can
+    // surface a "cache miss likely" badge without re-deriving the heuristic.
+    //
+    // Requires the host to:
+    //   1. Pass a `session_id` on `Dispatcher::dispatch(['metadata' =>
+    //      ['session_id' => $sessionId]])` so the lookup has a key.
+    //   2. Implement `UsageRepository::findLatestForSession($sessionId,
+    //      $backends)` returning the most recent matching row (or null).
+    //      The bundled EloquentUsageRepository will gain this in a follow-up.
+    //
+    // Set `threshold_seconds` to 0 to disable the warning entirely.
+    'cache_cold_warning' => [
+        'threshold_seconds' => (int) env('AI_CORE_CACHE_COLD_THRESHOLD', 270),
+    ],
+
     // ─── MCP server management ───
     'mcp' => [
         'enabled' => env('AI_CORE_MCP_ENABLED', true),
         // Directory where MCP server binaries get installed
         'install_dir' => env('AI_CORE_MCP_INSTALL_DIR', null),
+        // 0.9.0 — Ordered fallback for `McpManager::readConfig()`. The
+        // first existing file wins. Tokens `{project}` and `{home}` (also
+        // `~`) expand at lookup time. Borrowed from jcode's three-layer
+        // chain (`~/.jcode/mcp.json` → `.jcode/mcp.json` → `.claude/mcp.json`)
+        // so an operator can drop a file at the location matching their
+        // mental model and every CLI in the host picks it up.
+        // Set to a non-empty array to override; leave commented out (or
+        // set explicitly to null) to use the bundled defaults baked into
+        // McpManager::resolveSearchPaths().
+        'search_paths' => null,
         // Env var name used as a placeholder for the project root in
         // generated `.mcp.json` entries. When set (e.g. 'SUPERTEAM_ROOT'),
         // McpManager rewrites paths under projectRoot() to ${VAR}/<rel> and
@@ -238,6 +393,19 @@ return [
         'gpt-4.1'                     => ['input' => 2.00,  'output' => 8.00],
         'gpt-4o'                      => ['input' => 2.50,  'output' => 10.00],
         'gpt-4o-mini'                 => ['input' => 0.15,  'output' => 0.60],
+
+        // ─── DeepSeek V4 (since SuperAgent 0.9.6) ───
+        // Both rows are 1M-context MoE models — V4-Pro 49B active / 1.6T
+        // total, V4-Flash 13B active / 284B total. Prices reflect the
+        // DeepSeek 2026-04-24 launch sheet. The deprecated `deepseek-chat`
+        // and `deepseek-reasoner` aliases retire 2026-07-24; route them to
+        // the V4 successors here so cost dashboards keep working past the
+        // hard cutover and the SDK's one-shot deprecation warning is the
+        // user's only nudge.
+        'deepseek-v4-pro'             => ['input' => 0.55,  'output' => 2.20],
+        'deepseek-v4-flash'           => ['input' => 0.14,  'output' => 0.55],
+        'deepseek-chat'               => ['input' => 0.14,  'output' => 0.55],
+        'deepseek-reasoner'           => ['input' => 0.55,  'output' => 2.20],
 
         // ─── Google Gemini ───
         'gemini-3-pro-preview'        => ['input' => 2.00,  'output' => 12.00],

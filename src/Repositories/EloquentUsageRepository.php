@@ -93,4 +93,42 @@ class EloquentUsageRepository implements UsageRepository
         if ($to) $q->where('created_at', '<=', $to);
         return $q->get()->map(fn ($r) => $r->toArray())->all();
     }
+
+    /**
+     * Look up the most recent ai_usage_logs row whose
+     * `metadata->session_id` matches and whose backend is one of the
+     * filter list. Used by Dispatcher::detectCacheCold(). Returns null
+     * when the session has no prior rows in the chosen backend set.
+     *
+     * Driver-specific JSON access:
+     *   - MySQL/MariaDB:  metadata->>'$.session_id' = ?
+     *   - PostgreSQL:     metadata->>'session_id' = ?
+     *   - SQLite:         json_extract(metadata, '$.session_id') = ?
+     *
+     * Eloquent's `whereJsonContains` doesn't fit (we want strict equality
+     * on a scalar, not array containment), but `where('metadata->session_id')`
+     * compiles to the right per-driver expression for MySQL/PG/SQLite.
+     */
+    public function findLatestForSession(string $sessionId, array $backends): ?array
+    {
+        if ($sessionId === '' || $backends === []) return null;
+        try {
+            $row = AiUsageLog::query()
+                ->where('metadata->session_id', $sessionId)
+                ->whereIn('backend', $backends)
+                ->orderByDesc('created_at')
+                ->limit(1)
+                ->first(['id', 'backend', 'model', 'created_at']);
+        } catch (\Throwable) {
+            // JSON path not supported by the active driver, or column missing.
+            return null;
+        }
+        if ($row === null) return null;
+        return [
+            'id'         => (int) $row->id,
+            'backend'    => (string) $row->backend,
+            'model'      => (string) $row->model,
+            'created_at' => (string) $row->created_at,
+        ];
+    }
 }

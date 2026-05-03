@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(composer show *)",
+      "PowerShell(php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\Services\\\\EmbeddingProviderFactory.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\Services\\\\SemanticSkillReranker.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\Services\\\\HarnessSessionResolver.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\Backends\\\\SuperAgentBackend.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\Sources\\\\AiProcessSource.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\Services\\\\Dispatcher.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\Http\\\\Controllers\\\\HarnessResumeController.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\Http\\\\Controllers\\\\UsageController.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\src\\\\SuperAICoreServiceProvider.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\config\\\\super-ai-core.php; php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\routes\\\\web.php)",
+      "PowerShell(composer update *)",
+      "PowerShell(php -r \"require 'vendor/autoload.php'; foreach \\(['SuperAgent\\\\Memory\\\\Embeddings\\\\EmbeddingProvider', 'SuperAgent\\\\Memory\\\\Embeddings\\\\OllamaEmbeddingProvider', 'SuperAgent\\\\Memory\\\\Embeddings\\\\CallableEmbeddingProvider', 'SuperAgent\\\\Tools\\\\Builtin\\\\FirefoxBridgeTool', 'SuperAgent\\\\Tools\\\\Builtin\\\\AgentGrepTool', 'SuperAgent\\\\Conversation\\\\HarnessImporter', 'SuperAgent\\\\Conversation\\\\Importers\\\\ClaudeCodeImporter', 'SuperAgent\\\\Conversation\\\\Importers\\\\CodexImporter', 'SuperAgent\\\\Swarm\\\\AmbientWorker', 'SuperAgent\\\\Skills\\\\SemanticSkillRouter'] as \\\\$c\\) { echo \\(interface_exists\\(\\\\$c\\) || class_exists\\(\\\\$c\\) ? 'OK    ' : 'MISS  '\\) . \\\\$c . PHP_EOL; }\")",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\config\\\\super-ai-core.php)"
+    ]
+  }
+}

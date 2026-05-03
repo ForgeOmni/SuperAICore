@@ -61,6 +61,13 @@ class AiProvider extends Model
     const TYPE_OPENAI_RESPONSES  = 'openai-responses';
     // Local LM Studio server (SDK 0.9.1+). Defaults to http://localhost:1234.
     const TYPE_LMSTUDIO          = 'lmstudio';
+    // DeepSeek V4 first-class provider (SDK 0.9.6+). OpenAI-wire by default;
+    // routes through the SDK's `DeepSeekProvider` against api.deepseek.com.
+    // The Anthropic-compat `/anthropic` endpoint at the same host is reached
+    // by configuring a regular `anthropic-proxy` row with
+    // base_url=https://api.deepseek.com/anthropic — both wire shapes are
+    // first-class and supported by upstream.
+    const TYPE_DEEPSEEK          = 'deepseek';
 
     const TYPES = [
         self::TYPE_BUILTIN           => 'builtin',
@@ -72,6 +79,7 @@ class AiProvider extends Model
         self::TYPE_OPENAI_COMPATIBLE => 'openai-compatible',
         self::TYPE_OPENAI_RESPONSES  => 'openai-responses',
         self::TYPE_LMSTUDIO          => 'lmstudio',
+        self::TYPE_DEEPSEEK          => 'deepseek',
         self::TYPE_GOOGLE_AI         => 'google-ai',
         self::TYPE_KIRO_API          => 'kiro-api',
         self::TYPE_MOONSHOT_BUILTIN  => 'moonshot-builtin',
@@ -108,6 +116,7 @@ class AiProvider extends Model
             self::TYPE_OPENAI_COMPATIBLE,
             self::TYPE_OPENAI_RESPONSES,
             self::TYPE_LMSTUDIO,
+            self::TYPE_DEEPSEEK,
         ],
         self::BACKEND_GEMINI => [
             self::TYPE_BUILTIN,
@@ -261,6 +270,7 @@ class AiProvider extends Model
             self::TYPE_OPENAI,
             self::TYPE_OPENAI_COMPATIBLE,
             self::TYPE_KIRO_API,
+            self::TYPE_DEEPSEEK,
         ]);
     }
 

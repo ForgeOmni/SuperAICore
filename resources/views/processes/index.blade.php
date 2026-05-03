@@ -115,7 +115,106 @@
         {{ __('processes.status_orphan') }}
     </div>
     @endif
+
+    @if(config('super-ai-core.resume.enabled', false))
+    <div class="stat-item ms-auto">
+        <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-arrow-counterclockwise"></i> Resume from…
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end" id="resume-harness-list">
+                <li><a class="dropdown-item" href="#" onclick="loadResumeSessions('claude'); return false;"><i class="bi bi-stars"></i> Claude Code</a></li>
+                <li><a class="dropdown-item" href="#" onclick="loadResumeSessions('codex'); return false;"><i class="bi bi-code-slash"></i> Codex</a></li>
+            </ul>
+        </div>
+    </div>
+    @endif
 </div>
+
+@if(config('super-ai-core.resume.enabled', false))
+<div class="modal fade" id="resumeSessionsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="resumeSessionsTitle">Resume sessions</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="resumeSessionsBody" class="small text-muted">Loading…</div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
+
+    window.loadResumeSessions = async function (harness) {
+        const modalEl = document.getElementById('resumeSessionsModal');
+        const titleEl = document.getElementById('resumeSessionsTitle');
+        const bodyEl  = document.getElementById('resumeSessionsBody');
+        titleEl.textContent = 'Resume sessions · ' + harness;
+        bodyEl.innerHTML = '<div class="text-muted small">Loading sessions…</div>';
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+        try {
+            const res = await fetch('{{ url(config('super-ai-core.route.prefix', 'super-ai-core') . '/resume') }}/' + harness, { headers: { 'Accept': 'application/json' } });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            const rows = data.sessions || [];
+            if (!rows.length) {
+                bodyEl.innerHTML = '<div class="text-muted small py-3 text-center">No sessions found on disk for ' + harness + '.</div>';
+                return;
+            }
+            const html = ['<div class="list-group list-group-flush">'];
+            for (const s of rows) {
+                const preview = (s.first_user_message || '').slice(0, 200).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+                html.push('<button type="button" class="list-group-item list-group-item-action" onclick="loadResumeSession(\'' + harness + '\', ' + JSON.stringify(s.id) + ')">' +
+                    '<div class="d-flex justify-content-between"><strong class="small">' + (s.project ?? '(no project)') + '</strong>' +
+                    '<span class="text-muted small">' + (s.started_at ?? '') + '</span></div>' +
+                    '<div class="small text-muted text-truncate">' + preview + '</div>' +
+                    '<div class="small font-monospace text-muted">' + s.id + ' · ' + (s.message_count ?? '?') + ' msgs</div>' +
+                    '</button>');
+            }
+            html.push('</div>');
+            bodyEl.innerHTML = html.join('');
+        } catch (e) {
+            bodyEl.innerHTML = '<div class="text-danger small py-3">Failed to list sessions: ' + e.message + '</div>';
+        }
+    };
+
+    window.loadResumeSession = async function (harness, sessionId) {
+        const bodyEl = document.getElementById('resumeSessionsBody');
+        bodyEl.innerHTML = '<div class="text-muted small">Loading transcript…</div>';
+        try {
+            const res = await fetch('{{ url(config('super-ai-core.route.prefix', 'super-ai-core') . '/resume') }}/' + harness + '/load', {
+                method: 'POST',
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf },
+                body: JSON.stringify({ session: sessionId }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                bodyEl.innerHTML = '<div class="text-danger small">Load failed: ' + (data.message || data.error) + '</div>';
+                return;
+            }
+            if (data.host_payload && typeof data.host_payload === 'object' && data.host_payload.redirect) {
+                window.location.href = data.host_payload.redirect;
+                return;
+            }
+            const transcript = data.transcript || [];
+            const lines = ['<div class="small text-muted mb-2">' + transcript.length + ' messages · ' + sessionId + '</div>'];
+            for (const m of transcript) {
+                const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2);
+                lines.push('<div class="mb-2 pb-2 border-bottom"><strong>' + m.role + '</strong><pre class="small mb-0" style="white-space:pre-wrap">' + c.replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])) + '</pre></div>');
+            }
+            bodyEl.innerHTML = lines.join('');
+        } catch (e) {
+            bodyEl.innerHTML = '<div class="text-danger small">Load failed: ' + e.message + '</div>';
+        }
+    };
+})();
+</script>
+@endif
 
 <div class="row">
     {{-- Process List --}}
@@ -160,6 +259,20 @@
                                         @endif
                                         @if($proc->resolved_model)
                                             <span class="badge" style="background:#faf5ff;color:#7c3aed;font-size:.6rem">{{ $proc->resolved_model }}</span>
+                                        @endif
+                                        @if($proc->latest_screenshot_url)
+                                            <a href="#"
+                                               class="badge text-decoration-none"
+                                               style="background:#fef3c7;color:#92400e;font-size:.6rem"
+                                               title="{{ __('processes.browser_screenshot', [], 'View latest browser screenshot') }}"
+                                               onclick="event.stopPropagation();"
+                                               data-side-panel-trigger='@json([
+                                                    "title"   => "Browser screenshot · " . ($proc->task_name ?? $proc->backend),
+                                                    "type"    => "html",
+                                                    "content" => '<img src="' . $proc->latest_screenshot_url . '" alt="screenshot" style="max-width:100%;border-radius:.375rem;">',
+                                               ])'>
+                                                <i class="bi bi-image"></i> screenshot
+                                            </a>
                                         @endif
                                         @if($proc->user && $proc->user !== '-')
                                             <span style="font-size:.65rem;color:var(--tf-text-muted, #64748b)">{{ $proc->user }}</span>
@@ -296,7 +409,11 @@ function loadLog(id) {
     .then(data => {
         const el = document.getElementById('logContent');
         if (data.ok && data.text) {
-            el.textContent = data.text;
+            // 0.9.0 — render fenced ```mermaid blocks inline (jcode-style)
+            // when SuperAICoreMermaid is loaded. Falls back to plain text
+            // when mermaid.js isn't on the page (host disabled it via
+            // super-ai-core.ui.mermaid_enabled=false).
+            renderLogWithMermaid(el, data.text);
             if (autoScroll) el.scrollTop = el.scrollHeight;
         } else if (data.ok) {
             el.innerHTML = '<span class="log-empty">{{ __("processes.log_empty") }}</span>';
@@ -307,6 +424,52 @@ function loadLog(id) {
     .catch(() => {
         document.getElementById('logContent').innerHTML = '<span class="log-empty">{{ __("processes.log_error") }}</span>';
     });
+}
+
+/**
+ * Split the log text on ```mermaid …``` fences and render each fence as
+ * a real Mermaid diagram alongside the preserved plain-text segments.
+ * No-op (plain textContent) when mermaid.js isn't loaded.
+ */
+function renderLogWithMermaid(container, text) {
+    container.innerHTML = '';
+    const fence = /```mermaid\s*\n([\s\S]*?)\n?```/g;
+    let last = 0, m;
+    while ((m = fence.exec(text)) !== null) {
+        if (m.index > last) {
+            const pre = document.createElement('span');
+            pre.textContent = text.substring(last, m.index);
+            container.appendChild(pre);
+        }
+        if (window.SuperAICoreMermaid) {
+            const div = document.createElement('div');
+            div.className = 'mermaid';
+            div.style.background = '#fff';
+            div.style.padding = '.75rem';
+            div.style.borderRadius = '6px';
+            div.style.margin = '.5rem 0';
+            div.textContent = m[1];
+            container.appendChild(div);
+        } else {
+            // Fall back to a styled <pre> so the diagram source is at
+            // least visible when mermaid is unavailable.
+            const pre = document.createElement('pre');
+            pre.style.color = '#a6e3a1';
+            pre.textContent = '```mermaid\n' + m[1] + '\n```';
+            container.appendChild(pre);
+        }
+        last = m.index + m[0].length;
+    }
+    if (last < text.length) {
+        const tail = document.createElement('span');
+        tail.textContent = text.substring(last);
+        container.appendChild(tail);
+    }
+    if (last === 0) {
+        // No fences — keep the cheap path.
+        container.textContent = text;
+    }
+    if (window.SuperAICoreMermaid) window.SuperAICoreMermaid.run();
 }
 
 function toggleAutoScroll() {

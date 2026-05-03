@@ -18,6 +18,8 @@ use SuperAICore\Console\Commands\KiroSyncCommand;
 use SuperAICore\Console\Commands\McpSyncBackendsCommand;
 use SuperAICore\Console\Commands\ListBackendsCommand;
 use SuperAICore\Console\Commands\ModelsCommand;
+use SuperAICore\Console\Commands\ProviderAddCommand;
+use SuperAICore\Console\Commands\ProviderRotateCommand;
 use SuperAICore\Console\Commands\SkillListCommand;
 use SuperAICore\Console\Commands\SkillRunCommand;
 use Symfony\Component\Console\Application as SymfonyApplication;
@@ -51,5 +53,7 @@ class Application extends SymfonyApplication
         $this->add(new CliInstallCommand());
         $this->add(new ApiStatusCommand());
         $this->add(new ModelsCommand());
+        $this->add(new ProviderAddCommand());
+        $this->add(new ProviderRotateCommand());
     }
 }

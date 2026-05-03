@@ -45,4 +45,22 @@ interface UsageRepository
      * @return array[]
      */
     public function all(?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null): array;
+
+
+    /**
+     * Most recent usage row whose `metadata.session_id` matches and whose
+     * backend is in the given filter list. Powers the 0.9.0 Anthropic
+     * cache-cold heuristic in `Dispatcher::detectCacheCold()` — by
+     * comparing this row's `created_at` to "now" the dispatcher decides
+     * whether the upstream prompt cache likely went cold.
+     *
+     * Implementations may return null when the lookup is unsupported, the
+     * session id has no prior rows, or the metadata column doesn't carry
+     * the key. Callers MUST treat null as "no signal" and silently skip
+     * the warning rather than emitting a false-positive.
+     *
+     * @param  list<string> $backends  ['anthropic_api', 'claude_cli', 'superagent'] etc.
+     * @return array{id:int, backend:string, model:string, created_at:string}|null
+     */
+    public function findLatestForSession(string $sessionId, array $backends): ?array;
 }

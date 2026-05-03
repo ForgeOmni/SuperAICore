@@ -516,7 +516,18 @@ class EngineCatalog
                 'cli_binary'          => null,
                 'default_model'       => null,
                 'billing_model'       => 'usage',
-                'available_models'    => [],
+                // Most provider models for the SDK come from the bundled
+                // SuperAgent ModelCatalog (resources/models.json) — a host
+                // override here would short-circuit `expandFromCatalog()`,
+                // so we keep the static seed minimal and let the catalog
+                // populate everything else. The DeepSeek V4 ids are
+                // surfaced explicitly so they show up in pickers without
+                // requiring the catalog probe to succeed (offline /
+                // composer dependency missing / catalog stale).
+                'available_models'    => [
+                    'deepseek-v4-pro',
+                    'deepseek-v4-flash',
+                ],
                 'process_spec'        => null,
             ],
         ];

@@ -42,6 +42,31 @@ class SuperAICoreServiceProvider extends ServiceProvider
         $this->app->singleton(EngineCatalog::class);
         $this->app->singleton(CostCalculator::class);
         $this->app->singleton(\SuperAICore\Support\CliBinaryLocator::class);
+
+        // Embedding-provider factory (0.9.7) — resolves `super-ai-core.embeddings.*`
+        // into an SDK `EmbeddingProvider` (Ollama / callable / host-supplied).
+        // Returned `?EmbeddingProvider` is shared by `SemanticSkillReranker`,
+        // `SuperAgentBackend`, and any host-side `SemanticSkillRouter`
+        // construction so the same instance + cache wins everywhere.
+        $this->app->singleton(\SuperAICore\Services\EmbeddingProviderFactory::class);
+
+        // Cross-harness session resume (0.9.7) — wraps SDK's HarnessImporter
+        // family so /processes Resume dropdown gets a single seam.
+        $this->app->singleton(\SuperAICore\Services\HarnessSessionResolver::class);
+
+        // Browser-screenshot store (0.9.7) — backs the `latest_screenshot_url`
+        // surface on `/processes` rows. SuperAgentBackend pumps base64 PNGs
+        // emitted by SDK 0.9.7's `FirefoxBridgeTool` (tool name `browser`)
+        // into this store keyed by the dispatch process_id; the Process
+        // Monitor reaper purges on FINISHED/KILLED. Ctor args read from
+        // `super-ai-core.browser_screenshots.{disk,dir}` so hosts can move
+        // them to S3 / per-pod tmpfs without a code change.
+        $this->app->singleton(\SuperAICore\Services\BrowserScreenshotStore::class, function () {
+            return new \SuperAICore\Services\BrowserScreenshotStore(
+                disk: (string) (config('super-ai-core.browser_screenshots.disk') ?? 'local'),
+                dir:  (string) (config('super-ai-core.browser_screenshots.dir')  ?? 'super-ai-core/browser-screenshots'),
+            );
+        });
         $this->app->singleton(CliProcessBuilderRegistry::class, function ($app) {
             return new CliProcessBuilderRegistry($app->make(EngineCatalog::class));
         });
@@ -135,6 +160,14 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 \SuperAICore\Console\Commands\McpSyncBackendsCommand::class,
                 \SuperAICore\Console\Commands\ApiStatusCommand::class,
                 \SuperAICore\Console\Commands\KimiSyncCommand::class,
+
+                // 0.9.0 — file-driven provider creation for CI / container
+                // bootstrap; secret-safe via stdin or env-var reference.
+                \SuperAICore\Console\Commands\ProviderAddCommand::class,
+                // 0.9.0 — multi-account quick swap (jcode `/account` style),
+                // also auto-fired by SuperAgentBackend on QuotaExceeded when
+                // super-ai-core.auto_rotate is enabled.
+                \SuperAICore\Console\Commands\ProviderRotateCommand::class,
 
                 // Skill telemetry / ranking / evolution (0.8.1+ — borrowed
                 // from OpenSpace's skill_engine; FIX-mode only, never

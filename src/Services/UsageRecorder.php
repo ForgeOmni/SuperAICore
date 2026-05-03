@@ -53,7 +53,12 @@ class UsageRecorder
      *   capability?: ?string,
      *   input_tokens?: int,
      *   output_tokens?: int,
-     *   cache_read_tokens?: int,   Anthropic prompt-cache reads (~10% of input)
+     *   cache_read_tokens?: int,   Anthropic prompt-cache reads (~10% of input).
+     *                              Also accepts the legacy `cache_hit_tokens`
+     *                              alias — DeepSeek V3 / R1 wires emit that
+     *                              key, and SDK 0.9.6 surfaces it under the
+     *                              same shape; we accept the alias to avoid
+     *                              a host-side translation layer.
      *   cache_write_tokens?: int,  Anthropic prompt-cache writes (~125% of input)
      *   duration_ms?: ?int,
      *   provider_id?: ?int,
@@ -82,7 +87,14 @@ class UsageRecorder
 
         $inputTokens = (int) ($data['input_tokens'] ?? 0);
         $outputTokens = (int) ($data['output_tokens'] ?? 0);
-        $cacheReadTokens  = (int) ($data['cache_read_tokens']  ?? 0);
+        // SDK 0.9.6 fix — `prompt_cache_hit_tokens` is the DeepSeek V3 / R1
+        // historical wire; the SDK now recognises it natively. Accept either
+        // name here so hosts that captured the raw provider envelope shape
+        // (instead of going through the SDK's normalised Usage object) stop
+        // silently dropping the cache slice. First non-zero wins.
+        $cacheReadTokens  = (int) ($data['cache_read_tokens']
+                                ?? $data['cache_hit_tokens']
+                                ?? 0);
         $cacheWriteTokens = (int) ($data['cache_write_tokens'] ?? 0);
 
         $cost = $data['cost_usd'] ?? null;

@@ -12,8 +12,11 @@ use SuperAgent\Exceptions\Provider\ServerOverloadedException;
 use SuperAgent\Exceptions\Provider\UsageNotIncludedException;
 use SuperAgent\Exceptions\ProviderException;
 use SuperAgent\MCP\MCPManager;
+use SuperAgent\Memory\Embeddings\EmbeddingProvider;
 use SuperAgent\Providers\ProviderRegistry;
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Services\BrowserScreenshotStore;
+use SuperAICore\Services\EmbeddingProviderFactory;
 use SuperAICore\Services\ProviderTypeRegistry;
 
 /**
@@ -64,15 +67,83 @@ use SuperAICore\Services\ProviderTypeRegistry;
  *                                    STAGNATION / FILE_READ_LOOP /
  *                                    CONTENT_LOOP / THOUGHT_LOOP).
  *
+ * SDK 0.9.7 surface (jcode-style companion-tools wave):
+ *
+ *   - embedding_provider: EmbeddingProvider
+ *                                    Pre-built SDK 0.9.7
+ *                                    `Memory\Embeddings\EmbeddingProvider`
+ *                                    instance. When omitted, the backend
+ *                                    pulls the container singleton built
+ *                                    by `EmbeddingProviderFactory` from
+ *                                    `super-ai-core.embeddings.*` config
+ *                                    so SuperAICore's `SemanticSkillReranker`
+ *                                    and any host-side `SemanticSkillRouter`
+ *                                    share one embedder + one cache. The
+ *                                    instance is stuffed into Agent's
+ *                                    forwarded `options` bag (under the
+ *                                    same key) so future SDK consumers can
+ *                                    pick it up via `Agent::getOptions()`
+ *                                    without per-call wiring.
+ *   - process_id: string             Used to key `BrowserScreenshotStore`
+ *                                    when a `browser` tool emits a base64
+ *                                    PNG. Falls back to
+ *                                    `metadata.session_id` then
+ *                                    `external_label` when omitted.
+ *
+ * Tool injection (config-driven, opt-in):
+ *
+ *   - `super-ai-core.tools.agent_grep_enabled`  → adds 'agent_grep' to
+ *     `load_tools` when the caller didn't pass an explicit list. The tool
+ *     ships in the SDK's BuiltinToolRegistry classMap (lazy-loaded by
+ *     ToolLoader); flipping the flag is a no-op unless the caller actually
+ *     drives the agentic loop with tools.
+ *   - `super-ai-core.tools.browser_enabled`     → instantiates SDK 0.9.7
+ *     `FirefoxBridgeTool` (`browser`) and registers it via
+ *     `Agent::addTool()`. Not in the BuiltinToolRegistry classMap, so this
+ *     is the only way to surface it from `load_tools`. Requires
+ *     `SUPERAGENT_BROWSER_BRIDGE_PATH` env or `launcherArgv` to actually
+ *     run a browser; without that, every action returns an explanatory
+ *     error so the agent learns to ask for setup help instead of looping.
+ *
+ * Envelope additions (0.9.7):
+ *   - latest_screenshot_url: string  When the `browser` tool emitted a
+ *                                    base64 PNG during the run,
+ *                                    `BrowserScreenshotStore` persists
+ *                                    the latest frame and the URL is
+ *                                    surfaced here so the Process Monitor
+ *                                    row's `latest_screenshot_url` and
+ *                                    `/usage` row metadata can render it
+ *                                    inline. Key omitted when no browser
+ *                                    activity occurred — envelope shape
+ *                                    stays byte-identical for callers
+ *                                    that don't drive a browser.
+ *
  * Envelope additions on success:
  *   - usage.cache_read_input_tokens, usage.cache_creation_input_tokens
  *   - cost_usd:   SDK's own turn-summed cost. Dispatcher prefers this
  *                 over its own CostCalculator when non-zero.
  *   - turns:      number of assistant turns actually consumed.
+ *   - thinking:   reasoning channel content concatenated across the
+ *                 conversation (SDK 0.9.6+). Present only when the
+ *                 backend actually emitted reasoning text — Anthropic
+ *                 native thinking, OpenAI-compat `delta.reasoning_content`
+ *                 (DeepSeek V4-thinking, Kimi-thinking, Qwen-reasoning,
+ *                 GLM-thinking, OpenAI o-series). Omitted otherwise so
+ *                 the envelope shape stays byte-identical for non-thinking
+ *                 conversations.
+ *   - deprecation: { model, deprecated_until, replaced_by, days_left }
+ *                 (SDK 0.9.6+). Present when the resolved model has a
+ *                 retirement date in `ModelCatalog`. Dispatcher writes
+ *                 this onto the usage row metadata so dashboards can
+ *                 surface "you have N days to migrate to <replaced_by>".
  */
 class SuperAgentBackend implements Backend
 {
-    public function __construct(protected ?LoggerInterface $logger = null) {}
+    public function __construct(
+        protected ?LoggerInterface $logger = null,
+        protected ?EmbeddingProviderFactory $embeddingFactory = null,
+        protected ?BrowserScreenshotStore $screenshotStore = null,
+    ) {}
 
     public function name(): string
     {
@@ -146,6 +217,38 @@ class SuperAgentBackend implements Backend
             $subagents = $this->extractSubagentProductivity($result->messages ?? []);
             if ($subagents !== []) {
                 $envelope['subagents'] = $subagents;
+            }
+
+            // SDK 0.9.6+ reasoning channel — `delta.reasoning_content` and
+            // Anthropic native `thinking` blocks both surface as
+            // ContentBlock(type='thinking') prepended to the assistant
+            // turn. Concatenate across the message history so callers can
+            // render or hide the agent's internal monologue deliberately.
+            // Key omitted when no reasoning text appeared — envelope shape
+            // stays unchanged for non-thinking conversations.
+            $thinking = $this->extractThinking($result->messages ?? []);
+            if ($thinking !== '') {
+                $envelope['thinking'] = $thinking;
+            }
+
+            // SDK 0.9.6+ deprecation surfacing — `ModelCatalog::deprecation()`
+            // returns retirement metadata for models the catalog flagged.
+            // The SDK separately writes a one-shot `error_log` warning
+            // (silenced by `SUPERAGENT_SUPPRESS_DEPRECATION=1`); we read
+            // the same source so the dashboard shows the same notice.
+            $deprecation = $this->resolveDeprecation($model);
+            if ($deprecation !== null) {
+                $envelope['deprecation'] = $deprecation;
+            }
+
+            // SDK 0.9.7 — when the agent invoked the `browser` tool
+            // (FirefoxBridgeTool) and a screenshot came back, persist the
+            // latest frame in BrowserScreenshotStore keyed by the dispatch
+            // process_id and surface the URL so /processes can render it.
+            // Key omitted when no browser activity occurred.
+            $screenshotUrl = $this->persistLatestScreenshot($result->messages ?? [], $options);
+            if ($screenshotUrl !== null) {
+                $envelope['latest_screenshot_url'] = $screenshotUrl;
             }
 
             return $envelope;
@@ -280,10 +383,22 @@ class SuperAgentBackend implements Backend
         // non-Laravel contexts ("Config unavailable for …"), and we already
         // add MCP tools below via attachMcpTools(). `tools: []` is handled
         // first inside Agent::initializeTools() and skips ToolLoader entirely.
+        //
+        // 0.9.7 — when the caller didn't pass an explicit `load_tools`,
+        // honour the `super-ai-core.tools.*_enabled` flags by promoting
+        // `agent_grep` (in the SDK's BuiltinToolRegistry classMap, so
+        // ToolLoader resolves it) into the load list. `browser` isn't in
+        // the classMap and is added directly to the agent below via
+        // `addTool()` — see `attachBrowserTool()`.
         if (array_key_exists('load_tools', $options)) {
             $agentConfig['load_tools'] = $options['load_tools'];
         } else {
-            $agentConfig['tools'] = [];
+            $autoLoad = $this->configuredAutoLoadTools();
+            if ($autoLoad !== []) {
+                $agentConfig['load_tools'] = $autoLoad;
+            } else {
+                $agentConfig['tools'] = [];
+            }
         }
 
         if (isset($options['max_cost_usd']) && (float) $options['max_cost_usd'] > 0) {
@@ -317,6 +432,18 @@ class SuperAgentBackend implements Backend
         if (array_key_exists('loop_detection', $options)) {
             $forwardedOptions['loop_detection'] = $options['loop_detection'];
         }
+
+        // SDK 0.9.7 forward — `embedding_provider`. SDK consumers that
+        // build a `SemanticSkillRouter` via `Agent::getOptions()` get the
+        // same instance the host app's container holds, so SuperAICore's
+        // `SemanticSkillReranker` and the SDK's own router share one
+        // embedder + cache. Caller can pass an explicit instance to
+        // override; else we resolve via `EmbeddingProviderFactory`.
+        $embedder = $this->resolveEmbeddingProvider($options);
+        if ($embedder instanceof EmbeddingProvider) {
+            $forwardedOptions['embedding_provider'] = $embedder;
+        }
+
         if ($forwardedOptions !== []) {
             $agentConfig['options'] = $forwardedOptions;
         }
@@ -330,7 +457,95 @@ class SuperAgentBackend implements Backend
             $agent->withDeniedTools(array_values($options['denied_tools']));
         }
 
+        // 0.9.7 — `browser` tool isn't in BuiltinToolRegistry::classMap so
+        // it can't ride `load_tools`; register it directly when the flag
+        // is on. Pre-existing `addTool()` for MCP runs after this in
+        // generate(), so MCP tools win on name collision (none today).
+        $this->attachBrowserTool($agent, $options);
+
         return $agent;
+    }
+
+    /**
+     * Auto-load list seeded by `super-ai-core.tools.*_enabled` flags. Only
+     * fires on the implicit path — when the caller passes their own
+     * `load_tools`, we leave it untouched. Returns [] when no flag is on
+     * (preserves the pre-0.9.7 behaviour of `tools: []` short-circuit).
+     *
+     * @return list<string>
+     */
+    protected function configuredAutoLoadTools(): array
+    {
+        if (!function_exists('config')) return [];
+        $tools = [];
+        if ((bool) config('super-ai-core.tools.agent_grep_enabled', false)) {
+            $tools[] = 'agent_grep';
+        }
+        return $tools;
+    }
+
+    /**
+     * Add SDK 0.9.7's `FirefoxBridgeTool` (`browser`) to the agent when
+     * the operator opted in via `super-ai-core.tools.browser_enabled`.
+     * Silent no-op when SDK FirefoxBridgeTool isn't on the classpath
+     * (host pinned to pre-0.9.7) or when the flag is off.
+     *
+     * The tool itself has tight degrade-on-missing-launcher semantics:
+     * when `SUPERAGENT_BROWSER_BRIDGE_PATH` isn't set, every action
+     * returns an error string explaining the missing setup so the agent
+     * stops looping. Callers that want to suppress the tool entirely
+     * leave the flag off.
+     *
+     * @param array<string,mixed> $options
+     */
+    protected function attachBrowserTool(Agent $agent, array $options): void
+    {
+        if (!function_exists('config')) return;
+        if (!(bool) config('super-ai-core.tools.browser_enabled', false)) return;
+
+        $cls = '\\SuperAgent\\Tools\\Builtin\\FirefoxBridgeTool';
+        if (!class_exists($cls)) return;
+
+        try {
+            $launcher = $options['browser_launcher_argv'] ?? null;
+            $tool = is_array($launcher) && $launcher !== []
+                ? new $cls($launcher)
+                : new $cls();
+            $agent->addTool($tool);
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->debug('SuperAgentBackend: skipping browser tool wiring: ' . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * Resolve the EmbeddingProvider for this dispatch. Caller-supplied
+     * instance wins; otherwise the container singleton built from
+     * `super-ai-core.embeddings.*` config is shared with
+     * `SemanticSkillReranker`.
+     *
+     * Returns null when the SDK 0.9.7 Memory\Embeddings package is
+     * unavailable or no embedder is configured — caller can degrade.
+     *
+     * @param array<string,mixed> $options
+     */
+    protected function resolveEmbeddingProvider(array $options): ?EmbeddingProvider
+    {
+        if (!interface_exists(EmbeddingProvider::class)) return null;
+
+        $explicit = $options['embedding_provider'] ?? null;
+        if ($explicit instanceof EmbeddingProvider) return $explicit;
+
+        $factory = $this->embeddingFactory;
+        if ($factory === null && function_exists('app')) {
+            try {
+                $factory = app(EmbeddingProviderFactory::class);
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+        return $factory?->make();
     }
 
     /**
@@ -446,6 +661,201 @@ class SuperAgentBackend implements Backend
         }
 
         return $manager;
+    }
+
+    /**
+     * Concatenate every `thinking`-type content block emitted across the
+     * AgentResult message trail. Returns '' when the SDK never produced
+     * reasoning text (pre-0.9.6 SDK, providers without a reasoning channel,
+     * or `delta.reasoning_content` simply not emitted on this turn).
+     *
+     * Reads two shapes:
+     *   - native `ContentBlock` instances with `type === 'thinking'` and
+     *     `text` populated (Anthropic's native channel + 0.9.6 OpenAI-compat
+     *     `delta.reasoning_content` rebroadcast)
+     *   - bare arrays `['type' => 'thinking', 'text' => '…']` for hosts
+     *     that hand-build messages outside the SDK's normal path
+     *
+     * Never throws — malformed blocks are skipped silently.
+     *
+     * @param  array<int, object|array<string,mixed>> $messages  AgentResult::$messages
+     */
+    protected function extractThinking(array $messages): string
+    {
+        $parts = [];
+        foreach ($messages as $msg) {
+            if (!is_object($msg)) continue;
+            // AssistantMessage carries the thinking block; tool result / system
+            // messages don't (and would never be reached here anyway since the
+            // SDK only emits thinking on assistant turns).
+            $blocks = $msg->content ?? null;
+            if (!is_array($blocks)) continue;
+            foreach ($blocks as $block) {
+                $type = is_object($block) ? ($block->type ?? null)
+                      : (is_array($block) ? ($block['type'] ?? null) : null);
+                if ($type !== 'thinking') continue;
+                $text = is_object($block) ? ($block->text ?? '')
+                      : (is_array($block) ? ($block['text'] ?? '') : '');
+                if (!is_string($text) || $text === '') continue;
+                $parts[] = $text;
+            }
+        }
+        return implode("\n\n", $parts);
+    }
+
+    /**
+     * Lookup catalog deprecation metadata for the resolved model. Returns
+     * null when ModelCatalog isn't available (SDK pinned below 0.9.6 or
+     * the user removed the bundled `models.json`), when the catalog has no
+     * row for this id, or when the row carries no `deprecated_until` field
+     * (i.e. the model is current).
+     *
+     * Shape: `{model, deprecated_until, replaced_by, days_left}`.
+     * `days_left` is negative once the deprecation window has lapsed —
+     * callers can use that to escalate the warning level.
+     *
+     * @return array{model:string, deprecated_until:string, replaced_by:?string, days_left:int}|null
+     */
+    protected function resolveDeprecation(string $model): ?array
+    {
+        $catalog = '\\SuperAgent\\Providers\\ModelCatalog';
+        if (!class_exists($catalog) || !method_exists($catalog, 'deprecation')) {
+            return null;
+        }
+        try {
+            $info = $catalog::deprecation($model);
+        } catch (\Throwable) {
+            return null;
+        }
+        if (!is_array($info) || !isset($info['deprecated_until'])) {
+            return null;
+        }
+        return [
+            'model'             => $model,
+            'deprecated_until'  => (string) $info['deprecated_until'],
+            'replaced_by'       => isset($info['replaced_by']) ? (string) $info['replaced_by'] : null,
+            'days_left'         => (int) ($info['days_left'] ?? 0),
+        ];
+    }
+
+    /**
+     * Persist the latest base64 PNG emitted by SDK 0.9.7's `browser` tool
+     * (FirefoxBridgeTool) into `BrowserScreenshotStore` and return the
+     * URL so the envelope can carry it onto `/processes` and `/usage`.
+     * Returns null when no browser screenshot fired this run (the common
+     * case — most dispatches don't drive a browser).
+     *
+     * Identification strategy: a `tool_use` block with `toolName === 'browser'`
+     * is followed in the trail by a `tool_result` block carrying the same
+     * `toolUseId`. The result content is JSON-encoded
+     * `{format,base64,bytes}` (see FirefoxBridgeTool::execute case
+     * 'screenshot'). We pair them up and keep the LAST successful one —
+     * a long agent run might take many screenshots and only the most
+     * recent is operationally interesting.
+     *
+     * Process-id key precedence (must agree with the host's
+     * ProcessSource so `BrowserScreenshotStore::latest($pid)` lines up):
+     *   1. options['process_id']
+     *   2. options['metadata']['session_id']
+     *   3. options['external_label']
+     *   4. random 16-hex (last resort — orphaned but at least keyed)
+     *
+     * @param  array<int, object|array<string,mixed>> $messages  AgentResult::$messages
+     * @param  array<string,mixed>                    $options   dispatch options
+     */
+    protected function persistLatestScreenshot(array $messages, array $options): ?string
+    {
+        $store = $this->resolveScreenshotStore();
+        if ($store === null) return null;
+
+        $browserUseIds = [];
+        $latestB64 = null;
+        foreach ($messages as $msg) {
+            if (!is_object($msg)) continue;
+            $blocks = $msg->content ?? null;
+            if (!is_array($blocks)) continue;
+            foreach ($blocks as $block) {
+                if (!is_object($block)) continue;
+                $type = $block->type ?? null;
+                if ($type === 'tool_use') {
+                    $name = $block->toolName ?? null;
+                    $useId = $block->toolUseId ?? null;
+                    if ($name === 'browser' && is_string($useId) && $useId !== '') {
+                        $browserUseIds[$useId] = true;
+                    }
+                    continue;
+                }
+                if ($type !== 'tool_result') continue;
+                $useId = $block->toolUseId ?? null;
+                if (!is_string($useId) || !isset($browserUseIds[$useId])) continue;
+                if (($block->isError ?? false) === true) continue;
+
+                $raw = $block->content ?? null;
+                if (!is_string($raw) || $raw === '') continue;
+                $decoded = json_decode($raw, true);
+                if (!is_array($decoded)) continue;
+                $b64 = $decoded['base64'] ?? null;
+                if (!is_string($b64) || $b64 === '') continue;
+                $latestB64 = $b64;
+            }
+        }
+        if ($latestB64 === null) return null;
+
+        $key = $this->resolveScreenshotKey($options);
+        try {
+            return $store->store($key, $latestB64);
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->debug('SuperAgentBackend: screenshot store failed: ' . $e->getMessage());
+            }
+            return null;
+        }
+    }
+
+    protected function resolveScreenshotStore(): ?BrowserScreenshotStore
+    {
+        if ($this->screenshotStore !== null) return $this->screenshotStore;
+        if (!function_exists('app')) return null;
+        try {
+            return app(BrowserScreenshotStore::class);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Round-trip key for `BrowserScreenshotStore`. The host's ProcessSource
+     * has to pick the same one to render the frame back; precedence is
+     * picked so that the natural Dispatcher inputs (`external_label`,
+     * `metadata.session_id`) hit before we fall back to randomness.
+     *
+     *   1. options['process_id']             — host-owned explicit hook
+     *   2. options['external_label']         — Dispatcher's canonical id
+     *   3. options['metadata']['session_id'] — same session id used by
+     *                                          cache-cold detection
+     *   4. options['session_id']             — bare-call fallback
+     *   5. random hex                        — orphaned but at least keyed
+     *
+     * @param array<string,mixed> $options
+     */
+    protected function resolveScreenshotKey(array $options): string
+    {
+        if (isset($options['process_id']) && is_string($options['process_id']) && $options['process_id'] !== '') {
+            return $options['process_id'];
+        }
+        $label = $options['external_label'] ?? null;
+        if (is_string($label) && $label !== '') return $label;
+
+        $sid = $options['metadata']['session_id'] ?? null;
+        if (is_string($sid) && $sid !== '') return $sid;
+        if (isset($options['session_id']) && is_string($options['session_id']) && $options['session_id'] !== '') {
+            return $options['session_id'];
+        }
+        try {
+            return bin2hex(random_bytes(8));
+        } catch (\Throwable) {
+            return 'unknown-' . dechex((int) (microtime(true) * 1000));
+        }
     }
 
     /**

@@ -4,6 +4,7 @@ namespace SuperAICore\Sources;
 
 use SuperAICore\Contracts\ProcessSource;
 use SuperAICore\Models\AiProcess;
+use SuperAICore\Services\BrowserScreenshotStore;
 use SuperAICore\Services\ProcessMonitor;
 use SuperAICore\Support\ProcessEntry;
 
@@ -51,6 +52,7 @@ class AiProcessSource implements ProcessSource
         // reap dead PIDs for those rows — we just don't emit a duplicate
         // bare entry that the view would render as "task:3" with no badges.
         $hostOwnedPrefixes = (array) config('super-ai-core.process_monitor.host_owned_label_prefixes', []);
+        $screenshotStore = $this->resolveScreenshotStore();
 
         $alive = [];
         foreach (AiProcess::where('status', AiProcess::STATUS_RUNNING)->orderByDesc('started_at')->get() as $p) {
@@ -62,6 +64,10 @@ class AiProcessSource implements ProcessSource
                 // close its own row (e.g. host runner died mid-flight,
                 // or registrar end() failed silently).
                 $p->update(['status' => AiProcess::STATUS_FINISHED, 'ended_at' => now()]);
+                // 0.9.7 — purge any browser screenshot SuperAgentBackend
+                // wrote for this row. The store's `purgeFor()` is a no-op
+                // when there's no frame, so cheap to call unconditionally.
+                $this->purgeScreenshot($screenshotStore, $p);
                 continue;
             }
 
@@ -83,10 +89,58 @@ class AiProcessSource implements ProcessSource
                 command: $p->command,
                 started_at: $p->started_at,
                 log_file: $p->log_file,
+                latest_screenshot_url: $this->latestScreenshot($screenshotStore, $p),
             );
         }
 
         return $alive;
+    }
+
+    protected function resolveScreenshotStore(): ?BrowserScreenshotStore
+    {
+        if (!function_exists('app')) return null;
+        try {
+            return app(BrowserScreenshotStore::class);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Look up the latest browser screenshot URL for this row. Round-trips
+     * with `SuperAgentBackend::resolveScreenshotKey()` — same precedence
+     * (`external_label` first, then row id) so the frame appears against
+     * the right /processes entry.
+     */
+    protected function latestScreenshot(?BrowserScreenshotStore $store, AiProcess $p): ?string
+    {
+        if ($store === null) return null;
+        foreach ($this->screenshotKeys($p) as $key) {
+            $url = $store->latest($key);
+            if ($url !== null) return $url;
+        }
+        return null;
+    }
+
+    protected function purgeScreenshot(?BrowserScreenshotStore $store, AiProcess $p): void
+    {
+        if ($store === null) return;
+        foreach ($this->screenshotKeys($p) as $key) {
+            try {
+                $store->purgeFor($key);
+            } catch (\Throwable) {
+                // best-effort
+            }
+        }
+    }
+
+    /** @return list<string> */
+    protected function screenshotKeys(AiProcess $p): array
+    {
+        $keys = [];
+        if (!empty($p->external_label)) $keys[] = (string) $p->external_label;
+        $keys[] = ProcessEntry::compose(self::KEY, $p->id);
+        return $keys;
     }
 
     protected function labelIsHostOwned(string $label, array $prefixes): bool

@@ -162,6 +162,22 @@ class Dispatcher
         // guarantees pass `idempotency_key` explicitly. Hosts that
         // want NO dedup (rare — every call legitimately distinct) can
         // pass `idempotency_key => false` to skip auto-gen.
+        // 0.9.0 — Anthropic prompt cache TTL is 5 minutes; if a follow-up
+        // call to the same session arrives after the window closes, the
+        // user pays the full input price for the entire prefix again. We
+        // can't prevent the miss, but we can flag it so the dashboard
+        // surfaces an "unexpected cold cache" badge — borrowed in spirit
+        // from jcode, which warns interactively in its TUI when the cache
+        // ages past the threshold. Silently skipped when the call carries
+        // no `session_id` or runs through a non-Anthropic backend.
+        // Computed BEFORE the usage write (0.9.1) so the warning lands on
+        // the row metadata, which lets /processes + /usage render badges
+        // without re-deriving the heuristic.
+        $coldWarning = $this->detectCacheCold($options, $backend->name(), $cacheReadTokens);
+        if ($coldWarning !== null) {
+            $result['cache_warning'] = $coldWarning;
+        }
+
         if ($this->usage) {
             // Prefer the key the backend echoed off `AgentResult::$idempotencyKey`
             // (SDK 0.9.1+ round-trip) — it's authoritative because the SDK
@@ -174,6 +190,33 @@ class Dispatcher
             } elseif (isset($callOptions['idempotency_key']) && is_string($callOptions['idempotency_key'])) {
                 $idempotencyKey = $callOptions['idempotency_key'];
             }
+
+            // SDK 0.9.6+ — record reasoning channel size and deprecation
+            // notice on the usage row metadata so dashboards can render
+            // a "thinking" badge / "X days until <model> retires" banner
+            // without re-querying the SDK. `thinking_chars` is a cheap
+            // proxy for reasoning depth; full text stays on the envelope.
+            $thinkingChars = isset($result['thinking']) && is_string($result['thinking'])
+                ? mb_strlen($result['thinking'])
+                : 0;
+            $deprecationMeta = isset($result['deprecation']) && is_array($result['deprecation'])
+                ? $result['deprecation']
+                : null;
+            // Optional rate-limit envelope (SDK populates when the upstream
+            // provider response carried `x-ratelimit-*` headers). Passive —
+            // omitted when the SDK didn't surface it, so legacy tests
+            // comparing exact metadata shapes stay green.
+            $rateLimitMeta = isset($result['rate_limit']) && is_array($result['rate_limit'])
+                ? $result['rate_limit']
+                : null;
+
+            // 0.9.7 — pull `usage_source` to the top-level metadata so
+            // `/usage` can group on it without JSON path nesting. Default
+            // 'user' keeps existing rows queryable as one bucket;
+            // SuperAgent's `AmbientWorker` tags background dedup/staleness
+            // ticks with 'ambient', and hosts can introduce other sources
+            // (e.g. 'eval' for offline benchmarks).
+            $usageSource = $this->resolveUsageSource($options);
 
             $usageLogId = $this->usage->record([
                 'backend' => $backend->name(),
@@ -194,6 +237,15 @@ class Dispatcher
                     'cache_read_tokens'    => $cacheReadTokens ?: null,
                     'cache_write_tokens'   => $cacheWriteTokens ?: null,
                     'cost_source'          => isset($usage['total_cost_usd']) ? 'cli_envelope' : 'calculator',
+                    'thinking_chars'       => $thinkingChars ?: null,
+                    // array_filter's default callback drops null + false +
+                    // 0 + '' but KEEPS [] — explicitly null these out so
+                    // empty SDK envelopes don't leak `deprecation: []` /
+                    // `rate_limit: []` rows into the dashboard.
+                    'deprecation'          => $deprecationMeta ?: null,
+                    'rate_limit'           => $rateLimitMeta ?: null,
+                    'cache_warning'        => $coldWarning,
+                    'usage_source'         => $usageSource,
                 ]) ?: null,
                 'idempotency_key' => $idempotencyKey,
             ]);
@@ -203,6 +255,94 @@ class Dispatcher
         }
 
         return $result;
+    }
+
+    /**
+     * Detect a likely-cold Anthropic prompt cache. Returns null when the
+     * heuristic doesn't apply (non-Anthropic backend, no session_id,
+     * usage repository unreachable, this call already consumed cache
+     * reads), 'cache_likely_cold' when the previous same-session call
+     * was longer ago than the configured threshold (default 270s — leaves
+     * 30s headroom under Anthropic's 5-minute TTL).
+     *
+     * Cheap: one indexed query against ai_usage_logs.metadata->'session_id'
+     * filtered by created_at >= now-threshold. Hosts that don't surface a
+     * session_id pay the cost of the field-presence guard only.
+     */
+    protected function detectCacheCold(array $options, string $backendName, int $cacheReadTokens): ?string
+    {
+        // The 5-minute TTL only applies to Anthropic's family. Other
+        // providers either have no prompt cache (Gemini, OpenAI Chat) or
+        // a server-driven one that doesn't time out the same way (OpenAI
+        // Responses with prompt_cache_key, DeepSeek auto-cache).
+        $anthropicBackends = ['anthropic_api', 'claude_cli', 'superagent'];
+        if (!in_array($backendName, $anthropicBackends, true)) return null;
+
+        // Cache reads on this call → cache was warm; nothing to warn about.
+        if ($cacheReadTokens > 0) return null;
+
+        $sessionId = $options['metadata']['session_id'] ?? $options['session_id'] ?? null;
+        if (!is_string($sessionId) || $sessionId === '') return null;
+
+        $thresholdSeconds = (int) (function_exists('config')
+            ? (config('super-ai-core.cache_cold_warning.threshold_seconds') ?? 270)
+            : 270);
+        if ($thresholdSeconds <= 0) return null;
+
+        // Defer to the usage repository if the host registered one — it's
+        // the only seam that knows the table prefix + driver. Falls back
+        // to null when the repo doesn't expose the optional finder, which
+        // keeps backward compatibility with older repository implementations.
+        if ($this->usage === null || !method_exists($this->usage, 'findLatestForSession')) {
+            return null;
+        }
+        try {
+            $previous = $this->usage->findLatestForSession($sessionId, $anthropicBackends);
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->debug('Dispatcher: cache-cold lookup failed: ' . $e->getMessage());
+            }
+            return null;
+        }
+        if (!is_array($previous) || !isset($previous['created_at'])) return null;
+
+        $previousAt = strtotime((string) $previous['created_at']);
+        if ($previousAt === false) return null;
+        $gapSeconds = time() - $previousAt;
+        if ($gapSeconds <= $thresholdSeconds) return null;
+
+        return 'cache_likely_cold';
+    }
+
+    /**
+     * Resolve the usage source for this dispatch. Precedence:
+     *
+     *   1. `options['usage_source']`              — explicit override
+     *   2. `options['metadata']['usage_source']`  — Dispatcher-canonical
+     *      (matches the shape SuperAgent's `AmbientWorker` tags via its
+     *      `tagUsage` callback — `usage_source: 'ambient'`)
+     *   3. 'user'                                  — sensible default so
+     *      every row is bucketable on `/usage`
+     *
+     * Constrained to a small allowlist so a typo doesn't leak into the
+     * dashboard as a phantom source bucket.
+     *
+     * @param  array<string,mixed> $options
+     */
+    protected function resolveUsageSource(array $options): string
+    {
+        $candidates = [
+            $options['usage_source']             ?? null,
+            $options['metadata']['usage_source'] ?? null,
+        ];
+        foreach ($candidates as $c) {
+            if (is_string($c) && $c !== '') {
+                $clean = mb_strtolower(preg_replace('/[^a-z0-9_-]+/i', '', $c) ?? '');
+                if ($clean === '') continue;
+                return mb_substr($clean, 0, 32);
+            }
+        }
+        return 'user';
     }
 
     /**
