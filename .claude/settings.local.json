@@ -6,7 +6,25 @@
       "PowerShell(composer update *)",
       "PowerShell(php -r \"require 'vendor/autoload.php'; foreach \\(['SuperAgent\\\\Memory\\\\Embeddings\\\\EmbeddingProvider', 'SuperAgent\\\\Memory\\\\Embeddings\\\\OllamaEmbeddingProvider', 'SuperAgent\\\\Memory\\\\Embeddings\\\\CallableEmbeddingProvider', 'SuperAgent\\\\Tools\\\\Builtin\\\\FirefoxBridgeTool', 'SuperAgent\\\\Tools\\\\Builtin\\\\AgentGrepTool', 'SuperAgent\\\\Conversation\\\\HarnessImporter', 'SuperAgent\\\\Conversation\\\\Importers\\\\ClaudeCodeImporter', 'SuperAgent\\\\Conversation\\\\Importers\\\\CodexImporter', 'SuperAgent\\\\Swarm\\\\AmbientWorker', 'SuperAgent\\\\Skills\\\\SemanticSkillRouter'] as \\\\$c\\) { echo \\(interface_exists\\(\\\\$c\\) || class_exists\\(\\\\$c\\) ? 'OK    ' : 'MISS  '\\) . \\\\$c . PHP_EOL; }\")",
       "PowerShell(Remove-Item *)",
-      "PowerShell(php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\config\\\\super-ai-core.php)"
+      "PowerShell(php -l C:\\\\Users\\\\mlizp\\\\SuperAICore\\\\config\\\\super-ai-core.php)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\mlizp\\\\ruflo\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(./vendor/bin/phpunit tests/Unit/Sync/ClaudeHookWriterTest.php tests/Unit/Sync/HookFanoutServiceTest.php tests/Unit/Sync/CopilotHookWriterTest.php)",
+      "Bash(php bin/superaicore hooks:sync --help)",
+      "Bash(php bin/superaicore hooks:sync --dry-run)",
+      "Bash(echo \"---exit=$?\")",
+      "Bash(./vendor/bin/phpunit tests/Unit/PluginManifestTest.php)",
+      "Bash(./vendor/bin/phpunit tests/Unit/PluginLoaderTest.php tests/Unit/PluginsTest.php)",
+      "Bash(./vendor/bin/phpunit tests/Unit/PluginManifestTest.php tests/Unit/PluginLoaderTest.php tests/Unit/PluginsTest.php)",
+      "Bash(./vendor/bin/phpunit tests/Unit/Plugins/PluginManifestTest.php)",
+      "Bash(./vendor/bin/phpunit tests/Unit/Plugins/)",
+      "Bash(composer show *)",
+      "Bash(php -r \"echo extension_loaded\\('sodium'\\) ? 'sodium ext: yes' : 'sodium ext: no'; echo PHP_EOL; echo function_exists\\('sodium_crypto_sign_keypair'\\) ? 'sodium_crypto_sign_keypair: yes' : 'no';\")",
+      "Bash(./vendor/bin/phpunit tests/Unit/Federation/)",
+      "Bash(php *)",
+      "Bash(./vendor/bin/phpunit tests/Unit/Guidance/)",
+      "Bash(./vendor/bin/phpunit tests/Unit/Memory/BruteForceVectorIndexTest.php tests/Unit/Memory/HnswVectorIndexFallbackTest.php)",
+      "Bash(./vendor/bin/phpunit tests/Unit/Phase6MemoryTest.php)"
     ]
   }
 }

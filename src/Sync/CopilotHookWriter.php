@@ -26,7 +26,7 @@ namespace SuperAICore\Sync;
  * repo and would get committed. Host apps typically want a user-level,
  * repo-agnostic surface — config.json fits that.
  */
-final class CopilotHookWriter
+final class CopilotHookWriter implements HookWriterInterface
 {
     public const STATUS_WRITTEN     = 'written';
     public const STATUS_UNCHANGED   = 'unchanged';
@@ -40,6 +40,17 @@ final class CopilotHookWriter
         private readonly string $configJsonPath,
         private readonly Manifest $manifest,
     ) {}
+
+    public function engineKey(): string
+    {
+        return 'copilot';
+    }
+
+    public function isAvailable(): bool
+    {
+        $dir = dirname($this->configJsonPath);
+        return is_dir($dir) || @mkdir($dir, 0755, true) || is_dir($dir);
+    }
 
     /**
      * Merge the given hooks block into Copilot's config.json. Pass

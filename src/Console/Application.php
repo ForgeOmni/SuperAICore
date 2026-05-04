@@ -13,11 +13,13 @@ use SuperAICore\Console\Commands\CopilotFleetCommand;
 use SuperAICore\Console\Commands\CopilotSyncCommand;
 use SuperAICore\Console\Commands\CopilotSyncHooksCommand;
 use SuperAICore\Console\Commands\GeminiSyncCommand;
+use SuperAICore\Console\Commands\HooksSyncCommand;
 use SuperAICore\Console\Commands\KimiSyncCommand;
 use SuperAICore\Console\Commands\KiroSyncCommand;
 use SuperAICore\Console\Commands\McpSyncBackendsCommand;
 use SuperAICore\Console\Commands\ListBackendsCommand;
 use SuperAICore\Console\Commands\ModelsCommand;
+use SuperAICore\Console\Commands\PluginsInstallCommand;
 use SuperAICore\Console\Commands\ProviderAddCommand;
 use SuperAICore\Console\Commands\ProviderRotateCommand;
 use SuperAICore\Console\Commands\SkillListCommand;
@@ -45,6 +47,7 @@ class Application extends SymfonyApplication
         $this->add(new CopilotSyncCommand());
         $this->add(new CopilotFleetCommand());
         $this->add(new CopilotSyncHooksCommand());
+        $this->add(new HooksSyncCommand());
         $this->add(new KiroSyncCommand());
         $this->add(new KimiSyncCommand());
         $this->add(new ClaudeMcpSyncCommand());
@@ -55,5 +58,6 @@ class Application extends SymfonyApplication
         $this->add(new ModelsCommand());
         $this->add(new ProviderAddCommand());
         $this->add(new ProviderRotateCommand());
+        $this->add(new PluginsInstallCommand());
     }
 }

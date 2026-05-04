@@ -161,6 +161,21 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 \SuperAICore\Console\Commands\ApiStatusCommand::class,
                 \SuperAICore\Console\Commands\KimiSyncCommand::class,
 
+                // Plugin marketplace install (0.9.1+ — borrowed from
+                // ruflo's `.claude-plugin/marketplace.json` schema).
+                // Copies a plugin tree into the user-scope Claude
+                // plugins dir so SkillRegistry / AgentRegistry pick it
+                // up immediately. Idempotent + drift-detecting.
+                \SuperAICore\Console\Commands\PluginsInstallCommand::class,
+
+                // Multi-engine hooks fanout (0.9.1+ — borrowed from
+                // ruflo's `.claude-plugin/hooks/hooks.json` pattern).
+                // One source manifest → Claude `.claude/settings.json`
+                // + Copilot `~/.copilot/config.json`. Sibling of the
+                // Copilot-only `copilot:sync-hooks` (still available on
+                // the standalone `bin/superaicore` console).
+                \SuperAICore\Console\Commands\HooksSyncCommand::class,
+
                 // 0.9.0 — file-driven provider creation for CI / container
                 // bootstrap; secret-safe via stdin or env-var reference.
                 \SuperAICore\Console\Commands\ProviderAddCommand::class,
