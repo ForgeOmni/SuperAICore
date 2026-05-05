@@ -127,6 +127,18 @@ class UsageRecorder
         if ($cacheWriteTokens) $metadata['cache_write_tokens'] = $cacheWriteTokens;
         if ($costSource)       $metadata['cost_source']        = $costSource;
 
+        // cache_hit_rate ∈ [0, 1] — fraction of the prompt that hit the
+        // provider's prefix cache. The denominator is the GROSS prompt
+        // (uncached input + cache reads); after SDK 0.9.6 the SDK
+        // already subtracts cached_tokens from `input_tokens`, so we
+        // reconstruct the gross count here. Only stamped when there is
+        // a cache hit AND a non-zero gross prompt — otherwise dashboards
+        // get a misleading 0.0 for rows with no cache activity at all.
+        $grossPromptTokens = $inputTokens + $cacheReadTokens;
+        if ($cacheReadTokens > 0 && $grossPromptTokens > 0) {
+            $metadata['cache_hit_rate'] = round($cacheReadTokens / $grossPromptTokens, 4);
+        }
+
         return $this->usage->record([
             'backend'         => $backend,
             'provider_id'     => $data['provider_id'] ?? null,

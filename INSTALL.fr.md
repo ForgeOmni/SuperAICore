@@ -688,6 +688,71 @@ Six choses à revoir lors de la mise à jour :
 
 Recettes complètes (câblage Ollama, mise en place launcher browser, boucle tick AmbientWorker, callback de reprise harness) : voir [docs/advanced-usage.fr.md §17–§21](docs/advanced-usage.fr.md).
 
+**0.9.1 — une nouvelle migration ; contrainte SDK remontée à `^0.9.8`.**
+Cinq bindings compagnons SuperAgent SDK 0.9.8 additifs (goal store
+persistant, portail d'approbation à trois niveaux, manifeste de plugin
+workspace, JSON `/v1/usage` headless, agrégation `cache_hit_rate`) plus
+un correctif de durcissement du backend
+(`SuperAgentBackend::resolveEmbeddingProvider()` ne lève plus quand le
+ServiceProvider du package n'a pas booté).
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan migrate    # crée `ai_goals` (la seule nouvelle table)
+```
+
+Aucun nouveau drapeau env n'est obligatoire — chaque binding est un
+singleton résolu via le conteneur avec des défauts sains. Les hôtes qui
+veulent surcharger le goal store, verrouiller les approbations ou
+préseeder un manifeste de plugins workspace le font en code :
+
+```php
+// config/super-ai-core.php  (optionnel)
+return [
+    // …clés existantes…
+
+    // Mode par défaut du portail d'approbation. Suggest = mutations
+    // requièrent /approve ; Auto = tout passe sauf shell destructif ;
+    // Never = lecture seule pure. Surcharges par-thread sur
+    // AiProcess.approval_mode (migration côté hôte si vous voulez les
+    // persister).
+    'runner' => [
+        'approval_mode' => env('AI_CORE_APPROVAL_MODE', 'suggest'),
+    ],
+];
+```
+
+Six points à revoir lors de la mise à niveau :
+
+1. **La table `ai_goals` est opt-in.** `php artisan migrate` la crée mais le binding n'écrit que quand quelque chose résout `app(\SuperAgent\Goals\GoalManager::class)` et appelle `setActiveGoal()` / `pause()` etc. Les hôtes qui n'utilisent pas la primitive goal peuvent laisser la table vide — pas d'estampillage automatique depuis `Dispatcher::dispatch()`.
+
+2. **Un `GoalStore` personnalisé se substitue par rebind du conteneur.** Si vous gardez déjà les goals dans votre propre table, surchargez le binding avant la première résolution de `app(GoalManager::class)` :
+
+    ```php
+    // app/Providers/AppServiceProvider.php::register()
+    $this->app->bind(
+        \SuperAgent\Goals\Contracts\GoalStore::class,
+        \App\Goals\MyGoalStore::class,
+    );
+    ```
+
+    L'`EloquentGoalStore` livré ici est une implémentation de référence, pas une dépendance dure.
+
+3. **`ApprovalGate` est câblé mais l'hôte possède la boucle.** Le portail est une fonction de décision pure — `evaluate($toolName, $arguments, $mode, $toolUseId, $approvedToolUseId)` retourne `ApprovalDecision::allow()` / `suggestApproval()` / `hardDeny()`. Les hôtes l'appellent à l'intérieur de leur wrapper de tool-dispatch avant de transférer au backend, rendent la suggestion dans leur UI et repassent le token `/approve` de l'utilisateur en `$approvedToolUseId` au retry. Pas d'enforcement côté backend pour l'instant — l'opt-in est à un appel d'enveloppe près dans votre runner.
+
+4. **`/v1/usage` est non authentifiée par défaut.** La route est enregistrée dans `routes/web.php` sous le préfixe standard du package. Encapsulez le groupe de routes externe (ou le middleware par-route) avec ce que votre hôte utilise pour l'authentification API — `auth:sanctum`, URLs signées, allowlist d'IP interne. Le contrôleur ne suppose pas de session présente et servira volontiers les données agrégées de coût à tout appelant qui l'atteint. Voir `routes/web.php` pour le site d'enregistrement.
+
+5. **`cache_hit_rate` atterrit sur chaque ligne avec une part de cache non nulle.** Les tableaux de bord existants continuent à fonctionner ; le nouveau code peut lire `metadata.cache_hit_rate` directement sans redériver le dénominateur. Distingue « pas de cache éligible » (clé absente) de « 0% de hit rate » (clé présente, valeur `0.0`). Accepte aussi l'alias legacy `cache_hit_tokens` des wires DeepSeek V3 / R1 — l'ancien code hôte qui estampillait l'alias sur les enregistrements d'usage est forward-compatible.
+
+6. **Le correctif de durcissement du backend supprime un crash latent pour les hôtes non-Laravel.** `SuperAgentBackend::resolveEmbeddingProvider()` et `configBool()` enveloppent maintenant les lookups conteneur dans un try/catch. Les hôtes qui faisaient tourner le backend avant le boot du ServiceProvider du package (tests PHPUnit purs, points d'entrée CLI personnalisés) heurtaient une `BindingResolutionException` ; ils dégradent maintenant silencieusement vers « pas d'embedder » / défauts de config. Aucun changement requis côté hôte — ça arrête simplement de planter.
+
+Recettes complètes (override de GoalStore persistant, câblage du
+portail d'approbation à l'intérieur d'un runner hôte, format de
+manifeste de plugin workspace + boucle de diff, recette `/v1/usage`
+(exemples curl + datasource Grafana JSON), recettes de tableau de bord
+`cache_hit_rate`) : voir [docs/advanced-usage.fr.md
+§22–§26](docs/advanced-usage.fr.md).
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

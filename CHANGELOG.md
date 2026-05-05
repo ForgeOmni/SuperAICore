@@ -4,6 +4,121 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-05-04
+
+**SuperAgent SDK 0.9.8 uptake — DeepSeek-TUI parity wave + codex `/goal`
+companion.** Tracks the SDK's `0.9.6 → 0.9.8` window in one cycle.
+Composer constraint moves to `^0.9.8`. The new SDK shipped
+`Goals\GoalManager`, `Security\UntrustedInput`, `Swarm\AgentDepthGuard`,
+`Providers\Transport\TokenBucket`, `Conversation\Fork`,
+`Memory\AdHocMemoryProvider`, `Context\Strategies\CacheAwareCompressor`,
+`Routing\AutoModelStrategy`, and a DeepSeek V4 `formatMessages` override
+that enforces the V4 Interleaved-Thinking rule on the wire. None of
+those change SDK call shapes — every new piece is additive and opt-in.
+This release wires the goal-store SPI through the container,
+exposes `cache_hit_rate` on every usage row, lands a three-tier
+approval gate (Auto / Suggest / Never) with a single-use `/approve`
+override, ships a headless `/v1/usage` JSON endpoint, and adds a
+workspace-shared plugin registry checked into the repo.
+
+### Added — SuperAgent SDK 0.9.8 companion bindings
+
+- **`Goals\EloquentGoalStore` + `Models\AiGoal` + migration
+  `2026_05_04_000001_create_ai_goals_table`** — durable backing for
+  SDK 0.9.8's `Goals\Contracts\GoalStore` SPI. Each thread can have at
+  most one row in non-terminal status (active / paused /
+  budget_limited); paused goals stay paused after the host process
+  restarts (codex behaviour). The `SuperAICoreServiceProvider` binds
+  `GoalStore::class → EloquentGoalStore::class` and registers
+  `GoalManager` as a singleton so `app(GoalManager::class)` resolves
+  with the durable store auto-injected. Hosts that already keep
+  goals in their own table swap in their own implementation by
+  rebinding the contract — no fork needed.
+- **`Runner\ApprovalMode` + `ApprovalDecision` + `ApprovalGate`** —
+  three-tier execution gate that mirrors codex's `/permissions`
+  command. Read-only allowlist (`agent_grep`, `agent_glob`,
+  `agent_read`, `agent_ls`, `web_search`, `web_fetch`,
+  `agent_get_goal`, …) flows through every mode without prompting.
+  Mutations in `Suggest` return `canRetry: true` with code
+  `mutation_pending_approval` (or `destructive_pending_approval`
+  when the existing `Guidance\Gates\DestructiveCommandScanner` flags
+  the call); a single-use `tool_use_id` override token unblocks one
+  retry — the codex `/approve` flow ported to API shape. Hosts
+  resolve via `app(ApprovalGate::class)`.
+- **`Plugins\WorkspacePluginRegistry`** — codex's "workspace plugin
+  sharing" pattern. A team checks
+  `.superaicore/workspace-plugins.json` into the repo; the registry
+  diffs against locally-installed plugin names and returns
+  `missing_required` (scope=workspace, must be installed for
+  everyone) vs `missing_recommended` (scope=user, informational).
+  `git clone` puts new hires on the team's full toolset without a
+  per-machine onboarding doc. Bound as a singleton over `base_path()`
+  so `app(WorkspacePluginRegistry::class)` works from any host.
+- **`Http\Controllers\UsageApiController` + `GET /v1/usage`** —
+  headless JSON aggregate endpoint mirroring codex's app-server
+  `/v1/usage`. One axis per request: `group_by=day | model |
+  provider | thread | backend | task_type`. Same filters as the HTML
+  controller (model / task_type / user_id / backend / days). Auth is
+  the host's job — wrap the route group in your auth middleware.
+  Buckets carry `runs / cost_usd / shadow_cost_usd / input_tokens /
+  output_tokens / cache_read_tokens / cache_hit_rate`.
+- **`UsageRecorder` stamps `metadata.cache_hit_rate ∈ [0, 1]`** on
+  every row with a non-zero cache slice. Denominator is the GROSS
+  prompt (uncached input + cache reads) so dashboards group by
+  model / day / backend and average without re-deriving the
+  denominator. Absent when no cache activity occurred — distinguishes
+  "no cache eligible" from "0% hit rate". Also accepts the legacy
+  `cache_hit_tokens` alias from DeepSeek V3 / R1 wires.
+- **`UsageController` exposes `cache_hit_rate` per model + at the
+  session-summary level.** The Usage page now answers "what fraction
+  of my paid prompt was free this period?" — the same question
+  DeepSeek-TUI asks at turn-end, just aggregated. New
+  `total_cache_read_tokens` summary card alongside the existing cold-
+  cache and ambient-cost slices.
+
+### Added — Tests
+
+- **`tests/Unit/ApprovalGateTest.php`** — 12 cases covering parsing,
+  per-mode behaviour (Auto / Suggest / Never), destructive shell
+  detection across modes, and the one-shot `/approve` override.
+- **`tests/Unit/WorkspacePluginRegistryTest.php`** — round-trip,
+  version bump, scope normalisation, corrupt-manifest handling, and
+  required-vs-recommended split.
+- **`tests/Unit/UsageRecorderCacheHitRateTest.php`** — verifies
+  `metadata.cache_hit_rate` stamping for the gross-prompt denominator,
+  the DeepSeek V3 alias path, the no-cache no-stamp case, and the
+  zero-tokens divide-by-zero edge.
+
+### Fixed
+
+- **`SuperAgentBackend::resolveEmbeddingProvider()`** —
+  `EmbeddingProviderFactory::make()` reads `super-ai-core.embeddings.*`
+  via Laravel's `config()` helper, which throws when no container is
+  bound. The backend now wraps both the `app()` lookup AND the
+  `make()` call so dispatches that opt out of the embedder degrade
+  silently instead of failing the whole turn. Surfaced by
+  `SuperAgentBackendTest` (pure-PHPUnit, no Laravel container) and
+  fixes a latent bug for any host that runs the backend before the
+  package ServiceProvider boots.
+- **`SuperAgentBackend::configBool()`** — new helper guards every
+  boolean-config lookup (`super-ai-core.tools.agent_grep_enabled`,
+  `super-ai-core.tools.browser_enabled`) so `BindingResolutionException`
+  on container-less paths falls back to the default value instead of
+  bubbling out of `generate()`.
+
+### Compatibility
+
+- **No breaking changes.** `forgeomni/superagent` constraint moves to
+  `^0.9.8`; the SDK itself made no breaking changes in 0.9.6–0.9.8
+  (new pieces are additive, `region`/`upstream` precedence is
+  documented, cache-aware compactor is opt-in). Existing
+  `SuperAgentBackend` envelope shape is byte-identical for non-
+  thinking conversations and non-browser tool runs.
+- **`ai_goals` migration** — opt-in via `php artisan migrate`. Hosts
+  that don't use `Goals\GoalManager` can ignore the new table; the
+  binding is wired but no code in this package writes a goal row
+  unsolicited.
+
 ## [0.9.0] — 2026-05-03
 
 **SuperAgent SDK pinned to 0.9.7 + DeepSeek V4 first-class + the full

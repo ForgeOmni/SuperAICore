@@ -15,6 +15,7 @@ use SuperAICore\Http\Controllers\IntegrationController;
 use SuperAICore\Http\Controllers\LocaleController;
 use SuperAICore\Http\Controllers\ProcessController;
 use SuperAICore\Http\Controllers\ProviderController;
+use SuperAICore\Http\Controllers\UsageApiController;
 use SuperAICore\Http\Controllers\UsageController;
 use Illuminate\Support\Facades\Route;
 
@@ -94,6 +95,14 @@ Route::post('processes/kill', [ProcessController::class, 'kill'])->name('process
 Route::get('processes/{process}/log', [ProcessController::class, 'log'])
     ->where('process', '[A-Za-z0-9_.-]+')
     ->name('processes.log');
+
+// ─── Headless usage API (v1) ───
+// JSON aggregate endpoint mirroring codex's app-server `/v1/usage`.
+// Same group_by axes (day | model | provider | thread | backend |
+// task_type), same shape, designed for dashboards and billing
+// automation. Auth is the host's responsibility — wrap the surrounding
+// route group's middleware with whatever your app uses.
+Route::get('v1/usage', [UsageApiController::class, 'aggregate'])->name('v1.usage');
 
 // ─── Cross-harness session resume (0.9.7) ───
 // Backed by SuperAgent SDK 0.9.7's HarnessImporter SPI. Gated by

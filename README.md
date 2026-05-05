@@ -19,6 +19,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [Skill & sub-agent runner](#skill--sub-agent-runner)
   - [Skill engine — telemetry, ranking, evolution](#skill-engine--telemetry-ranking-evolution)
   - [jcode companion-tools wave (0.9.0 / SDK 0.9.7)](#jcode-companion-tools-wave-090--sdk-097)
+  - [DeepSeek-TUI parity wave (0.9.1 / SDK 0.9.8)](#deepseek-tui-parity-wave-091--sdk-098)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -108,6 +109,27 @@ you flip the corresponding switch. SDK constraint moves to `^0.9.7`.
 Full recipes (Ollama embedder wiring, browser launcher setup, ambient
 worker tick loop, harness resume callback): [docs/advanced-usage.md
 §17–§21](docs/advanced-usage.md).
+
+### DeepSeek-TUI parity wave (0.9.1 / SDK 0.9.8)
+
+Five SDK 0.9.8 companion bindings landed in SuperAICore 0.9.1, plus one
+backend hardening fix. SDK constraint moves to `^0.9.8`. None of the new
+SDK pieces (`Goals\GoalManager`, `Security\UntrustedInput`,
+`Swarm\AgentDepthGuard`, `Providers\Transport\TokenBucket`,
+`Conversation\Fork`, `Memory\AdHocMemoryProvider`, the DeepSeek V4
+Interleaved-Thinking enforcer, `Routing\AutoModelStrategy`,
+`Context\Strategies\CacheAwareCompressor`) change SDK call shapes —
+they're additive and opt-in.
+
+- **`Goals\EloquentGoalStore` + `AiGoal` model + migration** *(0.9.1)* — durable backing for SDK 0.9.8's `Goals\Contracts\GoalStore` SPI. Each thread can hold at most one row in non-terminal status (`active` / `paused` / `budget_limited`); paused goals stay paused after the host process restarts. The service provider binds `GoalStore::class → EloquentGoalStore::class` and registers `GoalManager` as a singleton, so `app(GoalManager::class)` resolves with the durable store auto-injected. Hosts that already keep goals in their own table swap in their own `GoalStore` implementation — no fork. Run `php artisan migrate` to pick up the `ai_goals` table; if you don't use `Goals\GoalManager` the binding stays inert.
+- **Three-tier approval gate** *(0.9.1)* — `Runner\ApprovalMode` (`Auto` / `Suggest` / `Never`) + `ApprovalGate` + `ApprovalDecision` mirror codex's `/permissions` command. Read-only allowlist (`agent_grep` / `agent_glob` / `agent_read` / `agent_ls` / `web_search` / `web_fetch` / `agent_get_goal`) flows through every mode. Mutations in `Suggest` return `canRetry: true` with code `mutation_pending_approval` (or `destructive_pending_approval` when the existing `Guidance\Gates\DestructiveCommandScanner` flags the call); a single-use `tool_use_id` override token unblocks one retry — the codex `/approve` flow ported to API shape. `Auto` mode lets ordinary mutations through but still pauses for `/approve` on destructive ops; `Never` is read-only. Resolve via `app(ApprovalGate::class)`.
+- **`Plugins\WorkspacePluginRegistry`** *(0.9.1)* — codex's "workspace plugin sharing" pattern. A team checks `.superaicore/workspace-plugins.json` into the repo; the registry diffs against locally-installed plugin names and returns `missing_required` (scope=`workspace`, must install for everyone) vs `missing_recommended` (scope=`user`, informational). `git clone` puts new hires on the team's full toolset without a per-machine onboarding doc. Bound as a singleton over `base_path()`.
+- **Headless `GET /v1/usage` JSON endpoint** *(0.9.1)* — `Http\Controllers\UsageApiController` mirrors codex's app-server `/v1/usage` shape. One axis per request: `group_by=day | model | provider | thread | backend | task_type`. Same filters as the HTML controller (`model`, `task_type`, `user_id`, `backend`, `days`). Auth is the host's job — wrap the route group in your own middleware. Buckets carry `runs / cost_usd / shadow_cost_usd / input_tokens / output_tokens / cache_read_tokens / cache_hit_rate`.
+- **`metadata.cache_hit_rate` on every usage row** *(0.9.1)* — `UsageRecorder` stamps `cache_hit_rate ∈ [0, 1]` whenever the row carries a non-zero cache slice. Denominator is the GROSS prompt (uncached input + cache reads) so dashboards can group by model / day / backend and average without re-deriving the denominator. Absent when no cache activity occurred — distinguishes "no cache eligible" from "0% hit rate". Also accepts the legacy `cache_hit_tokens` alias from DeepSeek V3 / R1 wires. The `/usage` page now answers "what fraction of my paid prompt was free this period?" — same question DeepSeek-TUI asks at turn-end, just aggregated. New `total_cache_read_tokens` summary card.
+
+Full recipes (goal store override, approval gate wiring, workspace
+plugin manifest, `/v1/usage` cookbook, cache-hit-rate dashboards):
+[docs/advanced-usage.md §22–§26](docs/advanced-usage.md).
 
 ### CLI installer & health
 
@@ -398,7 +420,7 @@ All repositories are interfaces. The service provider auto-binds Eloquent implem
 
 ## Advanced usage
 
-- **[Advanced usage guide](docs/advanced-usage.md)** — idempotency round-trip, W3C trace context, classified provider exceptions, `openai-responses` + Azure OpenAI + ChatGPT OAuth, LM Studio, `http_headers` / `env_http_headers` overrides, SDK features (`extra_body` / `features` / `loop_detection`), `ScriptedSpawnBackend` host migration, skill engine telemetry / BM25 ranker / FIX-mode evolution (0.8.6+), and the **0.9.0 jcode wave** — `EmbeddingProvider` SPI, `agent_grep` / `browser` tool flags, `BrowserScreenshotStore` round-trip, ambient cost split, cross-harness session resume.
+- **[Advanced usage guide](docs/advanced-usage.md)** — idempotency round-trip, W3C trace context, classified provider exceptions, `openai-responses` + Azure OpenAI + ChatGPT OAuth, LM Studio, `http_headers` / `env_http_headers` overrides, SDK features (`extra_body` / `features` / `loop_detection`), `ScriptedSpawnBackend` host migration, skill engine telemetry / BM25 ranker / FIX-mode evolution (0.8.6+), the **0.9.0 jcode wave** (`EmbeddingProvider` SPI, `agent_grep` / `browser` tool flags, `BrowserScreenshotStore` round-trip, ambient cost split, cross-harness session resume), and the **0.9.1 DeepSeek-TUI parity wave** — durable goal store, three-tier approval gate, workspace plugin manifest, headless `/v1/usage` JSON, `cache_hit_rate` aggregation.
 - **[Task runner quickstart](docs/task-runner-quickstart.md)** — full `TaskRunner` option reference.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, per-backend stream formats, `onChunk`.
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** — codex/gemini agent emulation.

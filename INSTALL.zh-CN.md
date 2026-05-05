@@ -672,6 +672,87 @@ AI_CORE_RESUME_ENABLED=false
 
 完整菜谱(Ollama embedder 接线、browser launcher 准备、AmbientWorker tick 循环、harness 恢复回调模式)见 [docs/advanced-usage.zh-CN.md §17–§21](docs/advanced-usage.zh-CN.md)。
 
+**0.9.1 —— 一张新表;SDK 约束升至 `^0.9.8`。** 5 项 SuperAgent SDK 0.9.8
+配套绑定(持久化 goal store、三档审批闸门、workspace plugin manifest、
+无头 `/v1/usage` JSON、`cache_hit_rate` 聚合)外加 1 个 backend 加固
+修复(`SuperAgentBackend::resolveEmbeddingProvider()` 在 ServiceProvider
+未启动时不再抛 `BindingResolutionException`)。
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan migrate    # 创建唯一新表 `ai_goals`
+```
+
+无强制新 env 开关 —— 每个绑定都是基于容器解析的单例,带合理默认。
+要覆盖 goal store、锁紧审批策略,或预置 workspace plugin manifest,
+在代码里改:
+
+```php
+// config/super-ai-core.php (可选)
+return [
+    // …已有键…
+
+    // 审批闸门默认模式。Suggest = 变更需要 /approve;
+    // Auto = 除破坏性 shell 外全放行;
+    // Never = 纯只读。Per-thread 覆盖落在 AiProcess.approval_mode
+    // (要持久化的话 host 侧加迁移)。
+    'runner' => [
+        'approval_mode' => env('AI_CORE_APPROVAL_MODE', 'suggest'),
+    ],
+];
+```
+
+升级时值得复核的六件事:
+
+1. **`ai_goals` 表是 opt-in 的。** `php artisan migrate` 创建这张表,
+   但仅在某处解析 `app(\SuperAgent\Goals\GoalManager::class)` 并调用
+   `setActiveGoal()` / `pause()` 等方法时才会写入。不用 goal 原语的
+   host 这张表保持空闲,`Dispatcher::dispatch()` 不会自动写。
+
+2. **自定义 `GoalStore` 通过容器重绑替换。** 如果你已经在自家表里
+   维护 goal,在 `app(GoalManager::class)` 第一次解析之前覆盖绑定:
+
+    ```php
+    // app/Providers/AppServiceProvider.php::register()
+    $this->app->bind(
+        \SuperAgent\Goals\Contracts\GoalStore::class,
+        \App\Goals\MyGoalStore::class,
+    );
+    ```
+
+    本包内的 `EloquentGoalStore` 是参考实现,不是硬依赖。
+
+3. **`ApprovalGate` 已就绪,但循环由 host 拥有。** 闸门是纯决策函数 ——
+   `evaluate($toolName, $arguments, $mode, $toolUseId, $approvedToolUseId)`
+   返回 `ApprovalDecision::allow()` / `suggestApproval()` /
+   `hardDeny()`。host 在自己的 tool-dispatch 包装层里调用它,先于转发
+   到 backend,把 suggestion 渲染到 UI,用户 `/approve` 后把 token
+   作为 `$approvedToolUseId` 传回重试。backend 端**没有**强制执行 ——
+   接进来只需在你的 runner 里加一层包装。
+
+4. **`/v1/usage` 默认未鉴权。** 路由注册在 `routes/web.php` 的包标准
+   前缀下。把外层 route group(或 per-route 中间件)挂在你 host 的
+   API 鉴权上 —— `auth:sanctum`、签名 URL、内网 IP 白名单。控制器
+   不假设有 session,任何能命中它的调用方都能拿到聚合成本数据。
+   注册位置参见 `routes/web.php`。
+
+5. **`cache_hit_rate` 落到每条带非零 cache 切片的行。** 老仪表盘照常
+   工作,新代码可以直接读 `metadata.cache_hit_rate` 而不需要重新推导
+   分母。区分"无 cache 可用"(键缺失)与"0% 命中率"(键存在,
+   值 `0.0`)。也接受 DeepSeek V3 / R1 老 wire 的 `cache_hit_tokens`
+   别名 —— 老 host 代码向前兼容。
+
+6. **Backend 加固修复消除一个潜在崩溃。** `SuperAgentBackend::resolveEmbeddingProvider()`
+   和 `configBool()` 现在用 try/catch 包裹容器查找。在 ServiceProvider
+   启动前就跑 backend 的 host(纯 PHPUnit 测试、自定义 CLI 入口)
+   原本会撞 `BindingResolutionException`;现在静默降级到"无 embedder"/
+   配置默认值。host 侧无需改动 —— 单纯是不会再崩溃。
+
+完整菜谱(GoalStore 自定义、审批闸门在 host runner 里的接线方式、
+workspace plugin manifest 格式 + diff 循环、`/v1/usage` 调用示例
+(curl 与 Grafana JSON datasource)、`cache_hit_rate` 仪表盘配方)
+见 [docs/advanced-usage.zh-CN.md §22–§26](docs/advanced-usage.zh-CN.md)。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

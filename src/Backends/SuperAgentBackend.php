@@ -476,12 +476,31 @@ class SuperAgentBackend implements Backend
      */
     protected function configuredAutoLoadTools(): array
     {
-        if (!function_exists('config')) return [];
         $tools = [];
-        if ((bool) config('super-ai-core.tools.agent_grep_enabled', false)) {
+        if ($this->configBool('super-ai-core.tools.agent_grep_enabled', false)) {
             $tools[] = 'agent_grep';
         }
         return $tools;
+    }
+
+    /**
+     * Read a boolean config value without assuming a Laravel container is
+     * bound. The `config()` helper exists whenever Laravel's helpers.php
+     * is autoloaded (i.e. always, when illuminate/support is installed),
+     * but invoking it without an `app('config')` binding throws a
+     * `BindingResolutionException`. Tests that exercise the SDK in
+     * isolation (extending `PHPUnit\Framework\TestCase` rather than the
+     * package's testbench-aware base) hit exactly that path. Wrap the
+     * call so the backend silently falls back to `$default` instead.
+     */
+    protected function configBool(string $key, bool $default = false): bool
+    {
+        if (!function_exists('config')) return $default;
+        try {
+            return (bool) config($key, $default);
+        } catch (\Throwable) {
+            return $default;
+        }
     }
 
     /**
@@ -500,8 +519,7 @@ class SuperAgentBackend implements Backend
      */
     protected function attachBrowserTool(Agent $agent, array $options): void
     {
-        if (!function_exists('config')) return;
-        if (!(bool) config('super-ai-core.tools.browser_enabled', false)) return;
+        if (!$this->configBool('super-ai-core.tools.browser_enabled', false)) return;
 
         $cls = '\\SuperAgent\\Tools\\Builtin\\FirefoxBridgeTool';
         if (!class_exists($cls)) return;
@@ -545,7 +563,17 @@ class SuperAgentBackend implements Backend
                 return null;
             }
         }
-        return $factory?->make();
+        if ($factory === null) return null;
+        // Factory::make() reads `super-ai-core.embeddings.*` via Laravel's
+        // `config()` helper, which throws a BindingResolutionException if no
+        // container is bound (eg. SuperAgentBackend tests run without
+        // booting the package ServiceProvider). Degrade silently rather
+        // than failing the whole dispatch over a missing optional embedder.
+        try {
+            return $factory->make();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

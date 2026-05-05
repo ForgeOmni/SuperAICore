@@ -682,6 +682,65 @@ Six things worth reviewing on upgrade:
 
 See [docs/advanced-usage.md §17–§21](docs/advanced-usage.md) for full recipes — Ollama embedder wiring, browser launcher setup, AmbientWorker tick loop, harness resume callback patterns.
 
+**0.9.1 — one new migration; SDK pin moves to `^0.9.8`.** Five additive
+SuperAgent SDK 0.9.8 companion bindings (durable goal store, three-tier
+approval gate, workspace plugin manifest, headless `/v1/usage` JSON,
+`cache_hit_rate` aggregation) plus one backend hardening fix
+(`SuperAgentBackend::resolveEmbeddingProvider()` no longer throws when
+the package ServiceProvider hasn't booted).
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan migrate    # creates `ai_goals` (the only new table)
+```
+
+No new env knobs are mandatory — every binding is a singleton resolved
+through the container with sane defaults. Hosts that want to override
+the goal store, lock down approvals, or pre-seed a workspace plugin
+manifest do so in code:
+
+```php
+// config/super-ai-core.php  (optional)
+return [
+    // …existing keys…
+
+    // Approval gate default mode. Suggest = mutations need /approve;
+    // Auto = let everything through except destructive shell ops;
+    // Never = pure read-only. Per-thread overrides live on
+    // AiProcess.approval_mode (host migration if you want them
+    // persisted).
+    'runner' => [
+        'approval_mode' => env('AI_CORE_APPROVAL_MODE', 'suggest'),
+    ],
+];
+```
+
+Six things worth reviewing on upgrade:
+
+1. **`ai_goals` table is opt-in.** `php artisan migrate` creates it but the binding only writes rows when something resolves `app(\SuperAgent\Goals\GoalManager::class)` and calls `setActiveGoal()` / `pause()` / etc. Hosts that don't use the goal primitive can leave the table empty — there is no automatic stamping from `Dispatcher::dispatch()`.
+
+2. **Custom `GoalStore` swaps in via container rebind.** If you already keep goals in your own table, override the binding before `app(GoalManager::class)` is first resolved:
+
+    ```php
+    // app/Providers/AppServiceProvider.php::register()
+    $this->app->bind(
+        \SuperAgent\Goals\Contracts\GoalStore::class,
+        \App\Goals\MyGoalStore::class,
+    );
+    ```
+
+    The `EloquentGoalStore` shipped here is a reference implementation, not a hard dependency.
+
+3. **`ApprovalGate` is wired but the host owns the loop.** The gate is a pure decision function — `evaluate($toolName, $arguments, $mode, $toolUseId, $approvedToolUseId)` returns `ApprovalDecision::allow()` / `suggestApproval()` / `hardDeny()`. Hosts call it inside their tool-dispatch wrapper before forwarding to the backend, render the suggestion in their UI, and pass the user's `/approve` token back as `$approvedToolUseId` on the retry. There's no backend-side enforcement yet — opting in is one wrap call away in your runner.
+
+4. **`/v1/usage` is unauthenticated by default.** The route is registered in `routes/web.php` under the package's standard prefix. Wrap the surrounding route group (or the per-route middleware) with whatever your host uses for API auth — `auth:sanctum`, signed URLs, an internal-only IP allowlist. The controller does not assume a session is present and will happily serve aggregate cost data to any caller that reaches it. See `routes/web.php` for the registration site.
+
+5. **`cache_hit_rate` lands on every row with a non-zero cache slice.** Existing dashboards keep working; new code can read `metadata.cache_hit_rate` directly without re-deriving the denominator. Distinguishes "no cache eligible" (key absent) from "0% hit rate" (key present, value `0.0`). Also accepts the legacy `cache_hit_tokens` alias from DeepSeek V3 / R1 wires — older host code that stamped the alias on usage records is forward-compatible.
+
+6. **Backend hardening fix removes a latent crash for non-Laravel hosts.** `SuperAgentBackend::resolveEmbeddingProvider()` and `configBool()` now wrap container lookups in a try/catch. Hosts that ran the backend before booting the package ServiceProvider (pure-PHPUnit tests, custom CLI entrypoints) previously hit a `BindingResolutionException`; now they degrade silently to "no embedder" / config defaults. No code change required from host side — it just stops crashing.
+
+See [docs/advanced-usage.md §22–§26](docs/advanced-usage.md) for full recipes — durable goal store override, approval gate wiring inside a host runner, workspace plugin manifest format + diff loop, `/v1/usage` cookbook (curl examples + Grafana JSON datasource), `cache_hit_rate` dashboard recipes.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

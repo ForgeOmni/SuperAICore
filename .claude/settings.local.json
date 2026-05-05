@@ -24,7 +24,13 @@
       "Bash(php *)",
       "Bash(./vendor/bin/phpunit tests/Unit/Guidance/)",
       "Bash(./vendor/bin/phpunit tests/Unit/Memory/BruteForceVectorIndexTest.php tests/Unit/Memory/HnswVectorIndexFallbackTest.php)",
-      "Bash(./vendor/bin/phpunit tests/Unit/Phase6MemoryTest.php)"
+      "Bash(./vendor/bin/phpunit tests/Unit/Phase6MemoryTest.php)",
+      "PowerShell(vendor\\\\bin\\\\phpunit --colors=never --filter test_max_turns_defaults_to_one tests\\\\Unit\\\\SuperAgentBackendTest.php 2>&1 | Select-Object -Last 12)",
+      "PowerShell(composer require *)",
+      "PowerShell(git stash *)",
+      "PowerShell(git *)",
+      "PowerShell(vendor\\\\bin\\\\phpunit --colors=never 2>&1 | Select-Object -Last 50)",
+      "PowerShell(vendor\\\\bin\\\\phpunit --colors=never tests\\\\Unit\\\\SuperAgentBackendTest.php tests\\\\Unit\\\\ApprovalGateTest.php tests\\\\Unit\\\\WorkspacePluginRegistryTest.php tests\\\\Unit\\\\UsageRecorderCacheHitRateTest.php tests\\\\Unit\\\\ProviderTypeRegistryTest.php 2>&1 | Select-Object -Last 5)"
     ]
   }
 }

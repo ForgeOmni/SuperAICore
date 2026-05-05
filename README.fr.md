@@ -19,6 +19,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Exécuteur de skills & sous-agents](#exécuteur-de-skills--sous-agents)
   - [Moteur de skills — télémétrie, ranking, évolution](#moteur-de-skills--télémétrie-ranking-évolution)
   - [Vague d'outils jcode (0.9.0 / SDK 0.9.7)](#vague-doutils-jcode-090--sdk-097)
+  - [Vague d'alignement DeepSeek-TUI (0.9.1 / SDK 0.9.8)](#vague-dalignement-deepseek-tui-091--sdk-098)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -110,6 +111,29 @@ externe). Contrainte Composer remontée à `^0.9.7`.
 Recettes complètes (câblage Ollama, mise en place launcher browser, boucle
 tick AmbientWorker, callback de reprise harness) : [docs/advanced-usage.fr.md
 §17–§21](docs/advanced-usage.fr.md).
+
+### Vague d'alignement DeepSeek-TUI (0.9.1 / SDK 0.9.8)
+
+Cinq bindings compagnons SDK 0.9.8 ont atterri dans SuperAICore 0.9.1,
+plus un correctif de durcissement du backend. Contrainte Composer
+remontée à `^0.9.8`. Aucune des nouvelles pièces SDK
+(`Goals\GoalManager`, `Security\UntrustedInput`, `Swarm\AgentDepthGuard`,
+`Providers\Transport\TokenBucket`, `Conversation\Fork`,
+`Memory\AdHocMemoryProvider`, l'enforcement V4 Interleaved-Thinking de
+DeepSeek, `Routing\AutoModelStrategy`,
+`Context\Strategies\CacheAwareCompressor`) ne change la forme d'appel
+SDK — toutes sont additives et opt-in.
+
+- **`Goals\EloquentGoalStore` + modèle `AiGoal` + migration** *(0.9.1)* — backend persistant pour le SPI `Goals\Contracts\GoalStore` du SDK 0.9.8. Chaque thread peut avoir au plus une ligne en statut non-terminal (`active` / `paused` / `budget_limited`) ; les goals en pause restent en pause après redémarrage du processus hôte. Le service provider lie `GoalStore::class → EloquentGoalStore::class` et enregistre `GoalManager` en singleton, donc `app(GoalManager::class)` se résout avec le store persistant injecté automatiquement. Les hôtes qui gèrent déjà les goals dans leur propre table substituent leur implémentation `GoalStore` — pas de fork. `php artisan migrate` pour la table `ai_goals` ; si vous n'utilisez pas `Goals\GoalManager`, le binding reste inerte.
+- **Portail d'approbation à trois niveaux** *(0.9.1)* — `Runner\ApprovalMode` (`Auto` / `Suggest` / `Never`) + `ApprovalGate` + `ApprovalDecision` reflètent la commande `/permissions` de codex. Allowlist en lecture seule (`agent_grep` / `agent_glob` / `agent_read` / `agent_ls` / `web_search` / `web_fetch` / `agent_get_goal`) passe dans tous les modes. Les mutations en `Suggest` retournent `canRetry: true` avec code `mutation_pending_approval` (ou `destructive_pending_approval` quand le `Guidance\Gates\DestructiveCommandScanner` existant signale l'appel) ; un token override `tool_use_id` à usage unique débloque un retry — flux `/approve` de codex porté en forme API. Le mode `Auto` laisse passer les mutations ordinaires mais s'arrête toujours pour `/approve` sur les opérations destructives ; `Never` est en lecture seule. Résolution via `app(ApprovalGate::class)`.
+- **`Plugins\WorkspacePluginRegistry`** *(0.9.1)* — pattern « workspace plugin sharing » de codex. Une équipe commit `.superaicore/workspace-plugins.json` dans le repo ; le registry diffe contre les noms de plugins installés localement et retourne `missing_required` (scope=`workspace`, à installer chez tout le monde) vs `missing_recommended` (scope=`user`, informationnel). `git clone` met les nouveaux arrivants sur l'outillage complet de l'équipe sans doc d'onboarding par machine. Lié en singleton sur `base_path()`.
+- **Endpoint JSON headless `GET /v1/usage`** *(0.9.1)* — `Http\Controllers\UsageApiController` reflète la forme `/v1/usage` de l'app-server codex. Un axe par requête : `group_by=day | model | provider | thread | backend | task_type`. Mêmes filtres que le contrôleur HTML (`model`, `task_type`, `user_id`, `backend`, `days`). L'auth est l'affaire de l'hôte — encapsulez le groupe de routes dans votre middleware. Les buckets portent `runs / cost_usd / shadow_cost_usd / input_tokens / output_tokens / cache_read_tokens / cache_hit_rate`.
+- **`metadata.cache_hit_rate` sur chaque ligne d'usage** *(0.9.1)* — `UsageRecorder` estampille `cache_hit_rate ∈ [0, 1]` dès qu'une ligne porte une part de cache non nulle. Le dénominateur est le prompt BRUT (input non caché + lectures cache) pour que les tableaux de bord regroupent par modèle / jour / backend et fassent la moyenne sans redériver le dénominateur. Absent quand aucune activité cache n'a eu lieu — distingue « pas de cache éligible » de « 0% de hit rate ». Accepte aussi l'alias legacy `cache_hit_tokens` des wires DeepSeek V3 / R1. La page `/usage` répond maintenant à « quelle fraction de mon prompt payé était gratuite cette période ? » — la même question que pose DeepSeek-TUI à la fin de chaque tour, en agrégé. Nouvelle carte sommaire `total_cache_read_tokens`.
+
+Recettes complètes (override de GoalStore, câblage du portail
+d'approbation, manifeste de plugin workspace, recette `/v1/usage`,
+tableaux de bord cache-hit-rate) : [docs/advanced-usage.fr.md
+§22–§26](docs/advanced-usage.fr.md).
 
 ### Installateur CLI & santé
 
@@ -400,7 +424,7 @@ Tous les repositories sont des interfaces. Le service provider lie automatiqueme
 
 ## Usage avancé
 
-- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), et la **vague jcode 0.9.0** — SPI `EmbeddingProvider`, drapeaux d'outils `agent_grep` / `browser`, boucle `BrowserScreenshotStore`, découpage des coûts ambient, reprise de session cross-harness.
+- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0** (SPI `EmbeddingProvider`, drapeaux d'outils `agent_grep` / `browser`, boucle `BrowserScreenshotStore`, découpage des coûts ambient, reprise de session cross-harness) et la **vague d'alignement DeepSeek-TUI 0.9.1** — goal store persistant, portail d'approbation à trois niveaux, manifeste de plugin workspace, JSON `/v1/usage` headless, agrégation `cache_hit_rate`.
 - **[Démarrage Task runner](docs/task-runner-quickstart.md)** — référence d'options complète de `TaskRunner`.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, formats de stream par backend, `onChunk`.
 - **[Protocole spawn plan](docs/spawn-plan-protocol.md)** — émulation agent codex/gemini.

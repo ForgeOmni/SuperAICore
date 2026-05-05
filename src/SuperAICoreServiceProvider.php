@@ -144,6 +144,33 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 $app->bound('log') ? $app->make('log') : null,
             );
         });
+
+        // ── SDK 0.9.8 companion bindings (0.9.1) ────────────────────
+        // GoalStore SPI — durable backing for SuperAgent's thread-goal
+        // primitive. Bound as a contract so hosts that already keep
+        // goals in their own table can swap in their own implementation
+        // without a fork. GoalManager auto-resolves the bound store via
+        // constructor injection.
+        $this->app->bind(
+            \SuperAgent\Goals\Contracts\GoalStore::class,
+            \SuperAICore\Goals\EloquentGoalStore::class,
+        );
+        $this->app->singleton(\SuperAgent\Goals\GoalManager::class);
+
+        // Three-tier approval gate (Auto/Suggest/Never). No-arg
+        // constructor wraps the existing `DestructiveCommandScanner`
+        // so the safety floor stays consistent with shell-tool sites.
+        $this->app->singleton(\SuperAICore\Runner\ApprovalGate::class);
+
+        // Workspace-shared plugin registry. Reads/writes
+        // `<base_path>/.superaicore/workspace-plugins.json` so a team
+        // can check the manifest into the repo and onboard new hires
+        // with `git clone` instead of a per-machine doc.
+        $this->app->singleton(\SuperAICore\Plugins\WorkspacePluginRegistry::class, function ($app) {
+            return new \SuperAICore\Plugins\WorkspacePluginRegistry(
+                workspaceRoot: function_exists('base_path') ? base_path() : getcwd(),
+            );
+        });
     }
 
     public function boot(): void

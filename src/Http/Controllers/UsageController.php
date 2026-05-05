@@ -71,24 +71,42 @@ class UsageController extends Controller
         $ambientRuns = (int) ($bySource['ambient']['runs'] ?? 0);
         $ambientCost = (float) ($bySource['ambient']['cost'] ?? 0);
 
+        // Cache-hit aggregates — pulled from metadata.cache_read_tokens
+        // (UsageRecorder writes the field whenever the provider returned
+        // a non-zero cache slice). The hit rate is gross-prompt-relative
+        // so the dashboard answers "what fraction of my paid prompt was
+        // free this period?" — the same question DeepSeek-TUI asks at
+        // turn-end, just aggregated.
+        $cacheReadTotal = $logs->sum(fn ($r) => (int) (($r->metadata ?? [])['cache_read_tokens'] ?? 0));
+        $grossPromptTotal = (int) $logs->sum('input_tokens') + (int) $cacheReadTotal;
+        $cacheHitRate = $grossPromptTotal > 0 ? round($cacheReadTotal / $grossPromptTotal, 4) : 0.0;
+
         $summary = [
-            'total_runs'          => $logs->count(),
-            'total_cost'          => (float) $logs->sum('cost_usd'),
-            'total_shadow_cost'   => (float) $logs->sum('shadow_cost_usd'),
-            'total_input_tokens'  => (int) $logs->sum('input_tokens'),
-            'total_output_tokens' => (int) $logs->sum('output_tokens'),
-            'total_cache_cold'    => $coldCount,
-            'total_ambient_runs'  => $ambientRuns,
-            'total_ambient_cost'  => $ambientCost,
+            'total_runs'           => $logs->count(),
+            'total_cost'           => (float) $logs->sum('cost_usd'),
+            'total_shadow_cost'    => (float) $logs->sum('shadow_cost_usd'),
+            'total_input_tokens'   => (int) $logs->sum('input_tokens'),
+            'total_output_tokens'  => (int) $logs->sum('output_tokens'),
+            'total_cache_cold'     => $coldCount,
+            'total_ambient_runs'   => $ambientRuns,
+            'total_ambient_cost'   => $ambientCost,
+            'total_cache_read_tokens' => (int) $cacheReadTotal,
+            'cache_hit_rate'       => $cacheHitRate,
         ];
 
-        $byModel = $logs->groupBy('model')->map(fn ($g) => [
-            'runs'          => $g->count(),
-            'cost'          => (float) $g->sum('cost_usd'),
-            'shadow_cost'   => (float) $g->sum('shadow_cost_usd'),
-            'input_tokens'  => (int) $g->sum('input_tokens'),
-            'output_tokens' => (int) $g->sum('output_tokens'),
-        ])->sortByDesc(fn ($r) => max($r['cost'], $r['shadow_cost']));
+        $byModel = $logs->groupBy('model')->map(function ($g) {
+            $cacheRead = $g->sum(fn ($r) => (int) (($r->metadata ?? [])['cache_read_tokens'] ?? 0));
+            $gross = (int) $g->sum('input_tokens') + (int) $cacheRead;
+            return [
+                'runs'              => $g->count(),
+                'cost'              => (float) $g->sum('cost_usd'),
+                'shadow_cost'       => (float) $g->sum('shadow_cost_usd'),
+                'input_tokens'      => (int) $g->sum('input_tokens'),
+                'output_tokens'     => (int) $g->sum('output_tokens'),
+                'cache_read_tokens' => (int) $cacheRead,
+                'cache_hit_rate'    => $gross > 0 ? round($cacheRead / $gross, 4) : 0.0,
+            ];
+        })->sortByDesc(fn ($r) => max($r['cost'], $r['shadow_cost']));
 
         $byBackend = $logs->groupBy('backend')->map(fn ($g) => [
             'runs'        => $g->count(),

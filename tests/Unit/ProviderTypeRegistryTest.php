@@ -20,6 +20,8 @@ final class ProviderTypeRegistryTest extends TestCase
             AiProvider::TYPE_ANTHROPIC_PROXY,
             AiProvider::TYPE_BEDROCK,
             AiProvider::TYPE_BUILTIN,
+            // DeepSeek V4 provider type (added 0.9.0 alongside SDK 0.9.6).
+            AiProvider::TYPE_DEEPSEEK,
             AiProvider::TYPE_GOOGLE_AI,
             AiProvider::TYPE_KIRO_API,
             AiProvider::TYPE_LMSTUDIO,

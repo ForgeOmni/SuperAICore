@@ -19,6 +19,7 @@
   - [Skill 与 sub-agent 运行器](#skill-与-sub-agent-运行器)
   - [Skill engine —— 遥测 / 排序 / 演化](#skill-engine--遥测--排序--演化)
   - [jcode 配套工具波次（0.9.0 / SDK 0.9.7）](#jcode-配套工具波次090--sdk-097)
+  - [DeepSeek-TUI 对齐波次（0.9.1 / SDK 0.9.8）](#deepseek-tui-对齐波次091--sdk-098)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -107,6 +108,26 @@
 完整菜谱(Ollama embedder 接线、browser launcher 准备、ambient worker
 tick 循环、harness 恢复回调):见 [docs/advanced-usage.zh-CN.md
 §17–§21](docs/advanced-usage.zh-CN.md)。
+
+### DeepSeek-TUI 对齐波次（0.9.1 / SDK 0.9.8）
+
+五项 SDK 0.9.8 配套绑定在 SuperAICore 0.9.1 落地,外加一个 backend 加固
+修复。Composer 约束升至 `^0.9.8`。SDK 端新增的 `Goals\GoalManager`、
+`Security\UntrustedInput`、`Swarm\AgentDepthGuard`、
+`Providers\Transport\TokenBucket`、`Conversation\Fork`、
+`Memory\AdHocMemoryProvider`、DeepSeek V4 交错思考强校验、
+`Routing\AutoModelStrategy`、`Context\Strategies\CacheAwareCompressor`
+均为加性能力 —— 不动 SDK 调用形状,不打开开关就保持 0.9.7 行为。
+
+- **`Goals\EloquentGoalStore` + `AiGoal` 模型 + 迁移** *(0.9.1)* —— 给 SDK 0.9.8 的 `Goals\Contracts\GoalStore` SPI 提供持久化后端。每个 thread 在非终态(`active` / `paused` / `budget_limited`)中至多一行;暂停的 goal 在宿主进程重启后仍保持暂停。`SuperAICoreServiceProvider` 把 `GoalStore::class → EloquentGoalStore::class` 绑死并把 `GoalManager` 注册为单例,`app(GoalManager::class)` 自动注入持久化 store。已经在自家表里维护 goal 的 host 直接换绑契约即可,不需要 fork。新增 `ai_goals` 表 —— 跑 `php artisan migrate` 拾取;不用 `Goals\GoalManager` 的 host 这张表保持空闲,本包代码不会主动写入。
+- **三档审批闸门** *(0.9.1)* —— `Runner\ApprovalMode` (`Auto` / `Suggest` / `Never`) + `ApprovalGate` + `ApprovalDecision`,对齐 codex `/permissions` 命令。只读白名单(`agent_grep` / `agent_glob` / `agent_read` / `agent_ls` / `web_search` / `web_fetch` / `agent_get_goal`)在所有模式下放行。`Suggest` 模式下,变更类调用返回 `canRetry: true` + 错误码 `mutation_pending_approval`(若现有 `Guidance\Gates\DestructiveCommandScanner` 命中破坏性命令则为 `destructive_pending_approval`);带 `tool_use_id` 的一次性 override token 解锁单次重试 —— 把 codex 的 `/approve` 流程搬到 API 形状。`Auto` 模式让普通变更直接通过,但破坏性命令仍要 `/approve`;`Never` 完全只读。`app(ApprovalGate::class)` 解析。
+- **`Plugins\WorkspacePluginRegistry`** *(0.9.1)* —— codex"workspace plugin sharing"模式。团队把 `.superaicore/workspace-plugins.json` 提交到 repo,registry 与本地已装 plugin 名单做 diff 后返回 `missing_required`(scope=`workspace`,所有人必装)与 `missing_recommended`(scope=`user`,仅提示)。新人 `git clone` 即拿到全套工具,不用一份机器特定的 onboarding 文档。基于 `base_path()` 注册为单例。
+- **无头 `GET /v1/usage` JSON 端点** *(0.9.1)* —— `Http\Controllers\UsageApiController` 对齐 codex app-server `/v1/usage` 形状。每次请求一个轴:`group_by=day | model | provider | thread | backend | task_type`。复用 HTML 控制器的过滤参数(`model`、`task_type`、`user_id`、`backend`、`days`)。鉴权由 host 负责 —— 把路由组挂在自己的中间件后面。每个 bucket 含 `runs / cost_usd / shadow_cost_usd / input_tokens / output_tokens / cache_read_tokens / cache_hit_rate`。
+- **每行 usage 自带 `metadata.cache_hit_rate`** *(0.9.1)* —— 只要行内 cache 切片非零,`UsageRecorder` 就把 `cache_hit_rate ∈ [0, 1]` 戳进 metadata。分母用 GROSS prompt(未命中输入 + cache 读),仪表盘按模型 / 日 / backend 分组求平均时不需要重新推导分母。无 cache 活动时不戳 —— 区分"无 cache 可用"与"0% 命中率"。也接受 DeepSeek V3 / R1 老 wire 的 `cache_hit_tokens` 别名。`/usage` 现在能直接回答"本周期有多少 paid prompt 是免费的?" —— 跟 DeepSeek-TUI 在每轮结束问的同一问题,只是聚合视角。新增 `total_cache_read_tokens` 汇总卡。
+
+完整菜谱(GoalStore 自定义实现、审批闸门接线、workspace plugin manifest、
+`/v1/usage` 调用示例、cache-hit-rate 仪表盘):见
+[docs/advanced-usage.zh-CN.md §22–§26](docs/advanced-usage.zh-CN.md)。
 
 ### CLI 安装器与健康检查
 
@@ -397,7 +418,7 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+),以及 **0.9.0 jcode 波次** —— `EmbeddingProvider` SPI、`agent_grep` / `browser` 工具开关、`BrowserScreenshotStore` 闭环、ambient 成本切分、跨 harness 会话恢复。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+),以及 **0.9.0 jcode 波次**（`EmbeddingProvider` SPI、`agent_grep` / `browser` 工具开关、`BrowserScreenshotStore` 闭环、ambient 成本切分、跨 harness 会话恢复）和 **0.9.1 DeepSeek-TUI 对齐波次** —— 持久化 goal store、三档审批闸门、workspace plugin manifest、无头 `/v1/usage` JSON、`cache_hit_rate` 聚合。
 - **[Task runner 快速入门](docs/task-runner-quickstart.md)** —— 完整 `TaskRunner` 选项参考。
 - **[Streaming backends](docs/streaming-backends.md)** —— `mcp_mode`、每后端流格式、`onChunk`。
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** —— codex/gemini agent 模拟。

@@ -29,6 +29,11 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 19. [Boucle de captures d'écran navigateur (0.9.0)](#19-boucle-de-captures-décran-navigateur-090)
 20. [Découpage `usage_source` — `user` vs `ambient` (0.9.0)](#20-découpage-usage_source--user-vs-ambient-090)
 21. [Reprise de session cross-harness (0.9.0)](#21-reprise-de-session-cross-harness-090)
+22. [Goal store persistant (0.9.1)](#22-goal-store-persistant-091)
+23. [Portail d'approbation à trois niveaux (0.9.1)](#23-portail-dapprobation-à-trois-niveaux-091)
+24. [Manifeste de plugin workspace (0.9.1)](#24-manifeste-de-plugin-workspace-091)
+25. [Endpoint JSON `/v1/usage` headless (0.9.1)](#25-endpoint-json-v1usage-headless-091)
+26. [Agrégation `cache_hit_rate` (0.9.1)](#26-agrégation-cache_hit_rate-091)
 
 ---
 
@@ -1436,6 +1441,510 @@ Les importeurs sont délibérément tolérants — les lignes malformées / type
 
 - **Auto-découverte des fichiers de session jcode / pi / OpenCode** — le set d'importeurs 0.9.7 du SDK couvre Claude Code et Codex. Les hôtes qui ont besoin d'autres harnesses implémentent `HarnessImporter` directement et droppent un binding service-provider pour enregistrer l'implémentation.
 - **UI de re-dispatch pour l'historique `ai_processes` propre à SuperAICore** — `/processes` est live-only par contrat depuis 0.6.7 (il montre les PIDs en cours, pas les lignes finies). La liste déroulante Resume sert au pickup de session cross-harness, pas à rejouer les runs SuperAICore antérieurs. Les hôtes qui veulent « refaire cette tâche finie avec un provider différent » construisent leur propre UI au-dessus de l'audit log `ai_processes`.
+
+---
+
+## 22. Goal store persistant (0.9.1)
+
+*Depuis 0.9.1 — SPI `Goals\Contracts\GoalStore` du SuperAgent SDK 0.9.8.*
+
+Le SDK 0.9.8 livre `Goals\GoalManager` — une primitive scoped-thread
+pour « cette conversation travaille vers X ». Le manager a besoin de
+persistance pour survivre aux redémarrages de processus (codex met les
+goals en pause quand l'utilisateur tape `/pause`, et ils doivent rester
+en pause après recyclage du processus hôte). SuperAICore 0.9.1 câble
+le backend Eloquent par défaut.
+
+### Câblage par défaut
+
+`SuperAICoreServiceProvider::register()` lie :
+
+```php
+$this->app->bind(
+    \SuperAgent\Goals\Contracts\GoalStore::class,
+    \SuperAICore\Goals\EloquentGoalStore::class,
+);
+$this->app->singleton(\SuperAgent\Goals\GoalManager::class);
+```
+
+`app(GoalManager::class)` se résout avec le store persistant injecté
+automatiquement. `php artisan migrate` crée la table `ai_goals`
+(`thread_id`, `description`, `status`, `metadata`, timestamps). Honore
+`super-ai-core.table_prefix` si votre hôte en utilise un.
+
+```php
+use SuperAgent\Goals\GoalManager;
+
+$manager = app(GoalManager::class);
+$manager->setActiveGoal($threadId, 'Refactorer le flux checkout pour respecter le nouveau moteur de taxes');
+
+// Plus tard — l'agent lit le goal en milieu de conversation via l'outil
+// agent_get_goal en lecture seule, ou l'hôte le met en pause sur
+// dépassement budgétaire :
+$manager->pause($threadId);
+// …redémarrage du processus hôte…
+$active = $manager->getActiveGoal($threadId);   // toujours null — en pause
+$manager->resume($threadId);
+```
+
+### Contrainte : au plus une ligne non-terminale par thread
+
+`EloquentGoalStore::setActiveGoal()` transitionne toute ligne `active` /
+`paused` / `budget_limited` préexistante du thread vers `superseded`
+avant d'insérer la nouvelle. Les statuts terminaux (`completed`,
+`cancelled`, `superseded`) s'accumulent librement comme piste d'audit.
+
+### Store personnalisé — l'hôte garde déjà les goals dans sa propre table
+
+Les hôtes qui modélisent déjà des goals (ex. SuperTeam stocke
+`objectives` par projet) substituent leur propre implémentation. Le
+contrat est petit — cinq méthodes sur `GoalStore` :
+
+```php
+namespace App\Goals;
+
+use SuperAgent\Goals\Contracts\GoalStore;
+use SuperAgent\Goals\Goal;
+
+final class MyGoalStore implements GoalStore
+{
+    public function setActiveGoal(string $threadId, string $description, array $metadata = []): Goal
+    { /* upsert dans votre table `objectives`, marquer la ligne active précédente superseded */ }
+
+    public function getActiveGoal(string $threadId): ?Goal
+    { /* retourne Goal::active(...) ou null en pause / complétée / absente */ }
+
+    public function pause(string $threadId): void           { /* … */ }
+    public function resume(string $threadId): void          { /* … */ }
+    public function complete(string $threadId, ?string $result = null): void { /* … */ }
+}
+```
+
+Surchargez le binding dans le `register()` du service provider hôte —
+**avant** que quoi que ce soit ne résolve `GoalManager` :
+
+```php
+$this->app->bind(
+    \SuperAgent\Goals\Contracts\GoalStore::class,
+    \App\Goals\MyGoalStore::class,
+);
+```
+
+L'`EloquentGoalStore` de ce package devient du code mort du point de
+vue de votre hôte — c'est une implémentation de référence, pas une
+dépendance dure.
+
+---
+
+## 23. Portail d'approbation à trois niveaux (0.9.1)
+
+*Depuis 0.9.1.*
+
+`Runner\ApprovalGate` reflète la commande `/permissions` de codex
+(renommée depuis `/approvals`). Trois modes — `Auto`, `Suggest`,
+`Never` — avec un token override `/approve` à usage unique pour le flux
+codex « laisse passer ce seul appel spécifique ».
+
+### Différences entre les modes
+
+```
+                outils lecture seule  mutations ordinaires   shell destructif
+   ──────────────────────────────────────────────────────────────────────────
+   Auto         allow                 allow                  SUGGEST APPROVAL
+   Suggest      allow                 SUGGEST APPROVAL       SUGGEST APPROVAL
+   Never        allow                 hard deny              hard deny
+```
+
+Allowlist en lecture seule codée en dur sur l'enum :
+
+```php
+ApprovalMode::readOnlyAllowlist();
+// → ['agent_grep', 'agent_glob', 'agent_read', 'agent_ls',
+//    'agent_status', 'web_search', 'web_fetch', 'agent_get_goal']
+```
+
+La détection de shell destructif passe par le
+`Guidance\Gates\DestructiveCommandScanner` existant — même set de regex
+que le package utilise depuis pré-0.7. Le mode Auto utilise le scanner
+comme plancher de sécurité même s'il laisse passer les mutations
+ordinaires.
+
+### Câblage à l'intérieur d'un runner hôte
+
+Le portail est une fonction de décision pure — le code hôte l'appelle
+avant de transférer l'appel d'outil au backend, et rend la suggestion
+dans sa propre UI. Pas d'enforcement côté backend ; l'opt-in est à un
+appel d'enveloppe près :
+
+```php
+use SuperAICore\Runner\ApprovalGate;
+use SuperAICore\Runner\ApprovalMode;
+use SuperAICore\Runner\ApprovalDecision;
+
+$gate    = app(ApprovalGate::class);
+$mode    = ApprovalMode::parse($thread->approval_mode ?? 'suggest');
+$pending = $thread->pending_approval_tool_use_id;   // stocké côté hôte, voir ci-dessous
+
+$decision = $gate->evaluate(
+    toolName:           $call->name,
+    arguments:          $call->arguments,
+    mode:               $mode,
+    toolUseId:          $call->id,
+    approvedToolUseId:  $pending,
+);
+
+if ($decision->allow) {
+    $thread->forget('pending_approval_tool_use_id');   // override à usage unique consommé
+    return $backend->dispatchTool($call);
+}
+
+if ($decision->canRetry) {
+    // Mode Suggest — remonter à l'utilisateur. Il tape /approve dans
+    // l'UI, l'hôte estampille
+    // $thread->pending_approval_tool_use_id = $call->id, puis ré-émet
+    // le même appel.
+    return [
+        'error' => $decision->reason,
+        'code'  => $decision->errorCode,    // 'mutation_pending_approval' ou
+                                            // 'destructive_pending_approval'
+        'tool_use_id' => $call->id,
+    ];
+}
+
+// Hard deny — le mode Never rejette une mutation. Dites à l'utilisateur
+// de changer de mode ; ne PAS auto-retry.
+throw new RuntimeException($decision->reason);
+```
+
+### Le flux `/approve`
+
+1. L'agent émet un block `tool_use` qui mute l'état.
+2. Le portail retourne `canRetry: true`, code `mutation_pending_approval`, avec le `tool_use_id` de l'appel.
+3. L'UI hôte affiche « Approuver cet appel ? » avec le diff / la commande shell.
+4. L'utilisateur tape `/approve`. L'hôte stocke `tool_use_id` dans `pending_approval_tool_use_id`.
+5. L'hôte ré-exécute le même tour d'agent. Le portail voit `approvedToolUseId === toolUseId`, retourne `allow`.
+6. L'hôte efface `pending_approval_tool_use_id`. Usage unique — le prochain appel de l'agent passe par le portail à blanc.
+
+L'override est `hash_equals($approvedToolUseId, $toolUseId)` — égalité
+de chaînes, sans astuce d'encodage. L'hôte possède le stockage et la
+discipline d'effacement ; le portail est sans état.
+
+### Scanner destructif personnalisé
+
+Le constructeur du portail prend un `DestructiveCommandScanner`
+optionnel. Pour surcharger (par ex. ajouter la détection SQL DROP),
+re-lier :
+
+```php
+$this->app->singleton(\SuperAICore\Runner\ApprovalGate::class, function ($app) {
+    return new \SuperAICore\Runner\ApprovalGate(
+        scanner: new \App\Guidance\StrictScanner(),
+    );
+});
+```
+
+---
+
+## 24. Manifeste de plugin workspace (0.9.1)
+
+*Depuis 0.9.1.*
+
+Le pattern « workspace plugin sharing » de codex en PHP. Une équipe
+commit `.superaicore/workspace-plugins.json` dans le repo ; les
+nouveaux arrivants obtiennent l'ensemble complet de plugins de l'équipe
+sur `git clone` au lieu d'une doc d'onboarding par machine.
+
+### Format du manifeste
+
+```json
+{
+    "plugins": [
+        {
+            "name":    "team-pr-review",
+            "source":  "github.com/our-org/agent-skill-pr-review",
+            "version": "1.4.0",
+            "scope":   "workspace"
+        },
+        {
+            "name":    "team-jira-helper",
+            "source":  "github.com/our-org/agent-skill-jira",
+            "version": "0.8.2",
+            "scope":   "user"
+        }
+    ]
+}
+```
+
+- `scope: "workspace"` → doit être installé pour tous ceux qui travaillent dans ce repo. Le registry le retourne en `missing_required`.
+- `scope: "user"` → recommandation seulement. Retourné en `missing_recommended` ; l'UI hôte invite le développeur plutôt que d'auto-installer.
+
+### Boucle de sync
+
+```php
+use SuperAICore\Plugins\WorkspacePluginRegistry;
+
+$registry = app(WorkspacePluginRegistry::class);
+
+// Rassembler les noms des plugins déjà installés localement par
+// l'hôte — c'est spécifique à l'hôte (votre PluginInstaller sait où
+// ils vivent).
+$installedNames = collect(app(\App\Plugins\PluginInstaller::class)->list())
+    ->pluck('name')
+    ->all();
+
+$pending = $registry->pendingInstalls($installedNames);
+// → [
+//     'missing_required'    => [['name' => 'team-pr-review',  …]],
+//     'missing_recommended' => [['name' => 'team-jira-helper', …]],
+//   ]
+
+foreach ($pending['missing_required'] as $entry) {
+    // Auto-install — pas de prompt ; c'est une exigence scope workspace.
+    app(\App\Plugins\PluginInstaller::class)->install(
+        $entry['name'], $entry['source'], $entry['version'],
+    );
+}
+
+if ($pending['missing_recommended']) {
+    // Inviter le développeur plutôt que d'auto-installer.
+    $this->info(sprintf(
+        "Plugins recommandés que ce workspace utilise : %s. Lancez `php artisan plugin:install --recommended` pour les ajouter.",
+        collect($pending['missing_recommended'])->pluck('name')->implode(', '),
+    ));
+}
+```
+
+### Ajouter / retirer des entrées depuis PHP
+
+```php
+$registry->add(
+    name:    'team-deploy-helper',
+    source:  'github.com/our-org/agent-skill-deploy',
+    version: '2.1.0',
+    scope:   WorkspacePluginRegistry::SCOPE_WORKSPACE,
+);
+
+$registry->remove('team-jira-helper');   // retourne true / false
+```
+
+Le registry écrit du JSON pretty-print avec un ordre de clés stable,
+donc le manifeste est review-friendly quand il atterrit dans une PR.
+
+### Où vit le manifeste
+
+Codé en dur à
+`<workspace_root>/.superaicore/workspace-plugins.json`. La
+`workspaceRoot` par défaut est `base_path()`. Surchargez le binding
+singleton si la disposition de votre repo place la racine du workspace
+ailleurs :
+
+```php
+$this->app->singleton(\SuperAICore\Plugins\WorkspacePluginRegistry::class, function () {
+    return new \SuperAICore\Plugins\WorkspacePluginRegistry(
+        workspaceRoot: '/var/www/myapp',
+    );
+});
+```
+
+---
+
+## 25. Endpoint JSON `/v1/usage` headless (0.9.1)
+
+*Depuis 0.9.1.*
+
+`Http\Controllers\UsageApiController` reflète la forme `/v1/usage` de
+l'app-server codex — un axe par requête, schéma de bucket identique.
+Pour les pipelines de billing / Grafana / portails de coût CI qui ne
+veulent pas scraper le tableau de bord HTML.
+
+### Enregistrement de route + auth
+
+La route est enregistrée sous le préfixe standard du package
+(par défaut `super-ai-core`) :
+
+```
+GET /super-ai-core/v1/usage
+```
+
+L'auth est la responsabilité de l'hôte. Encapsulez le groupe de routes
+externe ou le middleware par-route dans votre config :
+
+```php
+// config/super-ai-core.php
+return [
+    'route' => [
+        'middleware' => ['web', 'auth:sanctum', 'can:view-billing'],
+    ],
+];
+```
+
+Le contrôleur ne suppose pas de session ; sans middleware, chaque
+appelant qui atteint l'endpoint obtient les données agrégées de coût.
+
+### Paramètres de requête
+
+| clé         | type   | défaut  | notes                                              |
+| ----------- | ------ | ------- | -------------------------------------------------- |
+| `group_by`  | string | `day`   | un de `day`, `model`, `provider`, `thread`, `backend`, `task_type` |
+| `days`      | int    | `30`    | clampé à ≥ 1                                       |
+| `model`     | string | —       | filtre exact-match sur `ai_usage_logs.model`       |
+| `task_type` | string | —       | filtre exact-match sur `ai_usage_logs.task_type`   |
+| `user_id`   | string | —       | filtre exact-match sur `ai_usage_logs.user_id`     |
+| `backend`   | string | —       | filtre exact-match sur `ai_usage_logs.backend`     |
+
+`group_by` inconnu retourne 422 avec la liste autorisée.
+
+### Forme de réponse
+
+```json
+{
+    "group_by": "model",
+    "from":     "2026-04-04T00:00:00+00:00",
+    "to":       "2026-05-04T17:21:48+00:00",
+    "buckets": [
+        {
+            "bucket":            "claude-opus-4-7",
+            "runs":              412,
+            "cost_usd":          12.847291,
+            "shadow_cost_usd":   12.847291,
+            "input_tokens":      1837421,
+            "output_tokens":     291038,
+            "cache_read_tokens": 4129873,
+            "cache_hit_rate":    0.6921
+        },
+        …
+    ]
+}
+```
+
+`cache_hit_rate` est calculé à l'intérieur du bucket — `cache_read /
+(input + cache_read)` — plutôt que moyenné depuis l'estampille
+per-row, donc il reste correct quel que soit le sous-ensemble de
+lignes ayant la clé metadata définie.
+
+### Exemples curl
+
+```bash
+# Dépense quotidienne par modèle, 7 derniers jours
+curl -H "Authorization: Bearer $TOKEN" \
+    'https://app.example.com/super-ai-core/v1/usage?group_by=day&days=7'
+
+# Coût par-thread sur le mois dernier, scope au backend SuperAgent
+curl -H "Authorization: Bearer $TOKEN" \
+    'https://app.example.com/super-ai-core/v1/usage?group_by=thread&backend=superagent&days=30'
+
+# Ventilation niveau provider pour un seul task type
+curl -H "Authorization: Bearer $TOKEN" \
+    'https://app.example.com/super-ai-core/v1/usage?group_by=provider&task_type=email_summary'
+```
+
+### Datasource Grafana JSON
+
+La forme est compatible avec le datasource basé JSON de Grafana —
+pointez le panel sur
+`/super-ai-core/v1/usage?group_by=day&days=$__range_days`, mappage de
+champ `bucket → time` et choisissez `cost_usd` / `cache_hit_rate`
+comme métriques. Le cap dur de 5000 lignes dans le contrôleur empêche
+qu'une plage de dates qui s'emballe ne casse le fetch Grafana.
+
+### Limites
+
+- `limit(5000)` sur la requête sous-jacente — au-delà de cette fenêtre les totaux par bucket restent corrects mais le slice exact est les 5000 lignes les plus récentes. Resserrez la plage de dates ou filtrez par `backend` / `model` si vous avez besoin d'une fenêtre plus large.
+- Les filtres sont exact-match seulement ; pas de `LIKE` / `IN` / regex. Pour des requêtes plus riches, le `UsageController` du tableau de bord HTML a la surface de filtre complète, ou construisez votre propre contrôleur au-dessus de `AiUsageLog`.
+
+---
+
+## 26. Agrégation `cache_hit_rate` (0.9.1)
+
+*Depuis 0.9.1 — compagnon de l'affichage cache-rate par tour de DeepSeek-TUI.*
+
+Chaque ligne `ai_usage_logs` dont le `metadata` porte une part de cache
+non nulle porte maintenant aussi `metadata.cache_hit_rate ∈ [0, 1]`.
+
+### Pourquoi le dénominateur BRUT
+
+```
+cache_hit_rate = cache_read_tokens / (input_tokens + cache_read_tokens)
+                                       └── input non caché ──┘
+```
+
+Le dénominateur est le prompt **brut** — la taille totale du prompt
+avant la décote cache, pas seulement la portion cachée. Group-and-
+average à travers les lignes fonctionne correctement parce que chaque
+ligne utilise la même forme de dénominateur : agrégez `cache_read` et
+`input` séparément, puis divisez.
+
+```php
+// Groupement par modèle — lit correctement sans redériver :
+$rows = AiUsageLog::where('model', 'claude-opus-4-7')
+    ->where('created_at', '>=', now()->subDays(7))
+    ->get();
+
+$rates = $rows->avg(fn ($r) => $r->metadata['cache_hit_rate'] ?? null);
+// vs. recalcul ground truth, qui donne le même nombre :
+$cacheRead = $rows->sum(fn ($r) => $r->metadata['cache_read_tokens'] ?? 0);
+$gross     = $rows->sum('input_tokens') + $cacheRead;
+$truth     = $gross > 0 ? $cacheRead / $gross : 0;
+```
+
+### Absent vs zéro — différence sémantique
+
+| état                                | valeur `cache_hit_rate` | signification                      |
+| ----------------------------------- | ----------------------- | ---------------------------------- |
+| pas de cache key envoyée, cache off | absent (clé non définie)| « pas de cache éligible »          |
+| cache key envoyée, miss complet     | `0.0`                   | « 0% hit — cache froid ou churn »  |
+| cache key envoyée, hit partiel      | `0.42`                  | « 42% du prompt payé était gratuit »|
+| cache key envoyée, hit complet      | `1.0`                   | « 100% hit — session collante »    |
+
+Les tableaux de bord qui filtrent sur `cache_hit_rate IS NOT NULL`
+séparent proprement « feature en usage, juste froide » de « feature
+pas du tout utilisée ».
+
+### Alias DeepSeek V3 / R1
+
+Les anciens wires DeepSeek (V3, R1) estampillaient `cache_hit_tokens`
+au lieu de `cache_read_tokens`. `UsageRecorder` accepte les deux —
+l'alias est lu à l'entrée, la clé canonique est écrite à la sortie.
+
+```php
+// Les deux produisent la même ligne :
+$recorder->record(['cache_read_tokens' => 1500, …]);
+$recorder->record(['cache_hit_tokens'  => 1500, …]);   // alias legacy
+```
+
+Le code hôte qui estampillait historiquement l'alias sur les
+enregistrements d'usage est forward-compatible — pas de migration
+nécessaire.
+
+### Carte sommaire `total_cache_read_tokens`
+
+Le bloc session-summary de la page `/usage` porte maintenant
+`total_cache_read_tokens` aux côtés des slices existants de cache froid
+et de coût ambient. C'est le compte absolu, pas le taux — le taux
+apparaît par-modèle et par-ligne.
+
+### Lecture depuis un queue worker
+
+La colonne `cache_hit_rate` fait partie de `metadata` (JSON), pas une
+colonne top-level, donc les installs MySQL 5.7 / SQLite sans indexation
+JSON-path lisent ça inline :
+
+```php
+AiUsageLog::query()
+    ->where('created_at', '>=', now()->subDay())
+    ->whereNotNull('metadata')
+    ->get()
+    ->filter(fn ($r) => isset($r->metadata['cache_hit_rate']))
+    ->groupBy('model')
+    ->map(fn ($rows) => [
+        'avg_rate' => round($rows->avg(fn ($r) => $r->metadata['cache_hit_rate']), 4),
+        'runs'     => $rows->count(),
+    ]);
+```
+
+L'endpoint `/v1/usage` (§25) fait le même calcul côté serveur sur les
+six axes de group-by — habituellement plus simple que de rouler le
+vôtre.
 
 ---
 

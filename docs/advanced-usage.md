@@ -29,6 +29,11 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 19. [Browser screenshot round-trip (0.9.0)](#19-browser-screenshot-round-trip-090)
 20. [Usage source split — `user` vs `ambient` (0.9.0)](#20-usage-source-split--user-vs-ambient-090)
 21. [Cross-harness session resume (0.9.0)](#21-cross-harness-session-resume-090)
+22. [Durable goal store (0.9.1)](#22-durable-goal-store-091)
+23. [Three-tier approval gate (0.9.1)](#23-three-tier-approval-gate-091)
+24. [Workspace plugin manifest (0.9.1)](#24-workspace-plugin-manifest-091)
+25. [Headless `/v1/usage` JSON endpoint (0.9.1)](#25-headless-v1usage-json-endpoint-091)
+26. [`cache_hit_rate` aggregation (0.9.1)](#26-cache_hit_rate-aggregation-091)
 
 ---
 
@@ -1432,6 +1437,499 @@ Importers are deliberately tolerant — malformed lines / unknown event types ar
 
 - **Auto-discovery of jcode / pi / OpenCode session files** — the SDK's 0.9.7 importer set covers Claude Code and Codex. Hosts that need other harnesses implement `HarnessImporter` directly and drop a service-provider binding to register the implementation.
 - **Re-dispatch UI for SuperAICore's own `ai_processes` history** — `/processes` is live-only by contract since 0.6.7 (it shows running PIDs, not finished rows). The Resume dropdown is for cross-harness session pickup, not for replaying prior SuperAICore runs. Hosts that want "rerun this finished task with a different provider" build their own UI on top of the `ai_processes` audit log.
+
+---
+
+## 22. Durable goal store (0.9.1)
+
+*Since 0.9.1 — SuperAgent SDK 0.9.8 `Goals\Contracts\GoalStore` SPI.*
+
+SDK 0.9.8 ships `Goals\GoalManager` — a thread-scoped primitive for
+"this conversation is working towards X". The manager needs persistence
+to survive process restarts (codex pauses goals when the user runs
+`/pause`, and they have to stay paused after the host process recycles).
+SuperAICore 0.9.1 wires the default Eloquent backing.
+
+### Default wiring
+
+`SuperAICoreServiceProvider::register()` binds:
+
+```php
+$this->app->bind(
+    \SuperAgent\Goals\Contracts\GoalStore::class,
+    \SuperAICore\Goals\EloquentGoalStore::class,
+);
+$this->app->singleton(\SuperAgent\Goals\GoalManager::class);
+```
+
+So `app(GoalManager::class)` resolves with the durable store
+auto-injected. Run `php artisan migrate` to create the `ai_goals` table
+(`thread_id`, `description`, `status`, `metadata`, timestamps). The
+table is honoured by `super-ai-core.table_prefix` if your host uses one.
+
+```php
+use SuperAgent\Goals\GoalManager;
+
+$manager = app(GoalManager::class);
+$manager->setActiveGoal($threadId, 'Refactor checkout flow to honour the new tax engine');
+
+// Later — agent reads the goal mid-conversation via the agent_get_goal
+// read-only tool, or the host pauses it during a budget overrun:
+$manager->pause($threadId);
+// …redeploy host process…
+$active = $manager->getActiveGoal($threadId);   // still null — paused
+$manager->resume($threadId);
+```
+
+### Constraint: at most one non-terminal row per thread
+
+`EloquentGoalStore::setActiveGoal()` transitions any pre-existing
+`active` / `paused` / `budget_limited` row for the thread to
+`superseded` before inserting the new one. Terminal statuses
+(`completed`, `cancelled`, `superseded`) accumulate freely as audit
+trail.
+
+### Custom store — host already keeps goals in its own table
+
+Hosts that already model goals (e.g. SuperTeam stores `objectives` per
+project) substitute their own implementation. The contract is small —
+five methods on `GoalStore`:
+
+```php
+namespace App\Goals;
+
+use SuperAgent\Goals\Contracts\GoalStore;
+use SuperAgent\Goals\Goal;
+
+final class MyGoalStore implements GoalStore
+{
+    public function setActiveGoal(string $threadId, string $description, array $metadata = []): Goal
+    { /* upsert into your `objectives` table, mark prior active row superseded */ }
+
+    public function getActiveGoal(string $threadId): ?Goal
+    { /* return Goal::active(...) or null when paused / completed / absent */ }
+
+    public function pause(string $threadId): void           { /* … */ }
+    public function resume(string $threadId): void          { /* … */ }
+    public function complete(string $threadId, ?string $result = null): void { /* … */ }
+}
+```
+
+Override the binding in your host service provider's `register()` —
+**before** anything resolves `GoalManager`:
+
+```php
+$this->app->bind(
+    \SuperAgent\Goals\Contracts\GoalStore::class,
+    \App\Goals\MyGoalStore::class,
+);
+```
+
+The `EloquentGoalStore` in this package becomes dead code from your
+host's perspective — it's a reference implementation, not a hard
+dependency.
+
+---
+
+## 23. Three-tier approval gate (0.9.1)
+
+*Since 0.9.1.*
+
+`Runner\ApprovalGate` mirrors codex's `/permissions` command (renamed
+from `/approvals`). Three modes — `Auto`, `Suggest`, `Never` — with a
+single-use `/approve` override token for the codex-style "let this one
+specific call through" flow.
+
+### Where the modes differ
+
+```
+                read-only tools   ordinary mutations    destructive shell
+   ──────────────────────────────────────────────────────────────────────
+   Auto         allow              allow                 SUGGEST APPROVAL
+   Suggest      allow              SUGGEST APPROVAL      SUGGEST APPROVAL
+   Never        allow              hard deny             hard deny
+```
+
+Read-only allowlist is hard-coded on the enum:
+
+```php
+ApprovalMode::readOnlyAllowlist();
+// → ['agent_grep', 'agent_glob', 'agent_read', 'agent_ls',
+//    'agent_status', 'web_search', 'web_fetch', 'agent_get_goal']
+```
+
+Destructive shell detection runs through the existing
+`Guidance\Gates\DestructiveCommandScanner` — same regex set the package
+has used since pre-0.7. Auto mode uses the scanner as a safety floor
+even though it lets ordinary mutations through.
+
+### Wiring inside a host runner
+
+The gate is a pure decision function — host code calls it before
+forwarding the tool call to the backend, and renders the suggestion in
+its own UI. There's no backend-side enforcement; opting in is one wrap
+call:
+
+```php
+use SuperAICore\Runner\ApprovalGate;
+use SuperAICore\Runner\ApprovalMode;
+use SuperAICore\Runner\ApprovalDecision;
+
+$gate    = app(ApprovalGate::class);
+$mode    = ApprovalMode::parse($thread->approval_mode ?? 'suggest');
+$pending = $thread->pending_approval_tool_use_id;   // host-stored, see below
+
+$decision = $gate->evaluate(
+    toolName:           $call->name,
+    arguments:          $call->arguments,
+    mode:               $mode,
+    toolUseId:          $call->id,
+    approvedToolUseId:  $pending,
+);
+
+if ($decision->allow) {
+    $thread->forget('pending_approval_tool_use_id');   // single-use override consumed
+    return $backend->dispatchTool($call);
+}
+
+if ($decision->canRetry) {
+    // Suggest mode — surface to user. They tap /approve in the UI,
+    // host stamps $thread->pending_approval_tool_use_id = $call->id,
+    // then re-issues the same call.
+    return [
+        'error' => $decision->reason,
+        'code'  => $decision->errorCode,    // 'mutation_pending_approval' or
+                                            // 'destructive_pending_approval'
+        'tool_use_id' => $call->id,
+    ];
+}
+
+// Hard deny — Never mode rejecting a mutation. Tell the user to switch
+// modes; do NOT auto-retry.
+throw new RuntimeException($decision->reason);
+```
+
+### The `/approve` flow
+
+1. Agent emits a `tool_use` block that mutates state.
+2. Gate returns `canRetry: true`, code `mutation_pending_approval`, with the call's `tool_use_id`.
+3. Host UI shows "Approve this call?" with the diff / shell command.
+4. User taps `/approve`. Host stores `tool_use_id` in `pending_approval_tool_use_id`.
+5. Host re-runs the same agent turn. The gate sees `approvedToolUseId === toolUseId`, returns `allow`.
+6. Host clears `pending_approval_tool_use_id`. Single-use — the next call from the agent goes through the gate fresh.
+
+The override is `hash_equals($approvedToolUseId, $toolUseId)` — string
+equality, no encoding tricks. Host owns the storage and clearing
+discipline; the gate is stateless.
+
+### Custom destructive-scanner
+
+The gate constructor takes an optional
+`DestructiveCommandScanner`. To override (e.g. add SQL DROP detection),
+re-bind:
+
+```php
+$this->app->singleton(\SuperAICore\Runner\ApprovalGate::class, function ($app) {
+    return new \SuperAICore\Runner\ApprovalGate(
+        scanner: new \App\Guidance\StrictScanner(),
+    );
+});
+```
+
+---
+
+## 24. Workspace plugin manifest (0.9.1)
+
+*Since 0.9.1.*
+
+Codex's "workspace plugin sharing" pattern in PHP. A team commits
+`.superaicore/workspace-plugins.json` to the repo; new hires get the
+team's full plugin set on `git clone` instead of a per-machine
+onboarding doc.
+
+### Manifest format
+
+```json
+{
+    "plugins": [
+        {
+            "name":    "team-pr-review",
+            "source":  "github.com/our-org/agent-skill-pr-review",
+            "version": "1.4.0",
+            "scope":   "workspace"
+        },
+        {
+            "name":    "team-jira-helper",
+            "source":  "github.com/our-org/agent-skill-jira",
+            "version": "0.8.2",
+            "scope":   "user"
+        }
+    ]
+}
+```
+
+- `scope: "workspace"` → must be installed for everyone working in this repo. The registry returns it as `missing_required`.
+- `scope: "user"` → recommendation only. Returned as `missing_recommended`; host UI prompts the developer rather than auto-installing.
+
+### Sync loop
+
+```php
+use SuperAICore\Plugins\WorkspacePluginRegistry;
+
+$registry = app(WorkspacePluginRegistry::class);
+
+// Gather names of plugins the host already has installed locally —
+// this is host-specific (your PluginInstaller knows where they live).
+$installedNames = collect(app(\App\Plugins\PluginInstaller::class)->list())
+    ->pluck('name')
+    ->all();
+
+$pending = $registry->pendingInstalls($installedNames);
+// → [
+//     'missing_required'    => [['name' => 'team-pr-review',  …]],
+//     'missing_recommended' => [['name' => 'team-jira-helper', …]],
+//   ]
+
+foreach ($pending['missing_required'] as $entry) {
+    // Auto-install — no prompt; this is a workspace-scope requirement.
+    app(\App\Plugins\PluginInstaller::class)->install(
+        $entry['name'], $entry['source'], $entry['version'],
+    );
+}
+
+if ($pending['missing_recommended']) {
+    // Prompt the developer rather than auto-installing.
+    $this->info(sprintf(
+        "Recommended plugins this workspace uses: %s. Run `php artisan plugin:install --recommended` to add them.",
+        collect($pending['missing_recommended'])->pluck('name')->implode(', '),
+    ));
+}
+```
+
+### Adding / removing entries from PHP
+
+```php
+$registry->add(
+    name:    'team-deploy-helper',
+    source:  'github.com/our-org/agent-skill-deploy',
+    version: '2.1.0',
+    scope:   WorkspacePluginRegistry::SCOPE_WORKSPACE,
+);
+
+$registry->remove('team-jira-helper');   // returns true / false
+```
+
+The registry writes pretty-printed JSON with stable key ordering, so
+the manifest is review-friendly when it lands in a PR.
+
+### Where the manifest lives
+
+Hard-coded at `<workspace_root>/.superaicore/workspace-plugins.json`.
+The default `workspaceRoot` is `base_path()`. Override the singleton
+binding if your repo layout puts the workspace root elsewhere:
+
+```php
+$this->app->singleton(\SuperAICore\Plugins\WorkspacePluginRegistry::class, function () {
+    return new \SuperAICore\Plugins\WorkspacePluginRegistry(
+        workspaceRoot: '/var/www/myapp',
+    );
+});
+```
+
+---
+
+## 25. Headless `/v1/usage` JSON endpoint (0.9.1)
+
+*Since 0.9.1.*
+
+`Http\Controllers\UsageApiController` mirrors codex's app-server
+`/v1/usage` shape — one axis per request, identical bucket schema. For
+billing pipelines / Grafana / CI cost gates that don't want to scrape
+the HTML dashboard.
+
+### Route registration + auth
+
+The route is registered under the package's standard prefix (default
+`super-ai-core`):
+
+```
+GET /super-ai-core/v1/usage
+```
+
+Auth is the host's responsibility. Wrap the surrounding route group or
+the per-route middleware in your config:
+
+```php
+// config/super-ai-core.php
+return [
+    'route' => [
+        'middleware' => ['web', 'auth:sanctum', 'can:view-billing'],
+    ],
+];
+```
+
+The controller does not assume a session; without middleware, every
+caller that reaches the endpoint gets aggregate cost data.
+
+### Query parameters
+
+| key         | type   | default | notes                                              |
+| ----------- | ------ | ------- | -------------------------------------------------- |
+| `group_by`  | string | `day`   | one of `day`, `model`, `provider`, `thread`, `backend`, `task_type` |
+| `days`      | int    | `30`    | clamped to ≥ 1                                     |
+| `model`     | string | —       | exact-match filter on `ai_usage_logs.model`         |
+| `task_type` | string | —       | exact-match filter on `ai_usage_logs.task_type`     |
+| `user_id`   | string | —       | exact-match filter on `ai_usage_logs.user_id`       |
+| `backend`   | string | —       | exact-match filter on `ai_usage_logs.backend`       |
+
+Unknown `group_by` returns 422 with the allowed list.
+
+### Response shape
+
+```json
+{
+    "group_by": "model",
+    "from":     "2026-04-04T00:00:00+00:00",
+    "to":       "2026-05-04T17:21:48+00:00",
+    "buckets": [
+        {
+            "bucket":            "claude-opus-4-7",
+            "runs":              412,
+            "cost_usd":          12.847291,
+            "shadow_cost_usd":   12.847291,
+            "input_tokens":      1837421,
+            "output_tokens":     291038,
+            "cache_read_tokens": 4129873,
+            "cache_hit_rate":    0.6921
+        },
+        …
+    ]
+}
+```
+
+`cache_hit_rate` is computed inside the bucket — `cache_read /
+(input + cache_read)` — rather than averaged from the per-row stamp,
+so it stays correct regardless of which subset of rows had the metadata
+key set.
+
+### Curl examples
+
+```bash
+# Daily spend by model, last 7 days
+curl -H "Authorization: Bearer $TOKEN" \
+    'https://app.example.com/super-ai-core/v1/usage?group_by=day&days=7'
+
+# Per-thread cost over the last month, scoped to the SuperAgent backend
+curl -H "Authorization: Bearer $TOKEN" \
+    'https://app.example.com/super-ai-core/v1/usage?group_by=thread&backend=superagent&days=30'
+
+# Provider-level breakdown for a single task type
+curl -H "Authorization: Bearer $TOKEN" \
+    'https://app.example.com/super-ai-core/v1/usage?group_by=provider&task_type=email_summary'
+```
+
+### Grafana JSON datasource
+
+The shape is compatible with the JSON-based Grafana datasource — point
+the panel at `/super-ai-core/v1/usage?group_by=day&days=$__range_days`,
+field map `bucket → time` and pick `cost_usd` / `cache_hit_rate` as
+metrics. The 5000-row hard cap inside the controller keeps a runaway
+date range from breaking the Grafana fetch.
+
+### Limits
+
+- `limit(5000)` on the underlying query — outside that window the bucket totals stay correct but the exact slice is the most-recent 5000 rows. Tighten the date range or filter by `backend` / `model` if you need a wider window.
+- Filters are exact-match only; no `LIKE` / `IN` / regex. For richer queries the HTML dashboard's `UsageController` has the full filter surface, or build your own controller on top of `AiUsageLog`.
+
+---
+
+## 26. `cache_hit_rate` aggregation (0.9.1)
+
+*Since 0.9.1 — companion to DeepSeek-TUI's per-turn cache-rate display.*
+
+Every `ai_usage_logs` row whose `metadata` carries a non-zero cache
+slice now also carries `metadata.cache_hit_rate ∈ [0, 1]`.
+
+### Why the GROSS denominator
+
+```
+cache_hit_rate = cache_read_tokens / (input_tokens + cache_read_tokens)
+                                       └── uncached input ──┘
+```
+
+The denominator is the **gross** prompt — the total prompt size before
+the cache discount, not just the cached portion. Group-and-average
+across rows works correctly because every row uses the same denominator
+shape: aggregate `cache_read` and `input` separately, then divide.
+
+```php
+// Grouping by model — reads correctly without re-deriving:
+$rows = AiUsageLog::where('model', 'claude-opus-4-7')
+    ->where('created_at', '>=', now()->subDays(7))
+    ->get();
+
+$rates = $rows->avg(fn ($r) => $r->metadata['cache_hit_rate'] ?? null);
+// vs. the ground truth recompute, which gives the same number:
+$cacheRead = $rows->sum(fn ($r) => $r->metadata['cache_read_tokens'] ?? 0);
+$gross     = $rows->sum('input_tokens') + $cacheRead;
+$truth     = $gross > 0 ? $cacheRead / $gross : 0;
+```
+
+### Absent vs zero — semantic difference
+
+| state                              | `cache_hit_rate` value | meaning                            |
+| ---------------------------------- | ---------------------- | ---------------------------------- |
+| no cache key sent, cache disabled  | absent (key not set)   | "no cache eligible"                |
+| cache key sent, full cache miss    | `0.0`                  | "0% hit — cold cache or churn"     |
+| cache key sent, partial hit        | `0.42`                 | "42% of paid prompt was free"      |
+| cache key sent, full hit           | `1.0`                  | "100% hit — sticky session"        |
+
+Dashboards that filter on `cache_hit_rate IS NOT NULL` cleanly separate
+"feature in use, just cold" from "feature not used at all".
+
+### DeepSeek V3 / R1 alias
+
+Older DeepSeek wires (V3, R1) stamped `cache_hit_tokens` instead of
+`cache_read_tokens`. `UsageRecorder` accepts both — the alias is read
+on the way in, the canonical key is written on the way out.
+
+```php
+// Both of these produce the same row:
+$recorder->record(['cache_read_tokens' => 1500, …]);
+$recorder->record(['cache_hit_tokens'  => 1500, …]);   // legacy alias
+```
+
+Host code that historically stamped the alias on usage records is
+forward-compatible — no migration needed.
+
+### `total_cache_read_tokens` summary card
+
+The `/usage` page's session-summary block now carries
+`total_cache_read_tokens` alongside the existing cold-cache and
+ambient-cost slices. This is the absolute count, not the rate — the
+rate appears per-model and per-row.
+
+### Reading from a queue worker
+
+The `cache_hit_rate` column is part of `metadata` (JSON), not a
+top-level column, so MySQL 5.7 / SQLite installs without JSON-path
+indexing read it inline:
+
+```php
+AiUsageLog::query()
+    ->where('created_at', '>=', now()->subDay())
+    ->whereNotNull('metadata')
+    ->get()
+    ->filter(fn ($r) => isset($r->metadata['cache_hit_rate']))
+    ->groupBy('model')
+    ->map(fn ($rows) => [
+        'avg_rate' => round($rows->avg(fn ($r) => $r->metadata['cache_hit_rate']), 4),
+        'runs'     => $rows->count(),
+    ]);
+```
+
+The `/v1/usage` endpoint (§25) does the same calculation server-side
+across the six group-by axes — usually easier than rolling your own.
 
 ---
 
