@@ -142,6 +142,7 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 $app->make(Dispatcher::class),
                 $app->make(\SuperAICore\AgentSpawn\Pipeline::class),
                 $app->bound('log') ? $app->make('log') : null,
+                $app->make(BackendRegistry::class),
             );
         });
 

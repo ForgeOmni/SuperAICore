@@ -4,6 +4,7 @@ namespace SuperAICore\Runner;
 
 use Psr\Log\LoggerInterface;
 use SuperAICore\AgentSpawn\Pipeline;
+use SuperAICore\Services\BackendRegistry;
 use SuperAICore\Services\Dispatcher;
 
 /**
@@ -64,12 +65,46 @@ class TaskRunner
         'prompt_file',
         'summary_file',
         'spawn_plan_dir',
+        'fallback_chain',
+        'fallback_on',
+        'inherit_failure_context',
+        'fallback_disabled',
+    ];
+
+    private const DEFAULT_FALLBACK_PATTERNS = [
+        'rate limit',
+        'rate_limit',
+        'usage limit',
+        'quota',
+        'quota_exceeded',
+        'exceeded your current quota',
+        'too many requests',
+        '429',
+        'insufficient_quota',
+        'billing',
+        'budget',
+        'limit reached',
+        'usage_not_included',
+    ];
+
+    private const DEFAULT_AUTO_CHAIN = [
+        'claude_cli',
+        'codex_cli',
+        'gemini_cli',
+        'kimi_cli',
+        'copilot_cli',
+        'kiro_cli',
+        'superagent',
+        'anthropic_api',
+        'openai_api',
+        'gemini_api',
     ];
 
     public function __construct(
         protected Dispatcher $dispatcher,
         protected ?Pipeline $pipeline = null,
         protected ?LoggerInterface $logger = null,
+        protected ?BackendRegistry $backendRegistry = null,
     ) {}
 
     /**
@@ -91,8 +126,13 @@ class TaskRunner
             );
         }
 
-        // Optional debug breadcrumb — keeps host parity with the
-        // hand-rolled spawn pattern that always wrote a prompt file.
+        // Resolve fallback before side effects like prompt_file writes so
+        // each attempt owns its normal persistence path.
+        $chain = $this->resolveFallbackChain($backend, $options);
+        if (count($chain) > 1) {
+            return $this->runWithFallback($chain, $prompt, $options);
+        }
+
         if (!empty($options['prompt_file'])) {
             $this->writeFile((string) $options['prompt_file'], $prompt);
         }
@@ -159,6 +199,53 @@ class TaskRunner
     }
 
     /**
+     * @param string[] $chain
+     */
+    protected function runWithFallback(array $chain, string $prompt, array $options): TaskResultEnvelope
+    {
+        $last = null;
+        $attempts = [];
+        $basePrompt = $prompt;
+        $nextPrompt = $prompt;
+        $inheritContext = array_key_exists('inherit_failure_context', $options)
+            ? (bool) $options['inherit_failure_context']
+            : $this->configBool('super-ai-core.task_fallback.inherit_failure_context', true);
+
+        foreach ($chain as $index => $candidate) {
+            $attemptOptions = $options;
+            unset($attemptOptions['fallback_chain']);
+            $attemptOptions['fallback_disabled'] = true;
+
+            if (isset($options['metadata']) && is_array($options['metadata'])) {
+                $attemptOptions['metadata'] = array_merge($options['metadata'], [
+                    'fallback_chain' => $chain,
+                    'fallback_attempt' => $index + 1,
+                    'fallback_backend' => $candidate,
+                ]);
+            }
+
+            $result = $this->run($candidate, $nextPrompt, $attemptOptions);
+            $attempts[] = $this->fallbackAttemptSummary($result, $index + 1);
+
+            if ($result->success) {
+                return count($attempts) === 1 ? $result : $result->withFallbackReport($attempts);
+            }
+
+            $last = $result;
+            if ($index === count($chain) - 1 || !$this->shouldFallback($result, $options)) {
+                return $result->withFallbackReport($attempts);
+            }
+
+            if ($inheritContext) {
+                $nextPrompt = $this->buildFallbackPrompt($basePrompt, $result, $candidate, $chain[$index + 1]);
+            }
+        }
+
+        return ($last ?? TaskResultEnvelope::failed(error: 'TaskRunner fallback chain produced no attempts'))
+            ->withFallbackReport($attempts);
+    }
+
+    /**
      * Strip TaskRunner-only options + force `stream: true` + ensure
      * backend / prompt land in the dispatch payload.
      */
@@ -177,7 +264,206 @@ class TaskRunner
      * Best-effort write — creates parent dir if missing, swallows write
      * failures (host's persistence is debug-only convenience; a failed
      * tee shouldn't kill the run).
+     *
+     * @return string[]
      */
+    protected function resolveFallbackChain(string $backend, array $options): array
+    {
+        if (!empty($options['fallback_disabled'])) {
+            return [$backend];
+        }
+
+        $chain = $options['fallback_chain'] ?? $this->configValue('super-ai-core.task_fallback.chain');
+        if ($chain === 'auto' || $chain === ['auto']) {
+            $chain = $this->autoFallbackChain($options);
+        }
+        if ($chain === null && $this->configBool('super-ai-core.task_fallback.auto_enabled', false)) {
+            $chain = $this->autoFallbackChain($options);
+        }
+        if (is_string($chain)) {
+            $chain = array_map('trim', explode(',', $chain));
+        }
+        if (!is_array($chain)) {
+            return [$backend];
+        }
+
+        $resolved = [];
+        foreach ($chain as $candidate) {
+            if (!is_string($candidate) || trim($candidate) === '') {
+                continue;
+            }
+            $resolved[] = trim($candidate);
+        }
+
+        if (!$resolved || $resolved[0] !== $backend) {
+            array_unshift($resolved, $backend);
+        }
+
+        return array_values(array_unique($resolved));
+    }
+
+    /**
+     * @return string[]
+     */
+    protected function autoFallbackChain(array $options = []): array
+    {
+        $configured = $this->configValue('super-ai-core.task_fallback.auto_chain');
+        $registryNames = $this->backendRegistry ? $this->backendRegistry->names() : [];
+        $candidates = is_array($configured) && $configured
+            ? $configured
+            : ($registryNames ?: self::DEFAULT_AUTO_CHAIN);
+        $enabled = (array) $this->configValue('super-ai-core.backends');
+        $checkAvailability = $this->configBool('super-ai-core.task_fallback.check_availability', false);
+
+        $chain = [];
+        foreach ($candidates as $candidate) {
+            if (!is_string($candidate) || $candidate === '') {
+                continue;
+            }
+            $backendConfig = $enabled[$candidate] ?? null;
+            if (is_array($backendConfig) && array_key_exists('enabled', $backendConfig) && !$backendConfig['enabled']) {
+                continue;
+            }
+            if ($checkAvailability && $this->backendRegistry) {
+                $backend = $this->backendRegistry->get($candidate);
+                if (!$backend || !$backend->isAvailable((array) ($options['provider_config'] ?? []))) {
+                    continue;
+                }
+            }
+            $chain[] = $candidate;
+        }
+
+        return $chain;
+    }
+
+    protected function shouldFallback(TaskResultEnvelope $result, array $options): bool
+    {
+        if ($result->success) {
+            return false;
+        }
+
+        $patterns = $options['fallback_on'] ?? $this->configValue('super-ai-core.task_fallback.fallback_on');
+        if ($patterns === null) {
+            $patterns = self::DEFAULT_FALLBACK_PATTERNS;
+        }
+        if (is_string($patterns)) {
+            $patterns = array_map('trim', explode(',', $patterns));
+        }
+
+        $haystack = mb_strtolower(trim(implode("\n", array_filter([
+            $result->error,
+            $result->output,
+            $result->summary,
+            $result->logFile ? $this->readTail($result->logFile, 8192) : null,
+            (string) $result->exitCode,
+        ], fn($value) => $value !== null && $value !== ''))));
+
+        if ($haystack === '') {
+            return $result->exitCode !== 0;
+        }
+
+        foreach ((array) $patterns as $pattern) {
+            if (!is_string($pattern) || trim($pattern) === '') {
+                continue;
+            }
+            if (str_contains($haystack, mb_strtolower(trim($pattern)))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function buildFallbackPrompt(string $originalPrompt, TaskResultEnvelope $failed, string $fromBackend, string $toBackend): string
+    {
+        $failureText = trim($failed->output !== '' ? $failed->output : (string) $failed->error);
+        if ($failureText === '' && $failed->logFile) {
+            $failureText = $this->readTail($failed->logFile, 4000);
+        }
+        $failureText = $this->truncate($failureText, 4000);
+
+        return rtrim($originalPrompt) . "\n\n---\n\n"
+            . "SuperAICore fallback handoff:\n"
+            . "- Previous backend: {$fromBackend}\n"
+            . "- Next backend: {$toBackend}\n"
+            . "- Previous exit code: {$failed->exitCode}\n"
+            . "- Reason: the previous backend appears unavailable, limited, or unable to complete this task.\n"
+            . "- Continue the same user task from the original prompt. Use the failure context only to avoid repeating the same blocked path.\n\n"
+            . "Previous backend output/log excerpt:\n"
+            . "```text\n"
+            . $failureText
+            . "\n```\n";
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    protected function fallbackAttemptSummary(TaskResultEnvelope $result, int $attempt): array
+    {
+        return [
+            'attempt' => $attempt,
+            'backend' => $result->backend,
+            'success' => $result->success,
+            'exit_code' => $result->exitCode,
+            'model' => $result->model,
+            'log_file' => $result->logFile,
+            'error' => $result->error ?: ($result->success ? null : $this->truncate($result->output, 500)),
+        ];
+    }
+
+    protected function readTail(string $path, int $bytes): string
+    {
+        if (!is_file($path) || !is_readable($path)) {
+            return '';
+        }
+
+        $size = filesize($path);
+        if ($size === false) {
+            return '';
+        }
+
+        $fh = @fopen($path, 'rb');
+        if (!$fh) {
+            return '';
+        }
+
+        if ($size > $bytes) {
+            @fseek($fh, -$bytes, SEEK_END);
+        }
+        $contents = (string) stream_get_contents($fh);
+        @fclose($fh);
+
+        return $contents;
+    }
+
+    protected function truncate(string $text, int $max): string
+    {
+        if (mb_strlen($text) <= $max) {
+            return $text;
+        }
+
+        return mb_substr($text, 0, $max) . "\n...[truncated]";
+    }
+
+    protected function configValue(string $key): mixed
+    {
+        if (!function_exists('config')) {
+            return null;
+        }
+
+        try {
+            return config($key);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    protected function configBool(string $key, bool $default): bool
+    {
+        $value = $this->configValue($key);
+        return is_bool($value) ? $value : $default;
+    }
+
     protected function writeFile(string $path, string $contents): void
     {
         $dir = \dirname($path);

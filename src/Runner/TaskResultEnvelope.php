@@ -49,6 +49,7 @@ final class TaskResultEnvelope
         public readonly ?int $usageLogId = null,
         public readonly ?array $spawnReport = null,
         public readonly ?string $error = null,
+        public readonly ?array $fallbackReport = null,
     ) {}
 
     /**
@@ -75,6 +76,31 @@ final class TaskResultEnvelope
     }
 
     /**
+     * @param array<int,array<string,mixed>> $attempts
+     */
+    public function withFallbackReport(array $attempts): self
+    {
+        return new self(
+            success: $this->success,
+            exitCode: $this->exitCode,
+            output: $this->output,
+            summary: $this->summary,
+            usage: $this->usage,
+            costUsd: $this->costUsd,
+            shadowCostUsd: $this->shadowCostUsd,
+            billingModel: $this->billingModel,
+            model: $this->model,
+            backend: $this->backend,
+            durationMs: $this->durationMs,
+            logFile: $this->logFile,
+            usageLogId: $this->usageLogId,
+            spawnReport: $this->spawnReport,
+            error: $this->error,
+            fallbackReport: $attempts,
+        );
+    }
+
+    /**
      * Plain-array projection — useful when a host's existing storage
      * layer (e.g. an Eloquent `update()` call expecting an array) hasn't
      * been migrated to the typed envelope yet.
@@ -96,6 +122,7 @@ final class TaskResultEnvelope
             'log_file'        => $this->logFile,
             'usage_log_id'    => $this->usageLogId,
             'spawn_report'    => $this->spawnReport,
+            'fallback_report' => $this->fallbackReport,
             'error'           => $this->error,
         ];
     }

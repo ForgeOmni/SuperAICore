@@ -113,11 +113,49 @@ hooks:
 | `summary_file` | ?string | Write `$envelope->output` here on success when text is non-empty. Skipped when text is empty. |
 | `spawn_plan_dir` | ?string | **Active in Phase C.** When set, TaskRunner hands off to `AgentSpawn\Pipeline` after the first pass — Pipeline checks for `_spawn_plan.json` in this dir, runs the parallel children (Phase 2), and re-invokes the backend with a consolidation prompt (Phase 3). Returns the merged envelope with `spawnReport` populated. No-op when no plan is found / backend opts out (claude/kiro/copilot/superagent). See `docs/spawn-plan-protocol.md`. |
 
+Additional TaskRunner-only fallback options:
+
+| Key | Type | Notes |
+|---|---|---|
+| `fallback_chain` | string\|list<string> | Ordered backend handoff chain, e.g. `['claude_cli', 'codex_cli', 'gemini_cli']`, or `'auto'` to let SuperAICore build the chain from registered/enabled backends. |
+| `fallback_on` | list<string> | Error fragments that permit handoff. Defaults cover quota/rate-limit wording such as `rate limit`, `usage limit`, `quota`, `429`, `too many requests`. |
+| `inherit_failure_context` | bool | Default true. The next backend receives the original prompt plus a short failure/log excerpt so it can continue the same task without repeating the blocked path. |
+
 All other options (`backend`, `prompt`, `model`, `system`, `messages`,
 `max_tokens`, `provider_config`, `log_file`, `timeout`, `idle_timeout`,
 `mcp_mode`, `mcp_config_file`, `external_label`, `onChunk`, `task_type`,
 `capability`, `user_id`, `provider_id`, `metadata`, `scope`, `scope_id`)
 pass straight through to Dispatcher.
+
+### Fallback handoff
+
+Task fallback is intentionally per-run. The requested backend is always
+tried first, so when a primary CLI such as Claude recovers from a usage
+limit, the next run naturally switches back without a manual reset.
+
+```php
+$envelope = app(\SuperAICore\Runner\TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_chain' => ['claude_cli', 'codex_cli', 'gemini_cli', 'kimi_cli'],
+    'fallback_on' => ['rate limit', 'usage limit', 'quota', '429'],
+    'inherit_failure_context' => true,
+]);
+```
+
+Use automatic strategy discovery when the host should pick from registered
+backends:
+
+```php
+$envelope = app(\SuperAICore\Runner\TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_chain' => 'auto',
+]);
+```
+
+Global defaults live under `super-ai-core.task_fallback`. Set
+`AI_CORE_TASK_FALLBACK_AUTO=true` to enable automatic fallback without a
+per-call `fallback_chain`, and optionally set
+`AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=true` to ask each registered
+backend whether its binary/API credentials appear usable before adding it
+to the auto chain.
 
 The runner forces `stream: true` on every call — there's no point in
 using `TaskRunner` for a non-streaming dispatch (the wrapping value adds
@@ -146,6 +184,7 @@ class TaskResultEnvelope
     public readonly ?int $usageLogId;         // ai_usage_logs row id (Phase B addition)
     public readonly ?array $spawnReport;      // Phase C — null today
     public readonly ?string $error;           // populated when success === false
+    public readonly ?array $fallbackReport;   // attempted backend chain, when fallback was active
 
     public static function failed(int $exitCode = 1, ?string $logFile = null, ?string $error = null, ?string $backend = null): self;
     public function toArray(): array;

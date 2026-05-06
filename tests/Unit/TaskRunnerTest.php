@@ -300,4 +300,85 @@ final class TaskRunnerTest extends TestCase
 
         $this->assertFalse($envelope->success);
     }
+
+    public function test_fallback_chain_hands_off_context_after_limit_failure(): void
+    {
+        $captured = [];
+        $dispatcher = $this->createMock(Dispatcher::class);
+        $dispatcher->expects($this->exactly(2))
+            ->method('dispatch')
+            ->willReturnCallback(function (array $opts) use (&$captured) {
+                $captured[] = $opts;
+                if ($opts['backend'] === 'claude_cli') {
+                    return [
+                        'text' => 'Claude usage limit reached. Try again later.',
+                        'usage' => [],
+                        'exit_code' => 1,
+                        'backend' => 'claude_cli',
+                    ];
+                }
+
+                return [
+                    'text' => 'continued on codex',
+                    'usage' => [],
+                    'exit_code' => 0,
+                    'backend' => 'codex_cli',
+                ];
+            });
+
+        $runner = new TaskRunner($dispatcher);
+        $envelope = $runner->run('claude_cli', 'original task', [
+            'fallback_chain' => ['claude_cli', 'codex_cli'],
+        ]);
+
+        $this->assertTrue($envelope->success);
+        $this->assertSame('codex_cli', $envelope->backend);
+        $this->assertSame('continued on codex', $envelope->summary);
+        $this->assertStringContainsString('original task', $captured[1]['prompt']);
+        $this->assertStringContainsString('SuperAICore fallback handoff', $captured[1]['prompt']);
+        $this->assertStringContainsString('Claude usage limit reached', $captured[1]['prompt']);
+        $this->assertCount(2, $envelope->fallbackReport);
+    }
+
+    public function test_fallback_chain_stops_on_non_matching_failure(): void
+    {
+        $dispatcher = $this->createMock(Dispatcher::class);
+        $dispatcher->expects($this->once())
+            ->method('dispatch')
+            ->willReturn([
+                'text' => 'Invalid prompt: missing required field.',
+                'usage' => [],
+                'exit_code' => 1,
+                'backend' => 'claude_cli',
+            ]);
+
+        $runner = new TaskRunner($dispatcher);
+        $envelope = $runner->run('claude_cli', 'original task', [
+            'fallback_chain' => ['claude_cli', 'codex_cli'],
+        ]);
+
+        $this->assertFalse($envelope->success);
+        $this->assertSame('claude_cli', $envelope->backend);
+        $this->assertCount(1, $envelope->fallbackReport);
+    }
+
+    public function test_auto_fallback_chain_uses_default_enabled_order(): void
+    {
+        $seenBackends = [];
+        $dispatcher = $this->createMock(Dispatcher::class);
+        $dispatcher->expects($this->exactly(2))
+            ->method('dispatch')
+            ->willReturnCallback(function (array $opts) use (&$seenBackends) {
+                $seenBackends[] = $opts['backend'];
+                return $opts['backend'] === 'claude_cli'
+                    ? ['text' => 'rate limit 429', 'usage' => [], 'exit_code' => 1, 'backend' => 'claude_cli']
+                    : ['text' => 'ok', 'usage' => [], 'exit_code' => 0, 'backend' => $opts['backend']];
+            });
+
+        $runner = new TaskRunner($dispatcher);
+        $envelope = $runner->run('claude_cli', 'task', ['fallback_chain' => 'auto']);
+
+        $this->assertTrue($envelope->success);
+        $this->assertSame(['claude_cli', 'codex_cli'], $seenBackends);
+    }
 }

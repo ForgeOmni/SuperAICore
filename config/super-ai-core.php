@@ -284,6 +284,60 @@ return [
     //      The bundled EloquentUsageRepository will gain this in a follow-up.
     //
     // Set `threshold_seconds` to 0 to disable the warning entirely.
+    // TaskRunner fallback handoff. Per-call options override this block:
+    //   'fallback_chain' => ['claude_cli', 'codex_cli', 'gemini_cli']
+    //   'fallback_chain' => 'auto'
+    //   'fallback_on' => ['rate limit', 'usage limit', 'quota', '429']
+    //   'inherit_failure_context' => true
+    //
+    // Fallback always tries the requested primary backend first, so when the
+    // primary's limit recovers, the next run naturally switches back.
+    'task_fallback' => [
+        'auto_enabled' => filter_var(
+            env('AI_CORE_TASK_FALLBACK_AUTO', false),
+            FILTER_VALIDATE_BOOLEAN,
+            FILTER_NULL_ON_FAILURE,
+        ) ?? false,
+        'check_availability' => filter_var(
+            env('AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY', false),
+            FILTER_VALIDATE_BOOLEAN,
+            FILTER_NULL_ON_FAILURE,
+        ) ?? false,
+        'chain' => array_values(array_filter(array_map('trim', explode(',', (string) env('AI_CORE_TASK_FALLBACK_CHAIN', ''))))),
+        'auto_chain' => [
+            'claude_cli',
+            'codex_cli',
+            'gemini_cli',
+            'kimi_cli',
+            'copilot_cli',
+            'kiro_cli',
+            'superagent',
+            'anthropic_api',
+            'openai_api',
+            'gemini_api',
+        ],
+        'fallback_on' => [
+            'rate limit',
+            'rate_limit',
+            'usage limit',
+            'quota',
+            'quota_exceeded',
+            'exceeded your current quota',
+            'too many requests',
+            '429',
+            'insufficient_quota',
+            'billing',
+            'budget',
+            'limit reached',
+            'usage_not_included',
+        ],
+        'inherit_failure_context' => filter_var(
+            env('AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT', true),
+            FILTER_VALIDATE_BOOLEAN,
+            FILTER_NULL_ON_FAILURE,
+        ) ?? true,
+    ],
+
     'cache_cold_warning' => [
         'threshold_seconds' => (int) env('AI_CORE_CACHE_COLD_THRESHOLD', 270),
     ],
