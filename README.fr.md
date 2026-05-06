@@ -20,6 +20,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Moteur de skills — télémétrie, ranking, évolution](#moteur-de-skills--télémétrie-ranking-évolution)
   - [Vague d'outils jcode (0.9.0 / SDK 0.9.7)](#vague-doutils-jcode-090--sdk-097)
   - [Vague d'alignement DeepSeek-TUI (0.9.1 / SDK 0.9.8)](#vague-dalignement-deepseek-tui-091--sdk-098)
+  - [Vague de fiabilité TaskRunner (0.9.2)](#vague-de-fiabilité-taskrunner-092)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -135,6 +136,56 @@ d'approbation, manifeste de plugin workspace, recette `/v1/usage`,
 tableaux de bord cache-hit-rate) : [docs/advanced-usage.fr.md
 §22–§26](docs/advanced-usage.fr.md).
 
+### Vague de fiabilité TaskRunner (0.9.2)
+
+Les longues tâches opérateur peuvent maintenant changer de backend quand
+le CLI/API primaire atteint une limite de quota ou de débit. 0.9.2 le
+traite comme une couche de fiabilité TaskRunner : chaînes explicites/auto,
+handoff du contexte d'échec, rapport de tentatives, hooks de persistance UI
+et frontières de retry sûres. Le fallback est par run : le backend demandé
+est toujours essayé en premier, donc un primaire rétabli reprend
+naturellement le trafic.
+
+- **Chaînes explicites** — passez `fallback_chain` comme
+  `['claude_cli', 'codex_cli', 'gemini_cli']`; TaskRunner préfixe le
+  backend demandé s'il manque et déduplique la chaîne.
+- **Politiques workload** — passez `fallback_profile` ou laissez
+  `task_type` / `capability` résoudre `chains_by_profile`,
+  `chains_by_task_type` ou `chains_by_capability` depuis la config.
+- **Chaînes automatiques** — `fallback_chain => 'auto'` construit la
+  chaîne depuis les backends enregistrés/activés, avec checks
+  d'availability optionnels via
+  `AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=true`.
+- **Handoff conscient des limites** — `fallback_on` couvre par défaut
+  les signaux quota/rate-limit (`rate limit`, `usage limit`, `quota`,
+  `429`, `too many requests`, `usage_not_included`). Les échecs non
+  correspondants restent sur le backend d'origine.
+- **Héritage du contexte d'échec** — le backend suivant reçoit le prompt
+  original plus un court extrait sortie/log, sauf
+  `inherit_failure_context=false`.
+- **`TaskResultEnvelope::$fallbackReport`** enregistre chaque tentative
+  (backend, numéro, succès, exit code, modèle, fichier log, erreur).
+- **Politique par workload** — les hôtes peuvent garder des chaînes
+  distinctes pour code, recherche/synthèse et maintenance de fond au lieu
+  d'une règle de retry globale pour tous les types de tâches.
+- **Observabilité opérateur** — le rapport compact et les metadata Dispatcher
+  par tentative peuvent être stockés sur les lignes de tâche ou d'usage et
+  rendus comme « primary limited, continued on codex », avec liens directs
+  vers les logs par tentative.
+- **Analytics de fiabilité** — combinez `fallbackReport` avec
+  `ai_usage_logs.backend` pour trouver les primaires qui touchent souvent le
+  quota et les secondaires qui terminent réellement le travail.
+- **Déploiement sûr** — commencez par des chaînes par appel, promouvez les
+  politiques stables en config, puis activez le fallback automatique après
+  revue de l'availability et de la facturation.
+
+Les defaults globaux vivent sous `super-ai-core.task_fallback`; les env
+sont `AI_CORE_TASK_FALLBACK_AUTO`, `AI_CORE_TASK_FALLBACK_CHAIN`,
+`AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY` et
+`AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT`. Voir
+[docs/advanced-usage.fr.md §27](docs/advanced-usage.fr.md) et
+[docs/task-runner-quickstart.md](docs/task-runner-quickstart.md).
+
 ### Installateur CLI & santé
 
 - **`cli:status`** — montre quels CLI sont installés / connectés, avec indice d'installation pour ce qui manque.
@@ -145,7 +196,7 @@ tableaux de bord cache-hit-rate) : [docs/advanced-usage.fr.md
 
 - **Routage par capacité** — `Dispatcher::dispatch(['task_type' => 'tasks.run', 'capability' => 'summarise'])` résout le bon backend + identifiants via `RoutingRepository` → `ProviderResolver` → chaîne de repli.
 - **`Contracts\StreamingBackend`** (depuis 0.6.6) — chaque backend CLI stream des chunks via un callback `onChunk` tout en les tee'ant sur disque et en enregistrant une ligne `ai_processes` pour l'UI Monitor. `Dispatcher::dispatch(['stream' => true, ...])` opt-in transparent. Honore `timeout` / `idle_timeout` / `mcp_mode` par appel (`'empty'` pour claude empêche les MCP globaux de bloquer la sortie). Voir `docs/streaming-backends.md`.
-- **`Runner\TaskRunner` — exécution de tâche en un appel** (depuis 0.6.6) — wrapper de `Dispatcher::dispatch(['stream' => true, ...])` qui retourne un `TaskResultEnvelope` typé. Remplace ~150 lignes de « build prompt → spawn → tee log → extract usage → wrap result » côté hôte par un seul appel. Identique pour les 6 CLI. Voir `docs/task-runner-quickstart.md`.
+- **`Runner\TaskRunner` — exécution de tâche en un appel** (depuis 0.6.6) — wrapper de `Dispatcher::dispatch(['stream' => true, ...])` qui retourne un `TaskResultEnvelope` typé avec spawn report et fallback report. Remplace ~150 lignes de « build prompt → spawn → tee log → extract usage → wrap result » côté hôte par un seul appel. 0.9.2 ajoute la vague de fiabilité TaskRunner : fallback backend opt-in, contexte de continuation, observabilité des tentatives et politiques par workload. Identique pour les 6 CLI. Voir `docs/task-runner-quickstart.md`.
 - **`AgentSpawn\Pipeline` — protocole spawn-plan codex/gemini** (depuis 0.6.6) — chorégraphie en trois phases (préambule → fanout parallèle → ré-invocation de consolidation) remontée upstream dans SuperAICore. `TaskRunner` l'active quand `spawn_plan_dir` est passé. Les nouveaux CLI qui ont besoin du protocole implémentent `BackendCapabilities::spawnPreamble()` + `consolidationPrompt()` une seule fois. Voir `docs/spawn-plan-protocol.md`.
 - **`cwd` par appel sur chaque CLI** (depuis 0.6.7) — les hôtes dont le processus PHP tourne depuis `web/public` peuvent quand même spawner un `claude` qui trouve `artisan` + `.claude/` à la racine. Les options Claude-only (`permission_mode`, `allowed_tools`, `session_id`) permettent de contourner les prompts d'approbation interactifs et de restreindre la surface d'outils.
 - **Claude headless depuis PHP-FPM fonctionne** (depuis 0.6.7) — `ClaudeCliBackend` retire `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / … de l'env enfant, pour qu'un serveur Laravel lancé depuis un shell parent `claude` ne déclenche plus le garde de récursion. Sur macOS, l'auth `builtin` bascule sur `security find-generic-password` pour lire le token OAuth et l'injecter comme `ANTHROPIC_API_KEY` — seule voie qui marche pour les workers web.
@@ -367,7 +418,20 @@ if ($envelope->success) {
 }
 ```
 
-Retourne un `TaskResultEnvelope` typé avec `success` / `output` / `summary` / `usage` / `costUsd` / `shadowCostUsd` / `billingModel` / `logFile` / `usageLogId` / `spawnReport` / `error`. API identique pour les 6 moteurs CLI.
+Retourne un `TaskResultEnvelope` typé avec `success` / `output` / `summary` / `usage` / `costUsd` / `shadowCostUsd` / `billingModel` / `logFile` / `usageLogId` / `spawnReport` / `fallbackReport` / `error`. API identique pour les 6 moteurs CLI.
+
+Ajoutez un fallback pour les échecs quota/rate-limit :
+
+```php
+$envelope = app(TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_chain' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+    'fallback_on' => ['rate limit', 'usage limit', 'quota', '429'],
+    'inherit_failure_context' => true,
+]);
+```
+
+Quand le fallback est actif, `$envelope->fallbackReport` contient la chaîne
+de backends tentée et l'état final succès/échec.
 
 ### Appel court — `Dispatcher::dispatch()`
 
@@ -424,7 +488,7 @@ Tous les repositories sont des interfaces. Le service provider lie automatiqueme
 
 ## Usage avancé
 
-- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0** (SPI `EmbeddingProvider`, drapeaux d'outils `agent_grep` / `browser`, boucle `BrowserScreenshotStore`, découpage des coûts ambient, reprise de session cross-harness) et la **vague d'alignement DeepSeek-TUI 0.9.1** — goal store persistant, portail d'approbation à trois niveaux, manifeste de plugin workspace, JSON `/v1/usage` headless, agrégation `cache_hit_rate`.
+- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0**, la **vague d'alignement DeepSeek-TUI 0.9.1** et la **vague de fiabilité TaskRunner 0.9.2**.
 - **[Démarrage Task runner](docs/task-runner-quickstart.md)** — référence d'options complète de `TaskRunner`.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, formats de stream par backend, `onChunk`.
 - **[Protocole spawn plan](docs/spawn-plan-protocol.md)** — émulation agent codex/gemini.

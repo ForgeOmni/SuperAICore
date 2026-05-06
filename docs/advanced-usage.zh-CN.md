@@ -34,6 +34,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 24. [Workspace plugin manifest（0.9.1）](#24-workspace-plugin-manifest091)
 25. [无头 `/v1/usage` JSON 端点（0.9.1）](#25-无头-v1usage-json-端点091)
 26. [`cache_hit_rate` 聚合（0.9.1）](#26-cache_hit_rate-聚合091)
+27. [TaskRunner 可靠性波次（0.9.2）](#27-taskrunner-可靠性波次092)
 
 ---
 
@@ -1908,6 +1909,197 @@ AiUsageLog::query()
 
 §25 的 `/v1/usage` 端点在六个 group-by 轴上做同样的服务端计算 ——
 通常比自己滚动算更省事。
+
+---
+
+## 27. TaskRunner 可靠性波次（0.9.2）
+
+*自 0.9.2 起 —— 仅 `Runner\TaskRunner`。*
+
+当主 backend 输出 quota/rate-limit 类失败时,TaskRunner 可以把同一任务交给
+下一个 backend。这个能力面向长任务:CLI 订阅或 API key 中途撞限时,host 仍想
+让同一 prompt 继续由 Codex、Gemini、Kimi 或 HTTP backend 完成。
+
+Fallback 是**每次运行级别**。调用方请求的 backend 永远先尝试,所以主 backend
+恢复后不需要清 sticky 状态,下一次运行自然切回。
+
+### 每次调用指定链
+
+```php
+use SuperAICore\Runner\TaskRunner;
+
+$envelope = app(TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_profile' => 'coding',
+    'fallback_chain' => ['claude_cli', 'codex_cli', 'gemini_cli', 'kimi_cli'],
+    'fallback_on' => ['rate limit', 'usage limit', 'quota', '429'],
+    'inherit_failure_context' => true,
+    'log_file' => storage_path('logs/tasks/123.log'),
+]);
+```
+
+如果 `claude_cli` 以匹配输出失败,TaskRunner 会重试 `codex_cli`。第二个 prompt
+是原 prompt 加上一段紧凑 handoff 块,包含上一个 backend、exit code、输出/log
+尾部。若下一 backend 应只拿原 prompt,传 `inherit_failure_context=false`。
+
+### 自动链
+
+```php
+$envelope = app(TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_chain' => 'auto',
+]);
+```
+
+`auto` 使用已注册/启用 backend,默认顺序:
+
+```text
+claude_cli -> codex_cli -> gemini_cli -> kimi_cli -> copilot_cli ->
+kiro_cli -> superagent -> anthropic_api -> openai_api -> gemini_api
+```
+
+设置 `AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=true` 后,每个注册 backend
+进入 auto 链前会先报告二进制或凭证是否看起来可用。
+
+### 全局默认
+
+```dotenv
+AI_CORE_TASK_FALLBACK_AUTO=false
+AI_CORE_TASK_FALLBACK_CHAIN=claude_cli,codex_cli,gemini_cli
+AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=false
+AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT=true
+```
+
+对应配置块是 `super-ai-core.task_fallback`:
+
+```php
+'task_fallback' => [
+    'auto_enabled' => false,
+    'check_availability' => false,
+    'chain' => [],
+    'auto_chain' => ['claude_cli', 'codex_cli', 'gemini_cli', /* ... */],
+    'fallback_on' => ['rate limit', 'usage limit', 'quota', '429'],
+    'inherit_failure_context' => true,
+],
+```
+
+每次调用的 option 覆盖配置。`fallback_chain` 可传逗号分隔字符串、数组或
+`'auto'`。
+
+省略 `fallback_chain` 时,TaskRunner 按以下顺序解析 workload 策略:
+
+```text
+fallback_profile / chains_by_profile
+-> task_type / chains_by_task_type
+-> capability / chains_by_capability
+-> task_fallback.chain
+-> auto_enabled / auto_chain
+```
+
+示例配置:
+
+```php
+'task_fallback' => [
+    'chains_by_profile' => [
+        'coding' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+        'research' => ['claude_cli', 'kimi_cli', 'gemini_cli'],
+    ],
+    'chains_by_task_type' => [
+        'tasks.run' => ['claude_cli', 'codex_cli'],
+    ],
+    'chains_by_capability' => [
+        'summarise' => ['claude_cli', 'kimi_cli'],
+    ],
+],
+```
+
+### 匹配语义
+
+只有失败 envelope 的 `error`、`output`、`summary`、`log_file` 尾部或 exit
+code 字符串里包含配置片段时才继续 fallback。默认片段包括:
+
+- `rate limit`、`rate_limit`、`usage limit`
+- `quota`、`quota_exceeded`、`insufficient_quota`
+- `too many requests`、`429`
+- `billing`、`budget`、`limit reached`
+- `usage_not_included`
+
+这样 prompt 校验、文件缺失、tool 失败和其他非 quota 错误会停在原 backend,
+除非 host 显式把它们加入 `fallback_on`。
+
+### 尝试报告
+
+启用 fallback 后,返回 envelope 包含:
+
+```php
+$envelope->fallbackReport === [
+    [
+        'attempt' => 1,
+        'backend' => 'claude_cli',
+        'success' => false,
+        'retryable' => true,
+        'next_backend' => 'codex_cli',
+        'exit_code' => 1,
+        'model' => null,
+        'duration_ms' => 0,
+        'usage_log_id' => null,
+        'cost_usd' => null,
+        'billing_model' => null,
+        'log_file' => '/path/to/log',
+        'error' => 'Claude usage limit reached. Try again later.',
+    ],
+    [
+        'attempt' => 2,
+        'backend' => 'codex_cli',
+        'success' => true,
+        'retryable' => false,
+        'next_backend' => null,
+        'exit_code' => 0,
+        'model' => 'gpt-5.2',
+        'duration_ms' => 1500,
+        'usage_log_id' => 123,
+        'cost_usd' => 0.01,
+        'billing_model' => 'usage',
+        'log_file' => '/path/to/log',
+        'error' => null,
+    ],
+];
+```
+
+`TaskResultEnvelope::toArray()` 以 `fallback_report` 暴露同一份数据,持久化
+envelope 的 host 不需要特殊分支即可存下来。
+
+每次 Dispatcher attempt 也会收到适合 usage-row 分析的 metadata:
+
+```php
+[
+    'fallback_active' => true,
+    'fallback_chain' => ['claude_cli', 'codex_cli'],
+    'fallback_attempt' => 2,
+    'fallback_primary_backend' => 'claude_cli',
+    'fallback_backend' => 'codex_cli',
+]
+```
+
+### 相关落地方向
+
+把 fallback 原语当作可靠性层使用,而不只是最后一次 retry:
+
+- **按任务类型分链** —— coding、research、summarisation、后台维护可以有不同默认
+  链。Coding 常以 `claude_cli` 或 `codex_cli` 开头;摘要类可以安全加入
+  `kimi_cli`;直连 HTTP backend 适合放在最后做 headless 兜底。
+- **UI 状态 badge** —— 把 `fallback_report` 存到宿主 task 行,渲染
+  "primary limited"、"continued on codex"、"stopped on non-retryable
+  error" 这类紧凑状态。有 `log_file` 时把每次 attempt 链到对应日志。
+- **队列 retry 策略** —— 先用 TaskRunner fallback,再考虑 queue-level retry。
+  队列 retry 会重跑整个 job;fallback 保持同一个逻辑运行继续,并继承失败 backend
+  的上下文。
+- **可靠性分析** —— 把 `fallback_report[*].backend` 与
+  `ai_usage_logs.backend` 联合分组,找出经常撞 quota 的主 backend,以及实际完成
+  工作的次级 backend。这个结果可以直接反哺 `auto_chain` 排序。
+- **安全复核** —— 保持 `fallback_on` 窄。只加入 host 认为可重试的错误片段;
+  validation 失败和 tool-policy deny 通常应该保持终态。
+- **渐进发布** —— 先在一个任务类型上用 per-call `fallback_chain`,稳定后移入
+  `super-ai-core.task_fallback.chain`;只有在确认 backend availability 与计费行为后,
+  再开启 `AI_CORE_TASK_FALLBACK_AUTO=true`。
 
 ---
 

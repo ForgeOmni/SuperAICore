@@ -12,6 +12,7 @@ use SuperAICore\Console\Commands\CliStatusCommand;
 use SuperAICore\Console\Commands\CopilotFleetCommand;
 use SuperAICore\Console\Commands\CopilotSyncCommand;
 use SuperAICore\Console\Commands\CopilotSyncHooksCommand;
+use SuperAICore\Console\Commands\FallbackPolicyCommand;
 use SuperAICore\Console\Commands\GeminiSyncCommand;
 use SuperAICore\Console\Commands\HooksSyncCommand;
 use SuperAICore\Console\Commands\KimiSyncCommand;
@@ -58,6 +59,7 @@ class Application extends SymfonyApplication
         $this->add(new ModelsCommand());
         $this->add(new ProviderAddCommand());
         $this->add(new ProviderRotateCommand());
+        $this->add(new FallbackPolicyCommand());
         $this->add(new PluginsInstallCommand());
     }
 }

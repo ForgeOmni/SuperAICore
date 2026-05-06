@@ -753,6 +753,59 @@ workspace plugin manifest 格式 + diff 循环、`/v1/usage` 调用示例
 (curl 与 Grafana JSON datasource)、`cache_hit_rate` 仪表盘配方)
 见 [docs/advanced-usage.zh-CN.md §22–§26](docs/advanced-usage.zh-CN.md)。
 
+**0.9.2 —— 无迁移；TaskRunner 可靠性波次为 opt-in。** 本版给
+`Runner\TaskRunner` 增加运行级 backend fallback:主 backend 输出 quota /
+rate-limit 类失败时,可以交给链上的下一个 backend 继续;同时补齐长任务所需的
+策略、continuation、观测和渐进发布模式。现有调用保持原来的单 backend 行为,
+除非传 `fallback_chain`、配置 `super-ai-core.task_fallback.chain`,或开启自动
+fallback。
+
+```bash
+composer update forgeomni/superaicore
+php artisan vendor:publish --tag=super-ai-core-config --force   # 可选:拾取 task_fallback 默认配置
+```
+
+可选 env:
+
+```dotenv
+AI_CORE_TASK_FALLBACK_AUTO=false
+AI_CORE_TASK_FALLBACK_CHAIN=claude_cli,codex_cli,gemini_cli
+AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=false
+AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT=true
+```
+
+升级时建议看六点:
+
+1. **Fallback 是每次运行级别,不是粘性 failover。** 每次仍先尝试调用方请求的
+   backend,所以主 backend 恢复后下一次任务会自然切回。
+
+2. **按 workload 维护 fallback 链。** Coding 任务可优先
+   `claude_cli → codex_cli → gemini_cli`;research/summarisation 可加入
+   `kimi_cli`;直连 HTTP backend 更适合放在最后做 headless 兜底。先用 per-call
+   `fallback_chain`,稳定后再提升到全局配置。
+
+3. **只有匹配失败才继续 handoff。** 默认覆盖常见 quota/rate-limit 文案
+   (`rate limit`、`usage limit`、`quota`、`429`、`too many requests`、
+   `usage_not_included`)。Prompt 校验、tool 失败和其他不匹配错误会停在原
+   backend,除非你扩展 `fallback_on`。
+
+4. **先用 TaskRunner fallback,再考虑队列 retry。** 队列 retry 会重跑整个 job;
+   fallback 保持同一个逻辑运行继续,并可把失败输出/log 摘要传给下一 backend。
+   对长任务来说,这通常是更合适的第一恢复步骤。
+
+5. **宿主可持久化尝试报告。** `TaskResultEnvelope` 新增
+   `fallbackReport`,`toArray()` 包含 `fallback_report`。如果宿主存 envelope
+   metadata,允许这个新的 nullable key。UI 可渲染 "primary limited,
+   continued on codex",并把每次 attempt 链到对应 `log_file`。
+
+6. **用报告做可靠性分析。** 将 `fallback_report[*].backend` 与
+   `ai_usage_logs.backend` 关联,识别经常撞 quota 的主 backend 和真正完成工作的
+   次级 backend。`auto_chain` 的排序应该由这些证据驱动,而不是猜。
+
+完整 TaskRunner fallback 菜谱见
+[docs/advanced-usage.zh-CN.md §27](docs/advanced-usage.zh-CN.md) 和
+[docs/task-runner-quickstart.md](docs/task-runner-quickstart.md)。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

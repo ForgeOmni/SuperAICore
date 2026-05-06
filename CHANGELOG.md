@@ -4,6 +4,158 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] — 2026-05-05
+
+**TaskRunner reliability wave — fallback handoff + operator-grade
+continuation semantics.** Adds per-run backend fallback for long operator
+tasks that hit CLI/API usage limits mid-flight, then rounds it out with
+configuration, context handoff, observability, and host-facing persistence
+patterns. The requested backend is still attempted first on every run, so
+a recovered primary backend naturally takes traffic again without sticky
+failover state. When fallback is active, TaskRunner can carry a short
+failure/log excerpt into the next backend and returns a structured attempt
+report on the envelope.
+
+### Added
+
+- **`TaskRunner` fallback chains** — pass `fallback_chain` as an ordered
+  backend list (`['claude_cli', 'codex_cli', 'gemini_cli']`) or as
+  `'auto'`. The primary backend is always prepended when omitted, duplicate
+  entries are removed, and recursive fallback is disabled per attempt so
+  each backend owns its normal dispatch path.
+- **Workload-specific fallback policy** — `fallback_profile` now resolves
+  `super-ai-core.task_fallback.chains_by_profile`, while `task_type` and
+  `capability` resolve `chains_by_task_type` /
+  `chains_by_capability`, and metadata keys (`task_kind`, `priority`,
+  `requires_tools`) resolve `chains_by_metadata`. Precedence is explicit
+  `fallback_chain` → profile → task type → capability → metadata → global
+  chain → auto. Hosts can route coding, research, summarisation, and
+  maintenance tasks through different recovery chains without branching
+  around `TaskRunner`.
+- **Built-in policy presets** — `coding`, `research`, `summarise`,
+  `maintenance`, `cheap`, `fast`, and `headless` profiles ship in config
+  and can be overridden by hosts.
+- **Automatic fallback discovery** — `fallback_chain => 'auto'` builds an
+  ordered chain from registered/enabled backends, defaulting to
+  `claude_cli → codex_cli → gemini_cli → kimi_cli → copilot_cli →
+  kiro_cli → superagent → anthropic_api → openai_api → gemini_api`.
+  Optional availability checks use `BackendRegistry::get()->isAvailable()`
+  before adding a backend to the chain.
+- **Limit-aware fallback matching** — `fallback_on` controls which failed
+  outputs permit handoff. Defaults cover common quota/rate-limit signals
+  such as `rate limit`, `usage limit`, `quota`, `429`,
+  `too many requests`, `insufficient_quota`, `billing`, `budget`, and
+  `usage_not_included`. Non-matching failures stop on the original backend
+  instead of masking real prompt/tool errors.
+- **Failure-context inheritance** — `inherit_failure_context` defaults to
+  true. The next backend receives the original prompt plus a compact
+  "SuperAICore fallback handoff" block with the previous backend, exit
+  code, and output/log excerpt so it can continue the same task without
+  retrying the blocked path.
+- **`TaskResultEnvelope::$fallbackReport`** — successful and failed
+  fallback runs now expose attempted backend, attempt number, success flag,
+  retryability, next backend, exit code, model, duration, usage log id,
+  cost, billing model, log file, and a short error/output summary. The field
+  is included in `toArray()` for host storage layers, and is present even
+  when the primary succeeds while a chain was active.
+- **Per-attempt Dispatcher metadata injection** — every fallback attempt now
+  carries `metadata.fallback_active`, `fallback_chain`, `fallback_attempt`,
+  `fallback_primary_backend`, `fallback_backend`, and
+  `fallback_chain_index`, even when the caller supplied no metadata. Usage
+  rows and host analytics can group attempts without parsing logs or the
+  final envelope.
+- **Fallback decision report** — `TaskResultEnvelope::$fallbackDecision`
+  records the chain source, skipped backends, decision events, and cumulative
+  fallback cost so UIs can explain why a run continued or stopped.
+- **Backend cooldown / circuit breaker** — optional
+  `task_fallback.cooldown.{enabled,seconds,min_failures}` cools a backend
+  after retryable failures and skips it on later runs until the cooldown
+  expires. Laravel cache is used when present; pure-PHP callers get
+  process-local cooldown memory.
+- **Attempt and cost guards** — `fallback_max_attempts` /
+  `task_fallback.max_attempts` and `fallback_max_cost_usd` /
+  `task_fallback.max_cost_usd` stop chain traversal before a runaway auto
+  chain can burn through every backend.
+- **Backoff between attempts** — `fallback_backoff_ms` plus
+  `fallback_backoff_strategy=fixed|exponential` gives API-style backends a
+  controlled pause before handoff. Sleeps are capped to keep accidental
+  large values from blocking workers for minutes.
+- **Attempt callbacks** — `onAttemptStart`, `onAttemptFinish`, and
+  `onFallback` are TaskRunner-only callbacks for live host UI/status updates.
+  Exceptions thrown by callbacks are swallowed and logged.
+- **Success quality guard** — `fallback_success_min_chars` and
+  `fallback_success_forbidden_patterns` can treat a nominally-successful but
+  empty/boilerplate answer as retryable and continue to the next backend.
+- **Failure classifier** — retry fragments can now be class names such as
+  `quota`, `rate_limit`, `auth`, `tool_policy`, `validation`, or `network`;
+  each class maps to configurable string fragments.
+- **Fallback policy explain API + command** —
+  `TaskRunner::explainFallbackChain()` returns chain source, runnable chain,
+  cooldown skips, and limits. New `super-ai-core:fallback-policy` command
+  exposes the same policy for operators (`--json`, `--profile`,
+  `--task-type`, `--capability`).
+- **`super-ai-core.task_fallback` config block** — global defaults for
+  `auto_enabled`, `check_availability`, `chain`, `chains_by_profile`,
+  `chains_by_task_type`, `chains_by_capability`, `chains_by_metadata`,
+  `max_attempts`, `max_cost_usd`, `backoff_ms`, `backoff_strategy`,
+  `success_min_chars`, `success_forbidden_patterns`, `cooldown`,
+  `failure_classes`, `auto_chain`, `fallback_on`, and
+  `inherit_failure_context`. Environment toggles include
+  `AI_CORE_TASK_FALLBACK_AUTO`,
+  `AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY`,
+  `AI_CORE_TASK_FALLBACK_CHAIN`, and
+  `AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT`.
+
+### Added — Operator patterns
+
+- **Task-class-specific fallback strategy** — hosts can choose a conservative
+  chain per workload: coding tasks might prefer
+  `claude_cli → codex_cli → gemini_cli`, research/summarisation can include
+  `kimi_cli`, and direct-HTTP backends can sit at the end for headless
+  recovery. This release keeps the policy in options/config instead of
+  burying it in routing state.
+- **UI/queue persistence hook via `fallbackReport`** — the attempt report is
+  intentionally small enough to store on a task row or queue-job metadata.
+  Hosts can badge "continued on codex", show the failed primary's log file,
+  or attach the chain to support tickets without parsing raw logs.
+- **Cost and reliability analytics path** — every fallback attempt still runs
+  through the normal Dispatcher/usage path, while the final envelope carries
+  the chain-level report. Hosts can correlate `ai_usage_logs.backend` with
+  `fallback_report` to answer "which primary is hitting quota?" and "which
+  secondary actually completed the work?".
+- **Safety boundary for non-quota errors** — `fallback_on` is deliberately
+  string-fragment based and opt-in. Prompt validation failures, missing
+  files, tool errors, and destructive-operation denials remain on the
+  original backend unless the host explicitly classifies them as retryable.
+- **Availability-gated automatic chain** — `check_availability` lets hosts
+  turn the automatic chain into a "registered and currently usable" list
+  without making availability probing mandatory for every install. This is
+  the bridge between static config and the existing `BackendRegistry`
+  health surface.
+
+### Documentation
+
+- **`docs/task-runner-quickstart.md`** documents fallback-only options,
+  explicit and automatic fallback examples, and the new
+  `fallbackReport` envelope field.
+- **`README.*`, `INSTALL.*`, and `docs/advanced-usage.*`** now frame 0.9.2
+  as a TaskRunner reliability release, including upgrade notes, env/config
+  snippets, attempt-report persistence, workload-specific chain recipes,
+  and the safety boundary around retryable failures.
+
+### Tests
+
+- **`tests/Unit/TaskRunnerTest.php`** adds coverage for context handoff
+  after quota-style failure, stopping on non-matching failures, and the
+  default automatic chain order.
+
+### Compatibility
+
+- **No breaking changes.** Fallback is opt-in unless
+  `AI_CORE_TASK_FALLBACK_AUTO=true` or a host configures
+  `super-ai-core.task_fallback.chain`. Existing `TaskRunner::run()` calls
+  without fallback options keep their previous single-backend behaviour.
+
 ## [0.9.1] — 2026-05-04
 
 **SuperAgent SDK 0.9.8 uptake — DeepSeek-TUI parity wave + codex `/goal`

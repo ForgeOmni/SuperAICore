@@ -741,6 +741,66 @@ Six things worth reviewing on upgrade:
 
 See [docs/advanced-usage.md §22–§26](docs/advanced-usage.md) for full recipes — durable goal store override, approval gate wiring inside a host runner, workspace plugin manifest format + diff loop, `/v1/usage` cookbook (curl examples + Grafana JSON datasource), `cache_hit_rate` dashboard recipes.
 
+**0.9.2 — no migration; TaskRunner reliability wave is opt-in.** This
+release adds per-run backend fallback for `Runner\TaskRunner` when the
+primary backend fails with quota/rate-limit style output, plus the
+host-facing policy, continuation, observability, and rollout patterns that
+make it usable for long operator jobs. Existing calls keep the old
+single-backend behaviour unless you pass `fallback_chain`, set
+`super-ai-core.task_fallback.chain`, or enable automatic fallback.
+
+```bash
+composer update forgeomni/superaicore
+php artisan vendor:publish --tag=super-ai-core-config --force   # optional, to pick up task_fallback defaults
+```
+
+Optional env knobs:
+
+```dotenv
+AI_CORE_TASK_FALLBACK_AUTO=false
+AI_CORE_TASK_FALLBACK_CHAIN=claude_cli,codex_cli,gemini_cli
+AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=false
+AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT=true
+```
+
+Six things worth reviewing on upgrade:
+
+1. **Fallback is per-run, not sticky.** The requested backend is always
+   tried first, so a recovered primary backend naturally takes traffic
+   again on the next task.
+
+2. **Keep fallback chains workload-specific.** Coding tasks may prefer
+   `claude_cli → codex_cli → gemini_cli`, research/summarisation may include
+   `kimi_cli`, and direct HTTP backends are usually best as the final
+   headless stop. Start with per-call `fallback_chain` before promoting a
+   chain into global config.
+
+3. **Fallback only continues on matching failures.** Defaults cover common
+   quota/rate-limit wording (`rate limit`, `usage limit`, `quota`, `429`,
+   `too many requests`, `usage_not_included`). Prompt validation errors,
+   tool failures, and other non-matching failures stop on the original
+   backend unless you extend `fallback_on`.
+
+4. **Use TaskRunner fallback before queue retry.** A queue retry reruns the
+   whole job; fallback keeps the same logical run moving and can pass a
+   compact failure/log excerpt to the next backend. This is usually the
+   better first recovery step for long tasks.
+
+5. **Hosts can persist the attempt report.** `TaskResultEnvelope` now has
+   `fallbackReport`, and `toArray()` includes `fallback_report`. If your
+   host stores the envelope metadata, allow this new nullable key. UI can
+   render "primary limited, continued on codex" and link each attempt to its
+   `log_file`.
+
+6. **Use the report for reliability analytics.** Correlate
+   `fallback_report[*].backend` with `ai_usage_logs.backend` to identify
+   primaries that frequently hit quota and secondaries that actually finish
+   the work. Reorder `auto_chain` from that evidence, not guesswork.
+
+See [docs/advanced-usage.md §27](docs/advanced-usage.md) and
+[docs/task-runner-quickstart.md](docs/task-runner-quickstart.md) for the
+full TaskRunner fallback recipe.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

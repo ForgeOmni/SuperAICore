@@ -23,6 +23,8 @@ namespace SuperAICore\Runner;
  *   - `spawnReport` is reserved for Phase C of the host-spawn-uplift
  *     roadmap, when `AgentSpawn\Pipeline` populates it with the
  *     fan-out + consolidation report. Phase B leaves it null.
+ *   - `fallbackReport` / `fallbackDecision` carry TaskRunner's reliability
+ *     layer state when a fallback chain was active.
  *   - `error` carries a human-readable message when `success === false`
  *     and the failure mode wasn't surfaced through `output` (e.g.
  *     Dispatcher returned null because no provider was configured).
@@ -50,6 +52,7 @@ final class TaskResultEnvelope
         public readonly ?array $spawnReport = null,
         public readonly ?string $error = null,
         public readonly ?array $fallbackReport = null,
+        public readonly ?array $fallbackDecision = null,
     ) {}
 
     /**
@@ -78,7 +81,7 @@ final class TaskResultEnvelope
     /**
      * @param array<int,array<string,mixed>> $attempts
      */
-    public function withFallbackReport(array $attempts): self
+    public function withFallbackReport(array $attempts, ?array $decision = null): self
     {
         return new self(
             success: $this->success,
@@ -97,6 +100,7 @@ final class TaskResultEnvelope
             spawnReport: $this->spawnReport,
             error: $this->error,
             fallbackReport: $attempts,
+            fallbackDecision: $decision,
         );
     }
 
@@ -123,6 +127,7 @@ final class TaskResultEnvelope
             'usage_log_id'    => $this->usageLogId,
             'spawn_report'    => $this->spawnReport,
             'fallback_report' => $this->fallbackReport,
+            'fallback_decision' => $this->fallbackDecision,
             'error'           => $this->error,
         ];
     }

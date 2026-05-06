@@ -118,8 +118,18 @@ Additional TaskRunner-only fallback options:
 | Key | Type | Notes |
 |---|---|---|
 | `fallback_chain` | string\|list<string> | Ordered backend handoff chain, e.g. `['claude_cli', 'codex_cli', 'gemini_cli']`, or `'auto'` to let SuperAICore build the chain from registered/enabled backends. |
+| `fallback_profile` | ?string | Named workload policy resolved from `super-ai-core.task_fallback.chains_by_profile` when `fallback_chain` is not passed. |
 | `fallback_on` | list<string> | Error fragments that permit handoff. Defaults cover quota/rate-limit wording such as `rate limit`, `usage limit`, `quota`, `429`, `too many requests`. |
+| `fallback_max_attempts` | int | Stops traversal after N attempts. `0` means no explicit cap. |
+| `fallback_max_cost_usd` | float | Stops fallback continuation once cumulative fallback attempt cost reaches this value. |
+| `fallback_backoff_ms` | int | Optional pause before the next attempt. |
+| `fallback_backoff_strategy` | string | `fixed` or `exponential`. |
+| `fallback_cooldown_seconds` | int | Per-call cooldown seconds for retryable backend failures when cooldown is enabled. |
+| `fallback_cooldown_min_failures` | int | Consecutive retryable failures before cooldown starts. |
+| `fallback_success_min_chars` | int | Treat successful output shorter than this as retryable quality failure. |
+| `fallback_success_forbidden_patterns` | list<string> | Treat successful output containing any fragment as retryable quality failure. |
 | `inherit_failure_context` | bool | Default true. The next backend receives the original prompt plus a short failure/log excerpt so it can continue the same task without repeating the blocked path. |
+| `onAttemptStart` / `onAttemptFinish` / `onFallback` | callable | Optional live status callbacks. Exceptions are swallowed and logged. |
 
 All other options (`backend`, `prompt`, `model`, `system`, `messages`,
 `max_tokens`, `provider_config`, `log_file`, `timeout`, `idle_timeout`,
@@ -127,7 +137,7 @@ All other options (`backend`, `prompt`, `model`, `system`, `messages`,
 `capability`, `user_id`, `provider_id`, `metadata`, `scope`, `scope_id`)
 pass straight through to Dispatcher.
 
-### Fallback handoff
+### Reliability fallback handoff
 
 Task fallback is intentionally per-run. The requested backend is always
 tried first, so when a primary CLI such as Claude recovers from a usage
@@ -156,6 +166,64 @@ per-call `fallback_chain`, and optionally set
 `AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=true` to ask each registered
 backend whether its binary/API credentials appear usable before adding it
 to the auto chain.
+
+Fallback chain precedence is:
+
+```text
+fallback_chain option
+-> fallback_profile / chains_by_profile
+-> task_type / chains_by_task_type
+-> capability / chains_by_capability
+-> metadata task_kind / priority / requires_tools via chains_by_metadata
+-> task_fallback.chain
+-> auto_enabled / auto_chain
+```
+
+Every attempt receives Dispatcher metadata:
+
+```php
+[
+    'fallback_active' => true,
+    'fallback_chain' => ['claude_cli', 'codex_cli'],
+    'fallback_attempt' => 2,
+    'fallback_primary_backend' => 'claude_cli',
+    'fallback_backend' => 'codex_cli',
+    'fallback_chain_index' => 1,
+]
+```
+
+Inspect policy without running a task:
+
+```php
+$plan = app(\SuperAICore\Runner\TaskRunner::class)->explainFallbackChain('claude_cli', [
+    'fallback_profile' => 'coding',
+]);
+```
+
+Or from Artisan:
+
+```bash
+php artisan super-ai-core:fallback-policy claude_cli --profile=coding
+php artisan super-ai-core:fallback-policy claude_cli --profile=coding --json
+```
+
+Use fallback as a TaskRunner reliability layer rather than a generic retry
+catch-all:
+
+- Keep chains workload-specific. Coding tasks may prefer
+  `claude_cli -> codex_cli -> gemini_cli`; summarisation can include
+  `kimi_cli`; HTTP backends are usually better as the final headless stop.
+- Let TaskRunner fallback run before queue-level retry. Queue retry repeats
+  the whole job; fallback keeps the same logical run moving and can pass a
+  compact failure/log excerpt to the next backend.
+- Persist `fallbackReport` on host task rows. It is small enough for
+  metadata and lets the UI show "primary limited, continued on codex" while
+  linking each attempt to `log_file`.
+- Keep `fallback_on` narrow. Add only errors that are genuinely retryable
+  for your host; validation failures, missing files, and tool-policy denials
+  should usually remain terminal.
+- Review `fallback_report[*].backend` alongside `ai_usage_logs.backend`
+  before reordering `auto_chain`.
 
 The runner forces `stream: true` on every call — there's no point in
 using `TaskRunner` for a non-streaming dispatch (the wrapping value adds

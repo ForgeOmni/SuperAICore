@@ -287,11 +287,14 @@ return [
     // TaskRunner fallback handoff. Per-call options override this block:
     //   'fallback_chain' => ['claude_cli', 'codex_cli', 'gemini_cli']
     //   'fallback_chain' => 'auto'
+    //   'fallback_profile' => 'coding'
     //   'fallback_on' => ['rate limit', 'usage limit', 'quota', '429']
     //   'inherit_failure_context' => true
     //
     // Fallback always tries the requested primary backend first, so when the
     // primary's limit recovers, the next run naturally switches back.
+    // Workload maps let hosts keep different policies for coding, research,
+    // summarisation, or background maintenance without branching in callers.
     'task_fallback' => [
         'auto_enabled' => filter_var(
             env('AI_CORE_TASK_FALLBACK_AUTO', false),
@@ -304,6 +307,60 @@ return [
             FILTER_NULL_ON_FAILURE,
         ) ?? false,
         'chain' => array_values(array_filter(array_map('trim', explode(',', (string) env('AI_CORE_TASK_FALLBACK_CHAIN', ''))))),
+        'chains_by_profile' => [
+            'coding' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+            'research' => ['claude_cli', 'kimi_cli', 'gemini_cli'],
+            'summarise' => ['claude_cli', 'kimi_cli', 'gemini_cli'],
+            'maintenance' => ['codex_cli', 'gemini_cli', 'openai_api'],
+            'cheap' => ['gemini_cli', 'kimi_cli', 'openai_api'],
+            'fast' => ['codex_cli', 'gemini_cli', 'openai_api'],
+            'headless' => ['anthropic_api', 'openai_api', 'gemini_api'],
+        ],
+        'chains_by_task_type' => [
+            // 'tasks.run' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+        ],
+        'chains_by_capability' => [
+            // 'summarise' => ['claude_cli', 'kimi_cli'],
+            // 'code' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+        ],
+        'chains_by_metadata' => [
+            'task_kind' => [
+                'coding' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+                'research' => ['claude_cli', 'kimi_cli', 'gemini_cli'],
+                'summarise' => ['claude_cli', 'kimi_cli'],
+            ],
+            'priority' => [
+                'cheap' => ['gemini_cli', 'kimi_cli', 'openai_api'],
+                'fast' => ['codex_cli', 'gemini_cli', 'openai_api'],
+            ],
+            'requires_tools' => [
+                'true' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+                'false' => ['anthropic_api', 'openai_api', 'gemini_api'],
+            ],
+        ],
+        'max_attempts' => (int) env('AI_CORE_TASK_FALLBACK_MAX_ATTEMPTS', 0),
+        'max_cost_usd' => (float) env('AI_CORE_TASK_FALLBACK_MAX_COST_USD', 0),
+        'backoff_ms' => (int) env('AI_CORE_TASK_FALLBACK_BACKOFF_MS', 0),
+        'backoff_strategy' => env('AI_CORE_TASK_FALLBACK_BACKOFF_STRATEGY', 'fixed'),
+        'success_min_chars' => (int) env('AI_CORE_TASK_FALLBACK_SUCCESS_MIN_CHARS', 0),
+        'success_forbidden_patterns' => array_values(array_filter(array_map('trim', explode(',', (string) env('AI_CORE_TASK_FALLBACK_SUCCESS_FORBIDDEN', ''))))),
+        'cooldown' => [
+            'enabled' => filter_var(
+                env('AI_CORE_TASK_FALLBACK_COOLDOWN', false),
+                FILTER_VALIDATE_BOOLEAN,
+                FILTER_NULL_ON_FAILURE,
+            ) ?? false,
+            'seconds' => (int) env('AI_CORE_TASK_FALLBACK_COOLDOWN_SECONDS', 300),
+            'min_failures' => (int) env('AI_CORE_TASK_FALLBACK_COOLDOWN_MIN_FAILURES', 1),
+        ],
+        'failure_classes' => [
+            'quota' => ['quota', 'quota_exceeded', 'insufficient_quota', 'usage_not_included', 'billing', 'budget'],
+            'rate_limit' => ['rate limit', 'rate_limit', 'too many requests', '429', 'limit reached'],
+            'auth' => ['unauthorized', 'forbidden', 'invalid api key', 'not signed in', 'login required'],
+            'tool_policy' => ['permission denied', 'policy', 'not allowed', 'approval required'],
+            'validation' => ['invalid prompt', 'missing required', 'validation'],
+            'network' => ['timeout', 'connection refused', 'could not resolve', 'network'],
+        ],
         'auto_chain' => [
             'claude_cli',
             'codex_cli',

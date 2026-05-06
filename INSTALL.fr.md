@@ -753,6 +753,71 @@ manifeste de plugin workspace + boucle de diff, recette `/v1/usage`
 `cache_hit_rate`) : voir [docs/advanced-usage.fr.md
 §22–§26](docs/advanced-usage.fr.md).
 
+**0.9.2 — aucune migration ; la vague de fiabilité TaskRunner est opt-in.**
+Cette version ajoute un fallback backend par run pour `Runner\TaskRunner`
+quand le backend primaire échoue avec une sortie de type quota/rate-limit,
+plus les patterns hôte de politique, continuation, observabilité et rollout
+qui le rendent exploitable pour les longs jobs opérateur. Les appels
+existants gardent le comportement single-backend tant que vous ne passez pas
+`fallback_chain`, ne configurez pas `super-ai-core.task_fallback.chain`, ou
+n'activez pas le fallback automatique.
+
+```bash
+composer update forgeomni/superaicore
+php artisan vendor:publish --tag=super-ai-core-config --force   # optionnel, pour récupérer task_fallback
+```
+
+Knobs env optionnels :
+
+```dotenv
+AI_CORE_TASK_FALLBACK_AUTO=false
+AI_CORE_TASK_FALLBACK_CHAIN=claude_cli,codex_cli,gemini_cli
+AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=false
+AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT=true
+```
+
+Six points à revoir lors de la mise à niveau :
+
+1. **Le fallback est par run, pas sticky.** Le backend demandé est toujours
+   essayé en premier, donc un primaire rétabli reprend naturellement le
+   trafic à la tâche suivante.
+
+2. **Gardez les chaînes spécifiques au workload.** Les tâches de code
+   peuvent préférer `claude_cli → codex_cli → gemini_cli`; recherche/synthèse
+   peut inclure `kimi_cli`; les backends HTTP directs conviennent souvent
+   comme dernier stop headless. Commencez par un `fallback_chain` par appel
+   avant de promouvoir une chaîne en config globale.
+
+3. **Le handoff continue seulement sur échec correspondant.** Les defaults
+   couvrent les formulations quota/rate-limit courantes (`rate limit`,
+   `usage limit`, `quota`, `429`, `too many requests`,
+   `usage_not_included`). Les erreurs de validation de prompt, de tool et
+   autres échecs non correspondants restent sur le backend d'origine sauf
+   si vous étendez `fallback_on`.
+
+4. **Utilisez le fallback TaskRunner avant le retry de queue.** Un retry de
+   queue relance tout le job; le fallback garde le même run logique en
+   mouvement et peut passer un court extrait sortie/log au backend suivant.
+   C'est généralement la meilleure première récupération pour les longues
+   tâches.
+
+5. **Les hôtes peuvent persister le rapport de tentatives.**
+   `TaskResultEnvelope` expose maintenant `fallbackReport`, et `toArray()`
+   inclut `fallback_report`. Si votre hôte stocke les metadata de
+   l'enveloppe, autorisez cette nouvelle clé nullable. L'UI peut rendre
+   « primary limited, continued on codex » et lier chaque tentative à son
+   `log_file`.
+
+6. **Utilisez le rapport pour l'analytics de fiabilité.** Corrélez
+   `fallback_report[*].backend` avec `ai_usage_logs.backend` pour identifier
+   les primaires qui touchent souvent le quota et les secondaires qui
+   terminent réellement le travail. Réordonnez `auto_chain` depuis cette
+   évidence, pas à l'instinct.
+
+Voir [docs/advanced-usage.fr.md §27](docs/advanced-usage.fr.md) et
+[docs/task-runner-quickstart.md](docs/task-runner-quickstart.md) pour la
+recette complète du fallback TaskRunner.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

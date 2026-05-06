@@ -20,6 +20,7 @@
   - [Skill engine —— 遥测 / 排序 / 演化](#skill-engine--遥测--排序--演化)
   - [jcode 配套工具波次（0.9.0 / SDK 0.9.7）](#jcode-配套工具波次090--sdk-097)
   - [DeepSeek-TUI 对齐波次（0.9.1 / SDK 0.9.8）](#deepseek-tui-对齐波次091--sdk-098)
+  - [TaskRunner 可靠性波次（0.9.2）](#taskrunner-可靠性波次092)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -129,6 +130,46 @@ tick 循环、harness 恢复回调):见 [docs/advanced-usage.zh-CN.md
 `/v1/usage` 调用示例、cache-hit-rate 仪表盘):见
 [docs/advanced-usage.zh-CN.md §22–§26](docs/advanced-usage.zh-CN.md)。
 
+### TaskRunner 可靠性波次（0.9.2）
+
+长任务在主 CLI/API 撞上 quota 或 rate limit 时,现在可以按运行级别切到
+下一个 backend。0.9.2 把它作为 TaskRunner 可靠性层来交付:显式/自动链、
+失败上下文 handoff、attempt 报告、UI 持久化入口、安全 retry 边界。Fallback
+不带粘性状态:每次仍先尝试调用方请求的 backend,所以主 backend 恢复后会自然接回流量。
+
+- **显式链** —— `fallback_chain` 可传
+  `['claude_cli', 'codex_cli', 'gemini_cli']`;缺少主 backend 时 TaskRunner
+  自动前置,并去重。
+- **Workload 策略** —— 可传 `fallback_profile`,也可通过 `task_type` /
+  `capability` 解析配置里的 `chains_by_profile`、`chains_by_task_type`
+  或 `chains_by_capability`。
+- **自动链** —— `fallback_chain => 'auto'` 从已注册/启用 backend 构建链;
+  `AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=true` 时还会先跑 availability 检查。
+- **限流感知 handoff** —— 默认 `fallback_on` 覆盖 `rate limit`、
+  `usage limit`、`quota`、`429`、`too many requests`、
+  `usage_not_included` 等常见信号。非匹配失败停在原 backend,避免掩盖真实
+  prompt/tool 错误。
+- **继承失败上下文** —— 默认把原 prompt 加上一小段失败输出/log 摘要交给下一
+  backend;传 `inherit_failure_context=false` 可关闭。
+- **`TaskResultEnvelope::$fallbackReport`** 记录每次尝试的 backend、序号、
+  成功状态、exit code、model、log file 与错误摘要。
+- **按 workload 分策略** —— coding、research/summarisation、后台维护可以各自有
+  fallback 链,不必用一条全局 retry 规则覆盖所有任务类型。
+- **Operator 观测** —— 紧凑 report 与每次 attempt 的 Dispatcher metadata
+  可以存到 task 行或 usage 行,渲染成 "primary limited, continued on codex",
+  并直接链接到每次 attempt 的日志。
+- **可靠性分析** —— 把 `fallbackReport` 与 `ai_usage_logs.backend` 联合使用,
+  找出经常撞 quota 的主 backend 和实际完成工作的次级 backend。
+- **安全发布路径** —— 先用 per-call chain,稳定后提升到配置,确认 availability
+  与计费行为后再开自动 fallback。
+
+全局默认在 `super-ai-core.task_fallback`;env 开关包括
+`AI_CORE_TASK_FALLBACK_AUTO`、`AI_CORE_TASK_FALLBACK_CHAIN`、
+`AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY`、
+`AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT`。详见
+[docs/advanced-usage.zh-CN.md §27](docs/advanced-usage.zh-CN.md) 和
+[docs/task-runner-quickstart.md](docs/task-runner-quickstart.md)。
+
 ### CLI 安装器与健康检查
 
 - **`cli:status`** —— 每家 CLI 的安装/登录状态与安装提示。
@@ -139,7 +180,7 @@ tick 循环、harness 恢复回调):见 [docs/advanced-usage.zh-CN.md
 
 - **基于能力的路由** —— `Dispatcher::dispatch(['task_type' => 'tasks.run', 'capability' => 'summarise'])` 通过 `RoutingRepository` → `ProviderResolver` → 回退链解析出正确的后端 + provider 凭证。
 - **`Contracts\StreamingBackend`**（0.6.6+）—— 每个 CLI 后端都能通过 `onChunk` callback 流式接收 chunks，同时 tee 到磁盘、登记 `ai_processes` 行供 Monitor UI 跟读。`Dispatcher::dispatch(['stream' => true, ...])` 透明 opt-in。支持每次调用配 `timeout` / `idle_timeout` / `mcp_mode`（claude 用 `'empty'` 防止全局 MCP 卡退出）。详见 `docs/streaming-backends.md`。
-- **`Runner\TaskRunner` —— 一行调用执行任务**（0.6.6+）—— `Dispatcher::dispatch(['stream' => true, ...])` 的封装，返回类型化 `TaskResultEnvelope`（success / output / summary / usage / cost / log file / spawn report）。把宿主约 150 行"build prompt → spawn → tee log → extract usage → wrap result"胶水折叠成一次调用。六个 CLI 接口完全一致。详见 `docs/task-runner-quickstart.md`。
+- **`Runner\TaskRunner` —— 一行调用执行任务**（0.6.6+）—— `Dispatcher::dispatch(['stream' => true, ...])` 的封装，返回类型化 `TaskResultEnvelope`（success / output / summary / usage / cost / log file / spawn report / fallback report）。把宿主约 150 行"build prompt → spawn → tee log → extract usage → wrap result"胶水折叠成一次调用。0.9.2 增加 TaskRunner 可靠性波次:opt-in backend fallback、continuation context、attempt 观测和按 workload 分策略。六个 CLI 接口完全一致。详见 `docs/task-runner-quickstart.md`。
 - **`AgentSpawn\Pipeline` —— codex/gemini 的 spawn-plan 协议**（0.6.6+）—— 三阶段编排（preamble → 并行 fanout → consolidation 复调）内置在 SuperAICore。`TaskRunner` 见到 `spawn_plan_dir` 自动激活。新 CLI 实现 `BackendCapabilities::spawnPreamble()` + `consolidationPrompt()` 一次即可继承。详见 `docs/spawn-plan-protocol.md`。
 - **每个 CLI 的 per-call `cwd`**（0.6.7+）—— 宿主 PHP 从 `web/public` 起也能 spawn 到能正确找到项目根下 `artisan` + `.claude/` 的 `claude`。Claude 专属选项（`permission_mode`、`allowed_tools`、`session_id`）让 headless 调用方绕过交互审批、限制工具面、显式传会话 id。
 - **PHP-FPM 里起 Claude CLI 现在可用**（0.6.7+）—— `ClaudeCliBackend` 在子进程 env 里主动移除 `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` / … 以免触发 claude 的递归守卫。macOS 上 `builtin` 登录新增 fallback:通过 `security find-generic-password` 读出 OAuth token 注入成 `ANTHROPIC_API_KEY` —— 这是 Web worker 唯一能走通的路径。
@@ -361,7 +402,19 @@ if ($envelope->success) {
 }
 ```
 
-返回类型化的 `TaskResultEnvelope`，六个 CLI 引擎接口完全一致，业务代码不再 per-backend 分支。
+返回类型化的 `TaskResultEnvelope`，包含 `success` / `output` / `summary` / `usage` / `costUsd` / `shadowCostUsd` / `billingModel` / `logFile` / `usageLogId` / `spawnReport` / `fallbackReport` / `error`。六个 CLI 引擎接口完全一致，业务代码不再 per-backend 分支。
+
+给 quota/rate-limit 失败加 fallback:
+
+```php
+$envelope = app(TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_chain' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+    'fallback_on' => ['rate limit', 'usage limit', 'quota', '429'],
+    'inherit_failure_context' => true,
+]);
+```
+
+启用 fallback 时,`$envelope->fallbackReport` 会带上尝试过的 backend 链与最终成功/失败状态。
 
 ### 短调用 —— `Dispatcher::dispatch()`
 
@@ -418,7 +471,7 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+),以及 **0.9.0 jcode 波次**（`EmbeddingProvider` SPI、`agent_grep` / `browser` 工具开关、`BrowserScreenshotStore` 闭环、ambient 成本切分、跨 harness 会话恢复）和 **0.9.1 DeepSeek-TUI 对齐波次** —— 持久化 goal store、三档审批闸门、workspace plugin manifest、无头 `/v1/usage` JSON、`cache_hit_rate` 聚合。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**，以及 **0.9.2 TaskRunner 可靠性波次**。
 - **[Task runner 快速入门](docs/task-runner-quickstart.md)** —— 完整 `TaskRunner` 选项参考。
 - **[Streaming backends](docs/streaming-backends.md)** —— `mcp_mode`、每后端流格式、`onChunk`。
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** —— codex/gemini agent 模拟。

@@ -211,6 +211,9 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 // also auto-fired by SuperAgentBackend on QuotaExceeded when
                 // super-ai-core.auto_rotate is enabled.
                 \SuperAICore\Console\Commands\ProviderRotateCommand::class,
+                // 0.9.2 — inspect TaskRunner reliability fallback policy,
+                // workload profiles, limits, cooldowns, and chain resolution.
+                \SuperAICore\Console\Commands\FallbackPolicyCommand::class,
 
                 // Skill telemetry / ranking / evolution (0.8.1+ — borrowed
                 // from OpenSpace's skill_engine; FIX-mode only, never

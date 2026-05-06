@@ -34,6 +34,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 24. [Workspace plugin manifest (0.9.1)](#24-workspace-plugin-manifest-091)
 25. [Headless `/v1/usage` JSON endpoint (0.9.1)](#25-headless-v1usage-json-endpoint-091)
 26. [`cache_hit_rate` aggregation (0.9.1)](#26-cache_hit_rate-aggregation-091)
+27. [TaskRunner reliability wave (0.9.2)](#27-taskrunner-reliability-wave-092)
 
 ---
 
@@ -1930,6 +1931,282 @@ AiUsageLog::query()
 
 The `/v1/usage` endpoint (§25) does the same calculation server-side
 across the six group-by axes — usually easier than rolling your own.
+
+---
+
+## 27. TaskRunner reliability wave (0.9.2)
+
+*Since 0.9.2 — `Runner\TaskRunner` only.*
+
+TaskRunner can hand a task to another backend when the primary backend
+fails with quota/rate-limit style output. This is designed for long
+operator jobs where a CLI subscription or API key can run out mid-task,
+but the host still wants the same prompt to continue on Codex, Gemini,
+Kimi, or an HTTP backend.
+
+Fallback is **per run**. The requested backend is always tried first, so
+there is no sticky failover state to reset when the primary recovers.
+
+### Per-call chain
+
+```php
+use SuperAICore\Runner\TaskRunner;
+
+$envelope = app(TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_profile' => 'coding',
+    'fallback_chain' => ['claude_cli', 'codex_cli', 'gemini_cli', 'kimi_cli'],
+    'fallback_on' => ['rate limit', 'usage limit', 'quota', '429'],
+    'inherit_failure_context' => true,
+    'log_file' => storage_path('logs/tasks/123.log'),
+]);
+```
+
+If `claude_cli` fails with matching output, TaskRunner retries on
+`codex_cli`. The second prompt is the original prompt plus a compact
+handoff block containing the previous backend, exit code, and a tail of
+the previous output/log. Set `inherit_failure_context=false` when the next
+backend should receive the original prompt only.
+
+### Automatic chain
+
+```php
+$envelope = app(TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_chain' => 'auto',
+]);
+```
+
+`auto` uses registered/enabled backends, defaulting to:
+
+```text
+claude_cli -> codex_cli -> gemini_cli -> kimi_cli -> copilot_cli ->
+kiro_cli -> superagent -> anthropic_api -> openai_api -> gemini_api
+```
+
+Set `AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=true` to ask each registered
+backend whether its binary or credentials appear usable before it enters
+the auto chain.
+
+### Global defaults
+
+```dotenv
+AI_CORE_TASK_FALLBACK_AUTO=false
+AI_CORE_TASK_FALLBACK_CHAIN=claude_cli,codex_cli,gemini_cli
+AI_CORE_TASK_FALLBACK_CHECK_AVAILABILITY=false
+AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT=true
+```
+
+The matching config block is `super-ai-core.task_fallback`:
+
+```php
+'task_fallback' => [
+    'auto_enabled' => false,
+    'check_availability' => false,
+    'chain' => [],
+    'auto_chain' => ['claude_cli', 'codex_cli', 'gemini_cli', /* ... */],
+    'fallback_on' => ['rate limit', 'usage limit', 'quota', '429'],
+    'inherit_failure_context' => true,
+],
+```
+
+Per-call options override config. `fallback_chain` can be a comma-separated
+string, an array, or `'auto'`.
+
+When `fallback_chain` is omitted, TaskRunner resolves workload policy in
+this order:
+
+```text
+fallback_profile / chains_by_profile
+-> task_type / chains_by_task_type
+-> capability / chains_by_capability
+-> metadata task_kind / priority / requires_tools via chains_by_metadata
+-> task_fallback.chain
+-> auto_enabled / auto_chain
+```
+
+Example config:
+
+```php
+'task_fallback' => [
+    'chains_by_profile' => [
+        'coding' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+        'research' => ['claude_cli', 'kimi_cli', 'gemini_cli'],
+    ],
+    'chains_by_task_type' => [
+        'tasks.run' => ['claude_cli', 'codex_cli'],
+    ],
+    'chains_by_capability' => [
+        'summarise' => ['claude_cli', 'kimi_cli'],
+    ],
+    'chains_by_metadata' => [
+        'priority' => [
+            'cheap' => ['gemini_cli', 'kimi_cli', 'openai_api'],
+            'fast' => ['codex_cli', 'gemini_cli', 'openai_api'],
+        ],
+    ],
+],
+```
+
+Built-in profiles are `coding`, `research`, `summarise`, `maintenance`,
+`cheap`, `fast`, and `headless`; hosts can override any of them in config.
+
+### Limits, cooldown, callbacks, and quality guard
+
+```php
+$envelope = app(TaskRunner::class)->run('claude_cli', $prompt, [
+    'fallback_profile' => 'coding',
+    'fallback_max_attempts' => 2,
+    'fallback_max_cost_usd' => 0.50,
+    'fallback_backoff_ms' => 250,
+    'fallback_backoff_strategy' => 'exponential',
+    'fallback_success_min_chars' => 200,
+    'fallback_success_forbidden_patterns' => ['I cannot complete', 'try again later'],
+    'onAttemptStart' => fn (array $e) => $task->markAttempting($e['backend']),
+    'onFallback' => fn (array $e) => $task->markFallback($e['from_backend'], $e['to_backend']),
+]);
+```
+
+Enable cooldown in config when repeated primary quota hits are noisy:
+
+```php
+'cooldown' => [
+    'enabled' => true,
+    'seconds' => 300,
+    'min_failures' => 2,
+],
+```
+
+Cooldown skips are included in `fallbackDecision.skipped`.
+
+### Matching semantics
+
+Fallback only continues when the failed envelope contains a configured
+fragment in `error`, `output`, `summary`, the tail of `log_file`, or the
+exit code string. Defaults include:
+
+- `rate limit`, `rate_limit`, `usage limit`
+- `quota`, `quota_exceeded`, `insufficient_quota`
+- `too many requests`, `429`
+- `billing`, `budget`, `limit reached`
+- `usage_not_included`
+
+This keeps prompt validation errors, missing files, tool failures, and
+other non-quota errors on the original backend unless the host explicitly
+adds them to `fallback_on`.
+
+### Attempt report
+
+When fallback is active, the returned envelope includes:
+
+```php
+$envelope->fallbackReport === [
+    [
+        'attempt' => 1,
+        'backend' => 'claude_cli',
+        'success' => false,
+        'retryable' => true,
+        'next_backend' => 'codex_cli',
+        'exit_code' => 1,
+        'model' => null,
+        'duration_ms' => 0,
+        'usage_log_id' => null,
+        'cost_usd' => null,
+        'billing_model' => null,
+        'log_file' => '/path/to/log',
+        'error' => 'Claude usage limit reached. Try again later.',
+    ],
+    [
+        'attempt' => 2,
+        'backend' => 'codex_cli',
+        'success' => true,
+        'retryable' => false,
+        'next_backend' => null,
+        'exit_code' => 0,
+        'model' => 'gpt-5.2',
+        'duration_ms' => 1500,
+        'usage_log_id' => 123,
+        'cost_usd' => 0.01,
+        'billing_model' => 'usage',
+        'log_file' => '/path/to/log',
+        'error' => null,
+    ],
+];
+```
+
+`TaskResultEnvelope::toArray()` exposes the same data under
+`fallback_report`, so hosts that persist the envelope can store it without
+special casing.
+
+Each Dispatcher attempt also receives metadata suitable for usage-row
+analytics:
+
+```php
+[
+    'fallback_active' => true,
+    'fallback_chain' => ['claude_cli', 'codex_cli'],
+    'fallback_attempt' => 2,
+    'fallback_primary_backend' => 'claude_cli',
+    'fallback_backend' => 'codex_cli',
+    'fallback_chain_index' => 1,
+]
+```
+
+The decision report explains chain-level behaviour:
+
+```php
+$envelope->fallbackDecision === [
+    'source' => 'profile',
+    'chain' => ['claude_cli', 'codex_cli'],
+    'skipped' => [],
+    'events' => [
+        ['event' => 'fallback', 'from_backend' => 'claude_cli', 'to_backend' => 'codex_cli'],
+        ['event' => 'stop', 'backend' => 'codex_cli', 'reason' => 'success'],
+    ],
+    'total_cost_usd' => 0.01,
+];
+```
+
+For dry-runs and operator UI:
+
+```php
+$plan = app(TaskRunner::class)->explainFallbackChain('claude_cli', [
+    'fallback_profile' => 'coding',
+]);
+```
+
+Artisan exposes the same policy:
+
+```bash
+php artisan super-ai-core:fallback-policy claude_cli --profile=coding
+php artisan super-ai-core:fallback-policy claude_cli --profile=coding --json
+```
+
+### Related implementation directions
+
+Use the fallback primitives as a reliability layer, not only as a
+last-ditch retry:
+
+- **Per task type chains** — keep different defaults for coding,
+  research, summarisation, and background maintenance. Coding chains often
+  start with `claude_cli` or `codex_cli`; summarisation can safely include
+  `kimi_cli`; direct HTTP backends work well as the final headless stop.
+- **UI status badges** — persist `fallback_report` with the host task row
+  and render compact states such as "primary limited", "continued on
+  codex", or "stopped on non-retryable error". Link each attempt to its
+  `log_file` when present.
+- **Queue retry policy** — use TaskRunner fallback before queue-level retry.
+  A queue retry repeats the whole job; fallback keeps the same logical run
+  moving and preserves context from the failed backend.
+- **Reliability analytics** — group `fallback_report[*].backend` with
+  `ai_usage_logs.backend` to find primaries that frequently hit quota and
+  secondaries that actually finish work. This gives operators a clean input
+  for reordering `auto_chain`.
+- **Safety reviews** — keep `fallback_on` narrow. Add fragments only for
+  errors your host considers retryable; validation failures and tool-policy
+  denials should usually remain terminal.
+- **Progressive rollout** — start with per-call `fallback_chain` on one task
+  class, then move stable chains into `super-ai-core.task_fallback.chain`,
+  and enable `AI_CORE_TASK_FALLBACK_AUTO=true` only after the host has
+  reviewed backend availability and billing behaviour.
 
 ---
 
