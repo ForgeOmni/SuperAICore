@@ -4,6 +4,46 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] — 2026-05-11
+
+**Side-panel trigger hardening — Blade attribute encoding fix for
+process and usage views.** The browser-screenshot badge on the
+processes index and the metadata-inspector link on the usage index
+were building their `data-side-panel-trigger` payloads with an inline
+`@json([...])` literal embedded directly inside a single-quoted HTML
+attribute. The inner string values themselves contained single
+quotes, double quotes, and raw HTML (`<img src="…">`), which broke
+Blade's attribute quoting and produced malformed markup on certain
+rows — most visibly when a screenshot URL or metadata blob contained
+characters that needed escaping a second time. The payload is now
+assembled in a named `@php` variable and passed through `@json($var)`
+as a whole, so attribute encoding happens exactly once and the side
+panel opens with the intended title and body in every row.
+
+### Fixed
+
+- **`resources/views/processes/index.blade.php`** — the per-process
+  "screenshot" badge now builds its side-panel payload via
+  `$__screenshotPayload` and renders the image URL through `e(...)`
+  before interpolating it into the `<img src="…">` snippet. Earlier
+  releases interpolated `$proc->latest_screenshot_url` directly into
+  the HTML inside an inline array literal, so URLs containing quotes
+  or ampersands could close the attribute or break the trigger JSON.
+- **`resources/views/usage/index.blade.php`** — the metadata inspector
+  link now resolves the cache-warning flag in a multi-line `@php`
+  block and assembles the side-panel payload as `$__sidePanelPayload`
+  before emitting it via `@json(...)`. The previous single-line
+  `@php(...)` + inline array form produced unstable HTML when the
+  metadata column contained nested JSON with quotes, so the side
+  panel intermittently opened with a truncated or empty body.
+
+### Notes
+
+- Behaviour change is limited to view rendering on the processes and
+  usage index pages; no backend, config, or API surface moved. Hosts
+  that customised these Blade files should mirror the `@php` block
+  pattern when reintroducing their overrides.
+
 ## [0.9.2] — 2026-05-05
 
 **TaskRunner reliability wave — fallback handoff + operator-grade
