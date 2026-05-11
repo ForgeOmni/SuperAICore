@@ -261,16 +261,19 @@
                                             <span class="badge" style="background:#faf5ff;color:#7c3aed;font-size:.6rem">{{ $proc->resolved_model }}</span>
                                         @endif
                                         @if($proc->latest_screenshot_url)
+                                            @php
+                                                $__screenshotPayload = [
+                                                    'title'   => 'Browser screenshot · ' . ($proc->task_name ?? $proc->backend),
+                                                    'type'    => 'html',
+                                                    'content' => '<img src="' . e($proc->latest_screenshot_url) . '" alt="screenshot" style="max-width:100%;border-radius:.375rem;">',
+                                                ];
+                                            @endphp
                                             <a href="#"
                                                class="badge text-decoration-none"
                                                style="background:#fef3c7;color:#92400e;font-size:.6rem"
                                                title="{{ __('processes.browser_screenshot', [], 'View latest browser screenshot') }}"
                                                onclick="event.stopPropagation();"
-                                               data-side-panel-trigger='@json([
-                                                    "title"   => "Browser screenshot · " . ($proc->task_name ?? $proc->backend),
-                                                    "type"    => "html",
-                                                    "content" => '<img src="' . $proc->latest_screenshot_url . '" alt="screenshot" style="max-width:100%;border-radius:.375rem;">',
-                                               ])'>
+                                               data-side-panel-trigger='@json($__screenshotPayload)'>
                                                 <i class="bi bi-image"></i> screenshot
                                             </a>
                                         @endif

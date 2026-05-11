@@ -244,7 +244,9 @@
                     <td>{{ $row->backend }}</td>
                     <td class="font-monospace">
                         {{ $row->model }}
-                        @php($cacheWarn = ($row->metadata ?? [])['cache_warning'] ?? null)
+                        @php
+                            $cacheWarn = ($row->metadata ?? [])['cache_warning'] ?? null;
+                        @endphp
                         @if($cacheWarn)
                             <span class="badge bg-warning-subtle text-warning border border-warning-subtle ms-1"
                                   title="{{ $cacheWarn }}">
@@ -281,12 +283,15 @@
                     <td class="text-end text-muted">
                         {{ $row->duration_ms !== null ? $row->duration_ms . 'ms' : '—' }}
                         @if(!empty($row->metadata))
+                            @php
+                                $__sidePanelPayload = [
+                                    'title'   => 'Usage row #' . $row->id,
+                                    'type'    => 'json',
+                                    'content' => json_encode($row->metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                                ];
+                            @endphp
                             <a href="#" class="ms-1 text-decoration-none" title="Inspect metadata"
-                               data-side-panel-trigger='@json([
-                                    "title" => "Usage row #" . $row->id,
-                                    "type"  => "json",
-                                    "content" => json_encode($row->metadata, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                               ])'>
+                               data-side-panel-trigger='@json($__sidePanelPayload)'>
                                 <i class="bi bi-window-sidebar"></i>
                             </a>
                         @endif
