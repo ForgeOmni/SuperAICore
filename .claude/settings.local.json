@@ -30,7 +30,13 @@
       "PowerShell(git stash *)",
       "PowerShell(git *)",
       "PowerShell(vendor\\\\bin\\\\phpunit --colors=never 2>&1 | Select-Object -Last 50)",
-      "PowerShell(vendor\\\\bin\\\\phpunit --colors=never tests\\\\Unit\\\\SuperAgentBackendTest.php tests\\\\Unit\\\\ApprovalGateTest.php tests\\\\Unit\\\\WorkspacePluginRegistryTest.php tests\\\\Unit\\\\UsageRecorderCacheHitRateTest.php tests\\\\Unit\\\\ProviderTypeRegistryTest.php 2>&1 | Select-Object -Last 5)"
+      "PowerShell(vendor\\\\bin\\\\phpunit --colors=never tests\\\\Unit\\\\SuperAgentBackendTest.php tests\\\\Unit\\\\ApprovalGateTest.php tests\\\\Unit\\\\WorkspacePluginRegistryTest.php tests\\\\Unit\\\\UsageRecorderCacheHitRateTest.php tests\\\\Unit\\\\ProviderTypeRegistryTest.php 2>&1 | Select-Object -Last 5)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api *)",
+      "Bash(composer update *)",
+      "Bash(vendor/bin/phpunit --filter=SuperAgentBackend)",
+      "Bash(vendor/bin/phpunit)",
+      "Bash(composer dump-autoload *)"
     ]
   }
 }

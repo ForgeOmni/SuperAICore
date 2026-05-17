@@ -25,6 +25,8 @@ use SuperAICore\Console\Commands\ProviderAddCommand;
 use SuperAICore\Console\Commands\ProviderRotateCommand;
 use SuperAICore\Console\Commands\SkillListCommand;
 use SuperAICore\Console\Commands\SkillRunCommand;
+use SuperAICore\Console\Commands\SmartCommand;
+use SuperAICore\Console\Commands\SquadCommand;
 use Symfony\Component\Console\Application as SymfonyApplication;
 
 /**
@@ -61,5 +63,7 @@ class Application extends SymfonyApplication
         $this->add(new ProviderRotateCommand());
         $this->add(new FallbackPolicyCommand());
         $this->add(new PluginsInstallCommand());
+        $this->add(new SmartCommand());
+        $this->add(new SquadCommand());
     }
 }

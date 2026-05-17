@@ -163,6 +163,73 @@ class SuperAICoreServiceProvider extends ServiceProvider
         // so the safety floor stays consistent with shell-tool sites.
         $this->app->singleton(\SuperAICore\Runner\ApprovalGate::class);
 
+        // ── SDK 1.0.0 companion bindings ─────────────────────────────
+        // P0-3 — `/model auto` heuristic wrapped for host dispatch.
+        // Built from `super-ai-core.auto_model.*` so hosts can rebind
+        // Pro/Flash to their preferred models without touching the SDK.
+        $this->app->singleton(\SuperAICore\Services\AutoModelRouter::class, function ($app) {
+            $cfg = (array) config('super-ai-core.auto_model', []);
+            $catalog = null;
+            if (!empty($cfg['score_catalog_path']) && class_exists(\SuperAgent\Evals\ScoreCatalog::class)) {
+                try {
+                    $catalog = new \SuperAgent\Evals\ScoreCatalog((string) $cfg['score_catalog_path']);
+                } catch (\Throwable) {
+                    $catalog = null;
+                }
+            }
+            return new \SuperAICore\Services\AutoModelRouter(
+                proModel:                   $cfg['pro_model'] ?? null,
+                flashModel:                 $cfg['flash_model'] ?? null,
+                longContextThresholdTokens: (int) ($cfg['long_context_tokens'] ?? 32_000),
+                toolChainThreshold:         (int) ($cfg['tool_chain_threshold'] ?? 3),
+                proKeywords:                isset($cfg['pro_keywords']) ? (array) $cfg['pro_keywords'] : null,
+                scoreCatalog:               $catalog,
+            );
+        });
+
+        // P0-4 — `CacheAwareCompressor` factory. Hosts call ->build() when
+        // constructing their own ContextManager so summary boundaries land
+        // AFTER the pinned cache prefix.
+        $this->app->singleton(\SuperAICore\Services\CompressionStrategyFactory::class, function ($app) {
+            $cfg = (array) config('super-ai-core.compression', []);
+            return new \SuperAICore\Services\CompressionStrategyFactory(
+                cacheAware: (bool) ($cfg['cache_aware'] ?? true),
+                pinHead:    (int)  ($cfg['pin_head']    ?? 4),
+                pinSystem:  (bool) ($cfg['pin_system']  ?? true),
+            );
+        });
+
+        // P2-8 — Security primitive helper for free-form text injected
+        // into system-role prompts. The SDK's GoalManager already wraps
+        // goal objectives; this helper covers the other sites
+        // (ad-hoc memory, workspace plugins, host UI form input).
+        $this->app->singleton(\SuperAICore\Services\UntrustedInputHelper::class, function ($app) {
+            return new \SuperAICore\Services\UntrustedInputHelper(
+                enabled: (bool) config('super-ai-core.security.untrusted_input_enabled', true),
+            );
+        });
+
+        // P2-10 — Per-process token-bucket rate limiter pool. Provider
+        // name is the bucket key; falls back to 'default' when no
+        // explicit entry exists.
+        $this->app->singleton(\SuperAICore\Services\RateLimiterRegistry::class, function ($app) {
+            return new \SuperAICore\Services\RateLimiterRegistry(
+                config: (array) config('super-ai-core.rate_limits', []),
+            );
+        });
+
+        // P2-11 — AdHoc memory pool + Conversation Fork seam.
+        $this->app->singleton(\SuperAICore\Services\AdHocMemoryRegistry::class);
+        $this->app->singleton(\SuperAICore\Services\ConversationForkService::class);
+
+        // P2-12 — DeepSeek FIM standalone helper. API key resolves from
+        // `super-ai-core.deepseek.api_key` or DEEPSEEK_API_KEY env var.
+        $this->app->singleton(\SuperAICore\Services\DeepSeekFimService::class, function ($app) {
+            return new \SuperAICore\Services\DeepSeekFimService(
+                apiKey: config('super-ai-core.deepseek.api_key'),
+            );
+        });
+
         // Workspace-shared plugin registry. Reads/writes
         // `<base_path>/.superaicore/workspace-plugins.json` so a team
         // can check the manifest into the repo and onboard new hires
@@ -178,6 +245,18 @@ class SuperAICoreServiceProvider extends ServiceProvider
     {
         $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
         $this->loadTranslationsFrom(__DIR__ . '/../resources/lang', 'super-ai-core');
+
+        // P2-9 — Apply `super-ai-core.agents.max_depth` to SDK's static
+        // AgentDepthGuard so every sub-agent spawn under this host honors
+        // the same recursion cap. The SDK reads either the env var or
+        // `superagent.agents.max_depth`; we don't own the latter, so
+        // forward via setMax() when the host has an explicit value.
+        if (class_exists(\SuperAgent\Swarm\AgentDepthGuard::class)) {
+            $cap = config('super-ai-core.agents.max_depth');
+            if (is_int($cap) && $cap > 0) {
+                \SuperAgent\Swarm\AgentDepthGuard::setMax($cap);
+            }
+        }
 
         // Register artisan commands. Historically these lived only on the
         // standalone `bin/superaicore` console — keep the set narrow here so

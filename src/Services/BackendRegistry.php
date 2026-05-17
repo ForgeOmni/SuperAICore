@@ -11,6 +11,7 @@ use SuperAICore\Backends\GeminiCliBackend;
 use SuperAICore\Backends\KimiCliBackend;
 use SuperAICore\Backends\KiroCliBackend;
 use SuperAICore\Backends\OpenAiApiBackend;
+use SuperAICore\Backends\SquadBackend;
 use SuperAICore\Backends\SuperAgentBackend;
 use SuperAICore\Contracts\Backend;
 use SuperAICore\Support\SuperAgentDetector;
@@ -40,6 +41,13 @@ class BackendRegistry
         // SDK is not installed, regardless of config — avoids a dead option.
         if (($config['superagent']['enabled'] ?? true) && $sdkAvailable()) {
             $this->register(new SuperAgentBackend($logger));
+        }
+        // SDK 1.0.0 Squad — multi-agent peer collaboration with per-step
+        // model tiering and checkpointing. Requires the SDK like
+        // SuperAgentBackend; hidden when the SDK isn't installed or the
+        // operator turned it off.
+        if (($config['squad']['enabled'] ?? true) && $sdkAvailable()) {
+            $this->register(new SquadBackend($logger));
         }
         if ($config['claude_cli']['enabled'] ?? true) {
             $this->register(new ClaudeCliBackend(

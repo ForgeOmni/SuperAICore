@@ -4,6 +4,7 @@ namespace SuperAICore\Backends;
 
 use Psr\Log\LoggerInterface;
 use SuperAgent\Agent;
+use SuperAgent\Conversation\HandoffPolicy;
 use SuperAgent\Exceptions\Provider\ContextWindowExceededException;
 use SuperAgent\Exceptions\Provider\CyberPolicyException;
 use SuperAgent\Exceptions\Provider\InvalidPromptException;
@@ -18,6 +19,7 @@ use SuperAICore\Contracts\Backend;
 use SuperAICore\Services\BrowserScreenshotStore;
 use SuperAICore\Services\EmbeddingProviderFactory;
 use SuperAICore\Services\ProviderTypeRegistry;
+use SuperAICore\Services\RateLimiterRegistry;
 
 /**
  * In-process LLM + tool-use loop via forgeomni/superagent.
@@ -143,6 +145,7 @@ class SuperAgentBackend implements Backend
         protected ?LoggerInterface $logger = null,
         protected ?EmbeddingProviderFactory $embeddingFactory = null,
         protected ?BrowserScreenshotStore $screenshotStore = null,
+        protected ?RateLimiterRegistry $rateLimiter = null,
     ) {}
 
     public function name(): string
@@ -169,6 +172,20 @@ class SuperAgentBackend implements Backend
             if (!empty($options['system'])) {
                 $agent->withSystemPrompt((string) $options['system']);
             }
+
+            // SDK 0.9.8 token-bucket rate limiter (8 RPS / 16 burst by
+            // default, configurable per provider). Blocks until capacity;
+            // safe to skip the per-call assertion since `consume()` is a
+            // no-op when no limiter / config is wired.
+            $this->throttle($providerConfig);
+
+            // SDK 0.9.5 cross-provider handoff. When the caller passes an
+            // `handoff` block, swap to the named provider before the run
+            // call. Useful for "warm up on Anthropic, finish on Kimi" or
+            // for forced-fallback flows where the host pre-determined a
+            // different provider. Failure to construct the new provider
+            // leaves the original agent untouched (SDK contract).
+            $handoffStatus = $this->maybeHandoff($agent, $options);
 
             // SDK 0.9.1+ per-call options. The SDK merges these into the
             // agent's stored options before dispatch (pre-0.9.1 silently
@@ -229,6 +246,14 @@ class SuperAgentBackend implements Backend
             $thinking = $this->extractThinking($result->messages ?? []);
             if ($thinking !== '') {
                 $envelope['thinking'] = $thinking;
+            }
+
+            // SDK 0.9.5 handoff token budget — when the dispatch crossed a
+            // cross-provider switchProvider() call, surface the token-budget
+            // snapshot so dashboards can warn "history won't fit under
+            // <target_model> — compress before the next turn".
+            if ($handoffStatus !== null) {
+                $envelope['handoff_token_status'] = $handoffStatus;
             }
 
             // SDK 0.9.6+ deprecation surfacing — `ModelCatalog::deprecation()`
@@ -303,6 +328,15 @@ class SuperAgentBackend implements Backend
             $perCall['idempotency_key'] = $options['idempotency_key'];
         }
 
+        // SDK 0.9.8 — three-tier reasoning effort dial (off / high / max).
+        // Routes to the right body shape per upstream inside the provider
+        // (top-level `reasoning_effort` for most, `chat_template_kwargs` for
+        // NVIDIA NIM, etc.). Silently ignored by providers that don't
+        // implement `SupportsReasoningEffort`.
+        if (isset($options['reasoning_effort']) && is_string($options['reasoning_effort']) && $options['reasoning_effort'] !== '') {
+            $perCall['reasoning_effort'] = strtolower(trim($options['reasoning_effort']));
+        }
+
         // Trace context — either a full W3C traceparent string or a TraceContext
         // instance the caller already built. Host middleware typically forwards
         // the inbound `traceparent` header here.
@@ -317,6 +351,79 @@ class SuperAgentBackend implements Backend
         }
 
         return $perCall;
+    }
+
+    /**
+     * Acquire a token from the per-provider rate limiter, if one is
+     * wired. Falls back to a container-resolved registry when no
+     * explicit instance was injected.
+     *
+     * @param array<string,mixed> $providerConfig
+     */
+    protected function throttle(array $providerConfig): void
+    {
+        $registry = $this->rateLimiter;
+        if ($registry === null && function_exists('app')) {
+            try {
+                $registry = app(RateLimiterRegistry::class);
+            } catch (\Throwable) {
+                return;
+            }
+        }
+        if ($registry === null) return;
+
+        $key = (string) ($providerConfig['provider'] ?? $providerConfig['type'] ?? 'default');
+        $registry->consume($key);
+    }
+
+    /**
+     * SDK 0.9.5 — call `Agent::switchProvider()` when the caller passed
+     * an `handoff` block. Returns the post-switch token-budget snapshot
+     * (`{tokens, window, fits, model}`) so the envelope can warn before
+     * the next turn rejects. Returns null when no handoff was requested
+     * or the SDK rejected the construct (missing api_key, unknown region,
+     * etc.) — the SDK guarantees the original agent stays usable in that
+     * case.
+     *
+     * Expected `options['handoff']` shape:
+     *   - provider: string         driver key (anthropic|kimi|gemini|…)
+     *   - config:   array          api_key / base_url / model / region
+     *   - policy:   string|null    'default'|'preserveAll'|'freshStart'
+     *
+     * @param array<string,mixed> $options
+     * @return array{tokens:int, window:int, fits:bool, model:string}|null
+     */
+    protected function maybeHandoff(Agent $agent, array $options): ?array
+    {
+        $handoff = $options['handoff'] ?? null;
+        if (!is_array($handoff) || empty($handoff['provider'])) return null;
+
+        if (!class_exists(HandoffPolicy::class)) return null;
+
+        $policy = match (strtolower((string) ($handoff['policy'] ?? 'default'))) {
+            'preserveall', 'preserve_all', 'preserve' => HandoffPolicy::preserveAll(),
+            'freshstart', 'fresh_start', 'fresh'      => HandoffPolicy::freshStart(),
+            default                                    => HandoffPolicy::default(),
+        };
+
+        try {
+            $agent->switchProvider(
+                (string) $handoff['provider'],
+                (array) ($handoff['config'] ?? []),
+                $policy,
+            );
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->warning('SuperAgentBackend: handoff failed: ' . $e->getMessage(), [
+                    'target_provider' => $handoff['provider'],
+                ]);
+            }
+            return null;
+        }
+
+        return method_exists($agent, 'lastHandoffTokenStatus')
+            ? $agent->lastHandoffTokenStatus()
+            : null;
     }
 
     /**

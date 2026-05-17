@@ -166,6 +166,91 @@ return [
         'side_panel_enabled' => (bool) env('AI_CORE_UI_SIDE_PANEL', true),
     ],
 
+    // ─── /model auto routing (SDK 0.9.8) ───
+    // Wraps SDK's Routing\AutoModelStrategy via Services\AutoModelRouter.
+    // The router escalates Flash → Pro on long context, deep tool chains,
+    // explicit reasoning_effort=max, or system prompts that mention
+    // review/audit/design/etc. Hosts can rebind Pro/Flash to other model
+    // pairs (e.g. claude-opus / claude-haiku) without forking the SDK.
+    'auto_model' => [
+        'enabled'              => (bool) env('AI_CORE_AUTO_MODEL', true),
+        'pro_model'            => env('AI_CORE_AUTO_MODEL_PRO', null),
+        'flash_model'          => env('AI_CORE_AUTO_MODEL_FLASH', null),
+        'long_context_tokens'  => (int) env('AI_CORE_AUTO_MODEL_LONG_CTX', 32_000),
+        'tool_chain_threshold' => (int) env('AI_CORE_AUTO_MODEL_TOOL_DEPTH', 3),
+        'pro_keywords'         => null,
+        // Path to a SDK ScoreCatalog JSON file; when set, the catalog's
+        // top-scoring model for the inferred intent dim overrides the
+        // Pro/Flash heuristic. Useful when the host runs its own evals.
+        'score_catalog_path'   => env('AI_CORE_AUTO_MODEL_SCORE_CATALOG', null),
+    ],
+
+    // ─── Cache-aware compaction (SDK 0.9.8) ───
+    // When hosts drive their own ContextManager (long-running multi-turn
+    // sessions), they should pull `CompressionStrategyFactory::build()`
+    // to register a `CacheAwareCompressor` that pins the prompt-cache
+    // prefix instead of clobbering it on every compaction round.
+    'compression' => [
+        'cache_aware' => (bool) env('AI_CORE_COMPRESSION_CACHE_AWARE', true),
+        'pin_head'    => (int)  env('AI_CORE_COMPRESSION_PIN_HEAD', 4),
+        'pin_system'  => (bool) env('AI_CORE_COMPRESSION_PIN_SYSTEM', true),
+    ],
+
+    // ─── Security primitives (SDK 0.9.8) ───
+    'security' => [
+        // UntrustedInput wrapping. SDK auto-tags goal objectives via
+        // GoalManager; this flag controls host-side tagging for OTHER
+        // free-form text (workspace plugin descriptions, MCP tool docs,
+        // ad-hoc memory entries). Off only when a host wants strictly
+        // raw prompts (tests, byte-identical dispatch comparisons).
+        'untrusted_input_enabled' => (bool) env('AI_CORE_UNTRUSTED_INPUT', true),
+    ],
+
+    // ─── Sub-agent depth cap (SDK 0.9.8) ───
+    'agents' => [
+        // Maximum sub-agent recursion depth. SDK default is 5.
+        // Negative / unset → SDK default; can also override via
+        // SUPERAGENT_MAX_AGENT_DEPTH env var on a per-process basis.
+        'max_depth' => (int) env('AI_CORE_AGENT_MAX_DEPTH', 0),
+    ],
+
+    // ─── Per-provider token-bucket rate limiter (SDK 0.9.8) ───
+    // Key is the provider name (`anthropic` / `kimi` / `openai` / etc.);
+    // `default` covers any provider without its own row. Empty array
+    // disables rate limiting (the SDK has its own per-call retry on
+    // 429, so this is mostly belt + suspenders for hosts that have
+    // already been throttled by a provider).
+    'rate_limits' => [
+        'default'  => ['rate' => (float) env('AI_CORE_RL_DEFAULT_RATE', 8.0),  'burst' => (int) env('AI_CORE_RL_DEFAULT_BURST', 16)],
+        // 'kimi'    => ['rate' => 5.0,  'burst' => 10],
+        // 'openai'  => ['rate' => 16.0, 'burst' => 32],
+        // 'deepseek'=> ['rate' => 8.0,  'burst' => 16],
+    ],
+
+    // ─── DeepSeek FIM (SDK 0.9.8) ───
+    // Standalone API for prefix-completion / inline-fill use cases.
+    'deepseek' => [
+        'api_key' => env('DEEPSEEK_API_KEY', null),
+    ],
+
+    // ─── Squad multi-agent (SDK 1.0.0) ───
+    // PeerOrchestrator-driven peer-to-peer pipeline with per-step
+    // model tiering, optional cost cap with downshift, and on-disk
+    // checkpoints for crash-resume.
+    'squad' => [
+        'enabled'        => (bool) env('AI_CORE_SQUAD_ENABLED', true),
+        // Default tier map. Override per dispatch via options.tier_map.
+        'tier_map' => [
+            'trivial'  => ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5'],
+            'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-flash'],
+            'moderate' => ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6'],
+            'hard'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-pro'],
+            'expert'   => ['provider' => 'anthropic', 'model' => 'claude-opus-4-7'],
+        ],
+        'max_cost_usd'   => (float) env('AI_CORE_SQUAD_MAX_COST', 0),
+        'checkpoint_dir' => env('AI_CORE_SQUAD_CHECKPOINT_DIR', null),
+    ],
+
     // ─── Backends ───
     // Which backends are usable. Disable ones you don't need.
     'backends' => [
@@ -242,6 +327,9 @@ return [
         'openai_api' => [
             'enabled' => env('AI_CORE_OPENAI_API_ENABLED', true),
             'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com'),
+        ],
+        'squad' => [
+            'enabled' => env('AI_CORE_SQUAD_BACKEND_ENABLED', true),
         ],
     ],
 
