@@ -818,6 +818,157 @@ Voir [docs/advanced-usage.fr.md §27](docs/advanced-usage.fr.md) et
 [docs/task-runner-quickstart.md](docs/task-runner-quickstart.md) pour la
 recette complète du fallback TaskRunner.
 
+**0.9.5 — aucune migration ; fix de rendu de vue.** Deux fixes
+d'encodage d'attribut Blade sur les pages index `/processes` et
+`/usage`. Aucun backend, config ou surface API n'a bougé. Les hôtes
+qui ont customisé `resources/views/processes/index.blade.php` ou
+`resources/views/usage/index.blade.php` doivent reprendre le nouveau
+pattern `@php($var = …)` + `@json($var)` lorsqu'ils réintroduisent
+leurs overrides — construire le payload du side-panel inline dans
+un attribut HTML à guillemets simples produit du markup malformé sur
+les lignes dont l'URL de screenshot ou le blob de metadata contient
+des guillemets / des `&`. Changement purement runtime.
+
+**0.9.6 — aucune migration ; pin SDK passe à `^1.0`.** Backend Squad
+multi-agent + six bindings compagnons SDK 0.9.8 / 1.0.0. Chaque
+binding est additif et opt-in — le comportement pré-0.9.6 est
+préservé tant que vous n'activez pas un flag, ne passez pas une
+nouvelle option, ou ne résolvez pas un nouveau service depuis le
+container.
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan vendor:publish --tag=super-ai-core-config --force   # optionnel ; récupère les nouveaux blocs de config
+# pas de `php artisan migrate` — aucun changement de schéma en 0.9.6
+```
+
+Knobs env optionnels (toutes les valeurs par défaut sont sûres ; le
+package fonctionne sans qu'aucune ne soit définie) :
+
+```dotenv
+# ─── Squad multi-agent (SDK 1.0.0) ───
+AI_CORE_SQUAD_ENABLED=true
+AI_CORE_SQUAD_BACKEND_ENABLED=true
+AI_CORE_SQUAD_MAX_COST=0              # 0 désactive le plafond
+AI_CORE_SQUAD_CHECKPOINT_DIR=         # défaut : storage/app/squad/
+
+# ─── Routage /model auto (SDK 0.9.8) ───
+AI_CORE_AUTO_MODEL=true
+AI_CORE_AUTO_MODEL_PRO=               # null → défaut SDK (deepseek-v4-pro)
+AI_CORE_AUTO_MODEL_FLASH=             # null → défaut SDK (deepseek-v4-flash)
+AI_CORE_AUTO_MODEL_LONG_CTX=32000
+AI_CORE_AUTO_MODEL_TOOL_DEPTH=3
+AI_CORE_AUTO_MODEL_SCORE_CATALOG=     # chemin optionnel d'un ScoreCatalog JSON
+
+# ─── Compaction cache-aware (SDK 0.9.8) ───
+AI_CORE_COMPRESSION_CACHE_AWARE=true
+AI_CORE_COMPRESSION_PIN_HEAD=4
+AI_CORE_COMPRESSION_PIN_SYSTEM=true
+
+# ─── Limiteur token-bucket par provider (SDK 0.9.8) ───
+AI_CORE_RL_DEFAULT_RATE=8.0
+AI_CORE_RL_DEFAULT_BURST=16
+
+# ─── Wrapping d'input non-fiable (SDK 0.9.8) ───
+AI_CORE_UNTRUSTED_INPUT=true
+
+# ─── Cap de profondeur sous-agent (SDK 0.9.8) ───
+AI_CORE_AGENT_MAX_DEPTH=0             # 0 → défaut SDK (5)
+
+# ─── DeepSeek FIM (SDK 0.9.8) ───
+DEEPSEEK_API_KEY=
+```
+
+Huit choses à revoir lors de la montée :
+
+1. **Squad est gardé par la disponibilité du SDK.** `BackendRegistry`
+   n'enregistre `SquadBackend` que si
+   `super-ai-core.backends.squad.enabled` est actif ET que les classes
+   SDK 1.0.0 sont présentes (`PeerOrchestrator`, `TaskDecomposer`,
+   `ModelTierMap`, `SquadCheckpointStore`). Les hôtes n'ayant pas
+   monté SDK 1.0.0 ne voient aucun changement — Squad se déclare
+   indisponible et le Dispatcher retombe sur les neuf autres
+   adaptateurs.
+
+2. **Les pipelines Squad persistent des checkpoints par étape.**
+   Les échecs en cours laissent le checkpoint sur disque ;
+   redispatchez avec le même `squad_id` et `checkpoint_dir` pour
+   reprendre. Le `checkpoint_dir` par défaut atterrit dans
+   `storage/app/squad/` donc les permissions storage de Laravel
+   couvrent déjà le chemin. Override par appel via
+   `options.checkpoint_dir`, ou globalement via
+   `AI_CORE_SQUAD_CHECKPOINT_DIR`.
+
+3. **`AutoModelRouter` est un service hôte, pas une dépendance
+   backend.** Résoudre
+   `app(\SuperAICore\Services\AutoModelRouter::class)` et appeler
+   `select($messages, $systemPrompt, $options)` retourne le model
+   id que ce dispatch doit cibler. Câblez-le dans votre dispatcher /
+   planificateur custom quand vous voulez l'heuristique du SDK sans
+   coupler au backend SuperAgent. Les hôtes qui ne résolvent pas le
+   service ne voient rien changer.
+
+4. **`CompressionStrategyFactory` est opt-in pour les hôtes qui
+   pilotent leur propre `ContextManager`.** Le flux par défaut de
+   `SuperAgentBackend` est one-shot (`max_turns=1`) et ne construit
+   pas de `ContextManager`. Les hôtes qui font tourner de longs
+   boucles sous-agent ou des sessions browser-tool appellent
+   `app(\SuperAICore\Services\CompressionStrategyFactory::class)->build(…)`
+   en montant leur propre context manager ; la factory retourne un
+   `CacheAwareCompressor` autour du `ConversationCompressor` standard
+   pour que la frontière de summary atterrisse APRÈS le préfixe de
+   cache.
+
+5. **`UntrustedInputHelper` couvre le texte libre que le SDK
+   n'enveloppe pas déjà.** Le `Goals\GoalManager` du SDK 0.9.8
+   enveloppe automatiquement `goal.objective` via le template
+   `continuation.md` — NE PAS double-envelopper là. Cet helper est
+   pour les entrées de mémoire ad-hoc, les descriptions de
+   workspace plugin, la doc d'outil MCP importée de serveurs tiers,
+   et tout input de formulaire UI hôte que vous concaténez dans un
+   system prompt. Désactivable via `AI_CORE_UNTRUSTED_INPUT=false`
+   quand vous avez besoin de prompts byte-identical (tests,
+   comparaisons de dispatch).
+
+6. **Le limiteur de taux est per-process.** Les swarms distribués
+   (un agent par pod) ont besoin d'un limiteur partagé — le chemin
+   le plus propre est un middleware Guzzle Redis-backed sur le HTTP
+   client du provider ; cette registry reste simple et NE
+   concurrence PAS ce pattern. Les defaults correspondent au budget
+   de retry 429 par appel du SDK (8 RPS / 16 burst) ; les overrides
+   par provider vont dans `super-ai-core.rate_limits.<provider>`.
+
+7. **`reasoning_effort` est une option par appel sur
+   `Dispatcher::dispatch()`.** Trois niveaux (`off` / `high` /
+   `max`). Route vers la bonne forme de body selon l'upstream
+   (`reasoning_effort` top-level pour la plupart des providers,
+   `chat_template_kwargs` pour NVIDIA NIM, etc.). Silencieusement
+   ignoré par les providers qui n'implémentent pas
+   `SupportsReasoningEffort`. Nourrit aussi l'heuristique
+   d'escalation d'`AutoModelRouter` quand mis à `max`.
+
+8. **Commandes console `smart` et `squad`.** Les deux passent
+   directement à la CLI vendor `superagent`
+   (`vendor/forgeomni/superagent/bin/superagent`). Réutilise les
+   credentials SuperAgent existantes de l'opérateur et le
+   comportement de la CLI SDK plutôt que de réimplémenter
+   l'orchestrateur en PHP :
+   ```bash
+   ./vendor/bin/superaicore smart "audite ce diff"
+   ./vendor/bin/superaicore smart show --last
+   ./vendor/bin/superaicore squad "refactore le module auth" --max-cost=2.0
+   ./vendor/bin/superaicore squad --no-squad "compare avec le chemin legacy"
+   ```
+   Passez `--binary=/abs/path/to/superagent` quand le SDK est
+   installé hors de `vendor/`.
+
+Voir [docs/advanced-usage.fr.md §28](docs/advanced-usage.fr.md) pour
+les recettes complètes — pipelines Squad, intégration
+AutoModelRouter, câblage CacheAwareCompressor, overrides
+RateLimiterRegistry, intégration UI chat AdHocMemoryRegistry,
+side-panels ConversationForkService, endpoints de complétion DeepSeek
+FIM.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

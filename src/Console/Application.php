@@ -4,6 +4,7 @@ namespace SuperAICore\Console;
 
 use SuperAICore\Console\Commands\AgentListCommand;
 use SuperAICore\Console\Commands\AgentRunCommand;
+use SuperAICore\Console\Commands\AutoCommand;
 use SuperAICore\Console\Commands\ApiStatusCommand;
 use SuperAICore\Console\Commands\CallCommand;
 use SuperAICore\Console\Commands\ClaudeMcpSyncCommand;
@@ -27,6 +28,7 @@ use SuperAICore\Console\Commands\SkillListCommand;
 use SuperAICore\Console\Commands\SkillRunCommand;
 use SuperAICore\Console\Commands\SmartCommand;
 use SuperAICore\Console\Commands\SquadCommand;
+use SuperAICore\Console\Commands\TeamCommand;
 use Symfony\Component\Console\Application as SymfonyApplication;
 
 /**
@@ -65,5 +67,7 @@ class Application extends SymfonyApplication
         $this->add(new PluginsInstallCommand());
         $this->add(new SmartCommand());
         $this->add(new SquadCommand());
+        $this->add(new AutoCommand());
+        $this->add(new TeamCommand());
     }
 }

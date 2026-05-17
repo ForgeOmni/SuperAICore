@@ -36,7 +36,19 @@
       "Bash(composer update *)",
       "Bash(vendor/bin/phpunit --filter=SuperAgentBackend)",
       "Bash(vendor/bin/phpunit)",
-      "Bash(composer dump-autoload *)"
+      "Bash(composer dump-autoload *)",
+      "Bash(vendor/bin/phpunit --filter='CrossLayerDispatcher|CliAutoMode')",
+      "Bash(vendor/bin/phpunit --filter=AutoMode)",
+      "Bash(vendor/bin/phpunit --filter='SquadDispatcherRegistry|AutoMode')",
+      "Bash(vendor/bin/phpunit --filter='SquadDispatcherBridge|CrossLayerDispatcher|CliAutoMode')",
+      "Bash(vendor/bin/phpunit --testdox-summary)",
+      "Bash(vendor/bin/phpunit tests/Unit/Squad/)",
+      "Bash(cp /Users/xiyang/PhpstormProjects/SuperAICore/resources/squad-teams/*.yaml /Users/xiyang/PhpstormProjects/SuperAgent/resources/squad-teams/)",
+      "Read(//Users/xiyang/PhpstormProjects/SuperAgent/resources/squad-teams/**)",
+      "Bash(vendor/bin/phpunit tests/Unit/Modes/ tests/Unit/Squad/)",
+      "Bash(vendor/bin/phpunit --filter='CliModeRouter|CrossModeIntegration')",
+      "Bash(vendor/bin/phpunit --filter='CliSquadCrossMode')",
+      "Bash(vendor/bin/phpunit tests/Unit/Squad tests/Unit/Modes)"
     ]
   }
 }

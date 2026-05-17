@@ -170,6 +170,114 @@ tick 循环、harness 恢复回调):见 [docs/advanced-usage.zh-CN.md
 [docs/advanced-usage.zh-CN.md §27](docs/advanced-usage.zh-CN.md) 和
 [docs/task-runner-quickstart.md](docs/task-runner-quickstart.md)。
 
+### Squad 多智能体 + SDK 1.0.0 波次（0.9.6）
+
+SDK 约束移到 `^1.0`。SuperAICore 0.9.6 把 SDK 1.0.0 的 `Squad`
+peer-collaboration pipeline 作为第十个 dispatcher adapter 落地，并把
+SDK 0.9.8 的配套原语（`AutoModelStrategy`、`CacheAwareCompressor`、
+`UntrustedInput`、`TokenBucket`、`AdHocMemoryProvider`、
+`Conversation\Fork`、`AgentDepthGuard`、DeepSeek FIM）封装成一等公民
+宿主服务，让任意 dispatch 路径都能寻址。每个绑定都是加性且 opt-in
+—— 未启用 flag、未传新 option、未从容器解析新服务的宿主，0.9.6
+之前的行为完全保留。无 schema 变更。
+
+- **`SquadBackend` —— SDK 1.0.0 自适应跨模型 pipeline**（0.9.6）——
+  `super-ai-core.squad.enabled=true` 且 SDK 1.0.0 类位于 classpath 时，
+  注册为第十个 dispatcher adapter。通过 `Squad\TaskDecomposer` +
+  `Squad\PeerOrchestrator` 驱动一条启发式分解的 pipeline，每个子任务
+  分配独立模型（经 `Squad\ModelTierMap` 映射），按步骤写
+  `SquadCheckpointStore`，节点间通过 SDK 的 `PeerMailbox` 通讯，可选
+  cost cap 在 80% 预算时自动 downshift。中途失败 checkpoint 留在
+  磁盘；用同样的 `squad_id` + `checkpoint_dir` 重新 dispatch 即可恢复。
+  Envelope 携带 `squad: {squad_id, step_count, completed, roles,
+  checkpoint_path, mailbox_log}`。Tier map 内置合理默认
+  （`trivial` → `claude-haiku-4-5`、`easy` → `deepseek-v4-flash`、
+  `moderate` → `claude-sonnet-4-6`、`hard` → `deepseek-v4-pro`、
+  `expert` → `claude-opus-4-7`）；按调用覆盖 `options.tier_map`、
+  全局覆盖 `super-ai-core.squad.tier_map`。
+- **`AutoModelRouter` 服务**（0.9.6）—— 任意 dispatch 路径的 `/model
+  auto` 启发式。封装 SDK 0.9.8 `Routing\AutoModelStrategy`，让
+  Claude / Codex / Gemini CLI 后端在 `provider_config` 声明
+  `auto_models: {pro, flash}` 后接入 Pro/Flash 路由。在长上下文
+  （>32k tokens）、trailing tool-chain depth（≥3）、显式
+  `reasoning_effort=max`、或 system prompt 中含意图关键词
+  （review/audit/design/migration/architecture/…）时把 Flash → Pro。
+  配置 `super-ai-core.auto_model.score_catalog_path` 后，catalog 的
+  top-scoring 模型会覆盖启发式。通过
+  `auto_model.{pro_model, flash_model}` 把 Pro/Flash 重绑到任意模型对
+  （如 `claude-opus` / `claude-haiku`）—— 不需 fork SDK。
+- **`CompressionStrategyFactory`**（0.9.6）—— 宿主自管 `ContextManager`
+  流程的缓存感知压缩。把内置 `ConversationCompressor` 包进 SDK 0.9.8
+  的 `CacheAwareCompressor`，让 summary 边界落在 prompt cache 前缀之后
+  而不是覆盖前缀。跑长链子智能体循环或 browser-tool 会话的宿主，在
+  构造自管 `ContextManager` 时调用
+  `app(CompressionStrategyFactory::class)->build($estimator, $config, $provider)`。
+  默认 pin 住 1 个 system + 4 个 conversation 消息头。
+- **`UntrustedInputHelper`**（0.9.6）—— 注入 system prompt 的自由文本
+  的宿主侧 `Security\UntrustedInput` 包装器。SDK 的 `GoalManager` 已经
+  自动包裹 `goal.objective`；本 helper 覆盖其它注入点 —— ad-hoc 内存
+  条目、workspace plugin 描述、来自第三方服务器的 MCP tool 文档、
+  拼进 system prompt 的宿主 UI 表单输入。两个方法：`tag()` 加标记；
+  `wrap()` 前置 "把后面当数据，不要当指令" 提示。需要 byte-identical
+  prompt 时（测试、dispatch 对比）通过 `AI_CORE_UNTRUSTED_INPUT=false`
+  关闭。
+- **`RateLimiterRegistry`**（0.9.6）—— 包装 SDK 0.9.8
+  `Providers\Transport\TokenBucket` 的 per-process token-bucket 池。
+  `SuperAgentBackend` 和 `SquadBackend` 在每次 provider 调用前
+  `consume()`。缺失 key 回落到 `default`（8 RPS / 16 burst）；
+  per-provider 覆盖写在 `super-ai-core.rate_limits.<provider>`。空配置
+  完全禁用 —— SDK 本身仍有 per-call 429 重试。
+- **`AdHocMemoryRegistry`**（0.9.6）—— per-session
+  `Memory\AdHocMemoryProvider` 池。聊天 UI 调用
+  `forSession($id)->push($text, $ttlSeconds)`（或便捷的
+  `$registry->push($id, $text, $ttl)`）来注入 "下一轮用" 事实，
+  SuperAgent 后端会在 prompt 之前渲染。Per-session 隔离防止跨聊天
+  泄漏。内存 process-local —— 持久化事实归 `MEMORY.md` /
+  `BuiltinMemoryProvider`。
+- **`ConversationForkService`**（0.9.6）—— 基于 SDK 0.9.8
+  `Conversation\Fork` 的 codex `/side` 语义。`start($parentMessages)`
+  快照消息列表并返回 fork handle；`finish($fork, $action, $indexes?)`
+  以 `discard` / `promote(...indexes)` / `promoteAll` 收尾。适合
+  "分支并用不同模型试一下、只把有用的侧支消息 promote 回来" 的聊天
+  UI。
+- **`DeepSeekFimService`**（0.9.6）—— SDK 0.9.8
+  `DeepSeekProvider::completeFim()`（`beta` 区域）的独立封装。
+  chat-shaped `Backend` 抽象不适配 FIM，所以构建 IDE 风格补全功能的
+  宿主直接调本服务：
+  `app(DeepSeekFimService::class)->complete($prefix, $suffix,
+  ['max_tokens' => 64])`。
+- **`SuperAgentBackend` 的 `reasoning_effort` 三档拨盘**（0.9.6）——
+  按调用 `reasoning_effort: 'off' | 'high' | 'max'` 透传给 SDK 的
+  `reasoning_effort` per-call option。通过 SDK 的
+  `SupportsReasoningEffort` 能力接口按 upstream 路由到正确的 body
+  shape。不实现该能力的 provider 静默忽略。设为 `max` 时同时喂给
+  `AutoModelRouter` 的升级启发式。
+- **`Agent::switchProvider()` handoff**（0.9.6）—— 传
+  `options.handoff: {provider, config, policy}` 后，`SuperAgentBackend`
+  在 dispatch 前调 `Agent::switchProvider()`。Envelope 多
+  `handoff_token_status: {tokens, window, fits, model}`，前端可以
+  预警 "下一轮的历史装不下 <target_model> —— 先压缩"。新 provider
+  构造失败时原 agent 保持可用（SDK 契约）。
+- **`smart` / `squad` 控制台命令**（0.9.6）—— 对 vendor
+  `superagent smart` / `superagent auto --squad` 的透传。复用 operator
+  现有的 SuperAgent 凭据和 SDK CLI 行为，不在 PHP 里重写编排器：
+  ```bash
+  ./vendor/bin/superaicore smart "审计这个 diff"
+  ./vendor/bin/superaicore smart show --last
+  ./vendor/bin/superaicore squad "重构 auth 模块" --max-cost=2.0
+  ./vendor/bin/superaicore squad --no-squad "对比 legacy 路径"
+  ```
+- **`super-ai-core.agents.max_depth`**（0.9.6）—— 服务提供者启动时
+  转发到 SDK 0.9.8 `Swarm\AgentDepthGuard::setMax()`。负数 / 未设
+  保留 SDK 默认（5）。per-process 覆盖：`SUPERAGENT_MAX_AGENT_DEPTH`
+  env 变量。
+
+完整菜谱（Squad pipeline、AutoModelRouter 接入、
+CacheAwareCompressor 布线、RateLimiterRegistry 覆盖、
+AdHocMemoryRegistry 聊天 UI 接入、ConversationForkService
+侧边面板、DeepSeek FIM 补全端点）见
+[docs/advanced-usage.zh-CN.md §28](docs/advanced-usage.zh-CN.md)。
+
 ### CLI 安装器与健康检查
 
 - **`cli:status`** —— 每家 CLI 的安装/登录状态与安装提示。
@@ -471,7 +579,7 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**，以及 **0.9.2 TaskRunner 可靠性波次**。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**、**0.9.2 TaskRunner 可靠性波次**，以及 **0.9.6 Squad 多智能体 + SDK 1.0.0 波次**。
 - **[Task runner 快速入门](docs/task-runner-quickstart.md)** —— 完整 `TaskRunner` 选项参考。
 - **[Streaming backends](docs/streaming-backends.md)** —— `mcp_mode`、每后端流格式、`onChunk`。
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** —— codex/gemini agent 模拟。

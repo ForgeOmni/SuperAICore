@@ -806,6 +806,131 @@ AI_CORE_TASK_FALLBACK_INHERIT_CONTEXT=true
 [docs/advanced-usage.zh-CN.md §27](docs/advanced-usage.zh-CN.md) 和
 [docs/task-runner-quickstart.md](docs/task-runner-quickstart.md)。
 
+**0.9.5 —— 无迁移；视图渲染修复。** 修复 `/processes` 与 `/usage`
+索引页两处 Blade 属性编码问题。后端、config 和 API 表面均未变动。
+若宿主自行覆盖了 `resources/views/processes/index.blade.php` 或
+`resources/views/usage/index.blade.php`，重新引入覆盖时应改用新的
+`@php($var = …)` + `@json($var)` 块模式 —— 在单引号 HTML 属性内
+内联拼装 side-panel payload，会让某些含引号 / `&` 的截图 URL / metadata
+渲染出错。纯运行时变更。
+
+**0.9.6 —— 无迁移；SDK 约束升至 `^1.0`。** Squad 多智能体后端 +
+六个 SDK 0.9.8 / 1.0.0 配套绑定。每个绑定均为加性且需主动启用 ——
+未开 flag、未传新 option、未从容器解析新服务的宿主，0.9.6 之前的
+行为完全保留。
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan vendor:publish --tag=super-ai-core-config --force   # 可选；用于挑选新的 config 块
+# 0.9.6 无 schema 变更，无需 php artisan migrate
+```
+
+可选 env（全部带安全默认；包不强制设任何一个）：
+
+```dotenv
+# ─── Squad 多智能体（SDK 1.0.0）───
+AI_CORE_SQUAD_ENABLED=true
+AI_CORE_SQUAD_BACKEND_ENABLED=true
+AI_CORE_SQUAD_MAX_COST=0              # 0 表示不设上限
+AI_CORE_SQUAD_CHECKPOINT_DIR=         # 默认: storage/app/squad/
+
+# ─── /model auto 路由（SDK 0.9.8）───
+AI_CORE_AUTO_MODEL=true
+AI_CORE_AUTO_MODEL_PRO=               # null → SDK 默认 (deepseek-v4-pro)
+AI_CORE_AUTO_MODEL_FLASH=             # null → SDK 默认 (deepseek-v4-flash)
+AI_CORE_AUTO_MODEL_LONG_CTX=32000
+AI_CORE_AUTO_MODEL_TOOL_DEPTH=3
+AI_CORE_AUTO_MODEL_SCORE_CATALOG=     # 可选 ScoreCatalog JSON 路径
+
+# ─── 缓存感知压缩（SDK 0.9.8）───
+AI_CORE_COMPRESSION_CACHE_AWARE=true
+AI_CORE_COMPRESSION_PIN_HEAD=4
+AI_CORE_COMPRESSION_PIN_SYSTEM=true
+
+# ─── 每 provider token-bucket 限流（SDK 0.9.8）───
+AI_CORE_RL_DEFAULT_RATE=8.0
+AI_CORE_RL_DEFAULT_BURST=16
+
+# ─── 不可信输入包裹（SDK 0.9.8）───
+AI_CORE_UNTRUSTED_INPUT=true
+
+# ─── 子智能体深度上限（SDK 0.9.8）───
+AI_CORE_AGENT_MAX_DEPTH=0             # 0 → SDK 默认 (5)
+
+# ─── DeepSeek FIM（SDK 0.9.8）───
+DEEPSEEK_API_KEY=
+```
+
+升级时值得回顾的八件事：
+
+1. **Squad 由 SDK 可用性决定是否注册。** `BackendRegistry` 仅在
+   `super-ai-core.backends.squad.enabled` 开启且 SDK 1.0.0 类
+   (`PeerOrchestrator`, `TaskDecomposer`, `ModelTierMap`,
+   `SquadCheckpointStore`) 存在时才注册 `SquadBackend`。未升级到
+   SDK 1.0.0 的宿主行为完全不变 —— Squad 自报不可用，Dispatcher
+   回落到其余九个 adapter。
+
+2. **Squad 流水线按步骤持久化 checkpoint。** 中途失败时
+   checkpoint 留在磁盘；重新 dispatch 时传入同样的 `squad_id` 和
+   `checkpoint_dir` 即可恢复。默认 `checkpoint_dir` 落在
+   `storage/app/squad/`，Laravel 的 storage 权限已经覆盖。按调用
+   覆盖：`options.checkpoint_dir`；全局覆盖：
+   `AI_CORE_SQUAD_CHECKPOINT_DIR`。
+
+3. **`AutoModelRouter` 是宿主服务，而非后端依赖。** 解析
+   `app(\SuperAICore\Services\AutoModelRouter::class)` 并调用
+   `select($messages, $systemPrompt, $options)` 返回本次 dispatch
+   应使用的 model id。在你自定义的 dispatcher / planner 中接入，
+   即可享受 SDK 的启发式而无需绑定 SuperAgent 后端。不解析该服务
+   的宿主无任何变化。
+
+4. **`CompressionStrategyFactory` 仅对自管 `ContextManager` 的宿主
+   有意义。** 默认 `SuperAgentBackend` 流程是单次（`max_turns=1`），
+   根本不构造 `ContextManager`。跑长链子智能体循环或 browser 工具
+   会话的宿主，在自管 context manager 时调用
+   `app(\SuperAICore\Services\CompressionStrategyFactory::class)->build(…)`；
+   工厂返回包了 `CacheAwareCompressor` 的 `ConversationCompressor`，
+   summary 边界落在 cache 前缀之后。
+
+5. **`UntrustedInputHelper` 覆盖 SDK 未自动包裹的自由文本。** SDK
+   0.9.8 的 `Goals\GoalManager` 已通过 `continuation.md` 模板自动
+   包裹 `goal.objective` —— 不要在那里重复包裹。本 helper 用于
+   ad-hoc memory 条目、workspace plugin 描述、来自第三方服务器的
+   MCP 工具文档，以及任何拼进 system prompt 的宿主 UI 表单输入。
+   测试 / dispatch 字节对比时通过 `AI_CORE_UNTRUSTED_INPUT=false`
+   关闭。
+
+6. **限流器是 per-process 的。** 分布式 swarm（每 pod 一个 agent）
+   需要共享限流器 —— 干净的路径是给 provider HTTP client 挂
+   Redis-backed Guzzle 中间件；本 registry 保持简单，与之不冲突。
+   默认匹配 SDK 的 per-call 429 重试预算（8 RPS / 16 burst）；按
+   provider 覆盖写在 `super-ai-core.rate_limits.<provider>`。
+
+7. **`reasoning_effort` 是 `Dispatcher::dispatch()` 的按调用 option。**
+   三档（`off` / `high` / `max`）。按 upstream 路由到正确的 body
+   shape（多数 provider 用顶层 `reasoning_effort`，NVIDIA NIM 走
+   `chat_template_kwargs` 等）。不实现 `SupportsReasoningEffort`
+   的 provider 静默忽略。设为 `max` 时还会喂给 `AutoModelRouter`
+   的升级启发式。
+
+8. **`smart` 和 `squad` 控制台命令。** 都是对 vendor `superagent`
+   binary（`vendor/forgeomni/superagent/bin/superagent`）的透传。
+   复用 operator 现有的 SuperAgent 凭据和 SDK CLI 行为，而不是
+   在 PHP 里重写编排：
+   ```bash
+   ./vendor/bin/superaicore smart "审计这个 diff"
+   ./vendor/bin/superaicore smart show --last
+   ./vendor/bin/superaicore squad "重构 auth 模块" --max-cost=2.0
+   ./vendor/bin/superaicore squad --no-squad "对比 legacy 路径"
+   ```
+   SDK 安装在 `vendor/` 之外时，传
+   `--binary=/abs/path/to/superagent`。
+
+完整菜谱（Squad 流水线、AutoModelRouter 接入、CacheAwareCompressor
+布线、RateLimiterRegistry 覆盖、AdHocMemoryRegistry 聊天 UI 接入、
+ConversationForkService 侧边面板、DeepSeek FIM 补全端点）见
+[docs/advanced-usage.zh-CN.md §28](docs/advanced-usage.zh-CN.md)。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

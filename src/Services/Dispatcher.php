@@ -246,6 +246,17 @@ class Dispatcher
                     'rate_limit'           => $rateLimitMeta ?: null,
                     'cache_warning'        => $coldWarning,
                     'usage_source'         => $usageSource,
+                    // Cross-mode breadcrumb (v1.0.1+). Carries the
+                    // mode_stack the result traversed (e.g. ['squad',
+                    // 'smart', 'auto']) so /processes + /usage can
+                    // render a "squad → smart → auto" badge. Pulled
+                    // off the dispatch envelope when present, falls
+                    // back to options metadata for caller-supplied
+                    // overrides.
+                    'mode_stack'           => $options['metadata']['mode_stack']
+                                                 ?? ($result['mode_stack'] ?? null),
+                    'has_cross_mode'       => $options['metadata']['has_cross_mode']
+                                                 ?? ($result['has_cross_mode'] ?? null),
                 ]) ?: null,
                 'idempotency_key' => $idempotencyKey,
             ]);

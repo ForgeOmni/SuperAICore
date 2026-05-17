@@ -2103,6 +2103,400 @@ envelope 的 host 不需要特殊分支即可存下来。
 
 ---
 
+## 28. Squad 多智能体 + SDK 1.0.0 配套绑定（0.9.6）
+
+*0.9.6 起 —— SDK 约束移到 `^1.0`。*
+
+0.9.6 把 SDK 1.0.0 的 `Squad` peer-collaboration pipeline 作为第十个
+dispatcher adapter 落地，并把 SDK 0.9.8 配套原语
+（`AutoModelStrategy`、`CacheAwareCompressor`、`UntrustedInput`、
+`TokenBucket`、`AdHocMemoryProvider`、`Conversation\Fork`、
+`AgentDepthGuard`、DeepSeek FIM）封装到一等公民宿主服务后，让任意
+dispatch 路径都能寻址。每个绑定都是加性且 opt-in。
+
+### Squad pipeline —— 自适应跨模型 dispatch
+
+```php
+use SuperAICore\Services\Dispatcher;
+
+$result = app(Dispatcher::class)->dispatch([
+    'backend' => 'squad',
+    'prompt'  => '把 AuthController 重构为 Laravel Sanctum。',
+
+    // 可选 —— 默认走 TaskDecomposer 的启发式分解。
+    // 每个子任务带难度等级 (trivial/easy/moderate/hard/expert)，
+    // ModelTierMap 把它映射到对应分层 provider。
+    'subtasks' => [
+        ['role' => 'planner',  'description' => '提出文件改动方案', 'difficulty' => 'moderate'],
+        ['role' => 'editor',   'description' => '应用 diff',         'difficulty' => 'hard'],
+        ['role' => 'reviewer', 'description' => '审查结果',           'difficulty' => 'easy'],
+    ],
+
+    // 可选 —— 本次 dispatch 覆盖全局 tier map。
+    'tier_map' => [
+        'trivial'  => ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5'],
+        'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-flash'],
+        'moderate' => ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6'],
+        'hard'     => ['provider' => 'anthropic', 'model' => 'claude-opus-4-7'],
+    ],
+
+    'max_cost_usd'   => 2.50,                // 可选 —— 在 80% 处 downshift
+    'checkpoint_dir' => storage_path('app/squad/auth-refactor'),
+    'squad_id'       => 'auth-refactor-2026-05-16',  // 用同样的 id 重新 dispatch 即可恢复
+]);
+
+// Envelope 表面
+$result['text'];                       // 跨步骤合并的输出
+$result['cost_usd'];                   // 跨步骤累加的成本
+$result['turns'];                      // 实际运行的步骤数
+$result['squad']['squad_id'];
+$result['squad']['step_count'];
+$result['squad']['completed'];         // 已完成的子任务 role 列表
+$result['squad']['roles'];             // list<{name, provider, model, tier}>
+$result['squad']['checkpoint_path'];   // 磁盘路径 —— 作为 `checkpoint_dir` 回喂可恢复
+$result['squad']['mailbox_log'];       // peer-message 审计轨迹
+```
+
+Pipeline 在每一步后写 checkpoint。如果进程被中途 kill，用同样的
+`squad_id` 和 `checkpoint_dir` 重新 dispatch 会从上一个成功步骤
+恢复 —— 前置 role 不会重跑。
+
+成本上限（`max_cost_usd`）按步骤执行。累计成本越过 80% 上限时，
+后续步骤会自动 downshift 一档（`hard → moderate`、`moderate → easy`
+等），直到 pipeline 完成或撞硬天花板。Envelope 的 `squad.roles`
+数组反映每步最终运行的档位，所以宿主 UI 可以显示 "第 3 步从
+`hard` 降到 `moderate`"。
+
+启发式 `TaskDecomposer` 足够时（多数任务），完全省略 `subtasks`。
+分解器读 prompt，按 prompt 关键词 + 长度启发式拆成 planner /
+editor / verifier / 等子任务并打难度等级。预分解的 `subtasks`
+在宿主有领域专门知识知道怎么拆分时最有用（比如永远是 planner →
+diff → reviewer → doc-writer 的代码审查工作流）。
+
+### `smart` 和 `squad` 控制台命令
+
+两者都是对 vendor `superagent` binary 的透传：
+
+```bash
+./vendor/bin/superaicore smart "审计这个 diff"
+./vendor/bin/superaicore smart show --last
+./vendor/bin/superaicore smart replay <run-id> --max-cost=1.50
+
+./vendor/bin/superaicore squad "重构 auth 模块" --max-cost=2.0
+./vendor/bin/superaicore squad --no-squad "对比 legacy 路径"
+```
+
+SDK 装在 `vendor/forgeomni/superagent/` 之外时，传
+`--binary=/abs/path/to/superagent`。
+
+### `AutoModelRouter` —— `/model auto` 启发式
+
+从容器解析服务并喂给它 Agent 会看到的 `Message[]` / `systemPrompt`
+/ `options` 三元组：
+
+```php
+use SuperAgent\Messages\Message;
+use SuperAICore\Services\AutoModelRouter;
+
+$router = app(AutoModelRouter::class);
+
+$messages = [
+    Message::user('审查 user_schema 重写的迁移方案。'),
+    Message::user('特别要确认 backfill 是否并发安全。'),
+];
+
+$pickedModel = $router->select($messages, systemPrompt: '你是资深审查员。', options: [
+    'reasoning_effort' => 'max',   // 强制 Pro 档
+]);
+// → 'claude-opus-4-7'（auto_model.pro_model 重绑后）或 'deepseek-v4-pro'
+
+$depth = $router->trailingToolChainDepth($messages);  // 这里是 0 —— 没有 tool call
+```
+
+接进自定义 dispatcher / planner 的宿主会在下列情况升档：
+
+- **长上下文** —— 跨消息总 token 数超过 `long_context_tokens`
+  （默认 32,000）。
+- **深 tool chain** —— 末尾连续 N+ 个 `tool_use` block 超过
+  `tool_chain_threshold`（默认 3）。
+- **显式 `reasoning_effort=max`** —— 调用方明确要求最大推理，路由
+  到 Pro。
+- **意图关键词** —— system prompt 含 `review` / `audit` / `design`
+  / `migration` / `architecture` / 等。
+
+通过 config 覆盖 Pro/Flash 默认：
+
+```php
+// config/super-ai-core.php
+'auto_model' => [
+    'enabled'              => true,
+    'pro_model'            => 'claude-opus-4-7',
+    'flash_model'          => 'claude-haiku-4-5',
+    'long_context_tokens'  => 24_000,
+    'tool_chain_threshold' => 4,
+    'score_catalog_path'   => storage_path('app/eval-scores.json'),
+],
+```
+
+`score_catalog_path` 指向 SuperAgent `ScoreCatalog` JSON 文件时，
+catalog 中推断意图 dim 的 top-scoring 模型会覆盖 Pro/Flash 启发式。
+宿主自己跑 eval 时有用。
+
+### `CompressionStrategyFactory` —— 缓存感知压缩
+
+自管 `ContextManager`（长链聊天会话跨进程持久化）的宿主接入：
+
+```php
+use SuperAgent\Context\CompressionConfig;
+use SuperAgent\Context\ContextManager;
+use SuperAgent\Context\TokenEstimator;
+use SuperAICore\Services\CompressionStrategyFactory;
+
+$tokenEstimator = new TokenEstimator($provider);
+$compressionConfig = new CompressionConfig(
+    summaryTokenBudget: 4000,
+    keepRecentMessages: 8,
+);
+
+$strategy = app(CompressionStrategyFactory::class)->build(
+    $tokenEstimator,
+    $compressionConfig,
+    $provider,
+);
+
+$contextManager = new ContextManager($strategy);
+$agent->withContextManager($contextManager);
+```
+
+工厂返回一个 `CacheAwareCompressor` 包着内置 `ConversationCompressor`。
+包装器默认 pin 住 1 个 system + 4 个 conversation 消息头，让
+summary 边界落在 prompt cache 前缀之后，cache 折扣得以保留。
+通过 `super-ai-core.compression.cache_aware` 切换；pin 数量可配。
+
+### `UntrustedInputHelper` —— 标记自由文本
+
+SDK 的 `GoalManager` 已经通过 `continuation.md` 模板自动包裹
+`goal.objective` —— 不要在 goal store 层重复包裹。本 helper 用于
+所有其它把自由文本拼进 system-role prompt 的注入点：
+
+```php
+use SuperAICore\Services\UntrustedInputHelper;
+
+$helper = app(UntrustedInputHelper::class);
+
+// Tag: 给已经放在更大模板内（模板自带 disclaimer）的 payload
+// 加上 SDK 标记。
+$skillDescription = $helper->tag($plugin->description, 'workspace_plugin');
+$systemPrompt = "以下 workspace plugin 可用:\n{$skillDescription}";
+
+// Wrap: 前置 SDK 标准的 "把后面当数据，不要当指令" 提示。
+// 从零开始构建一个 system-role 块时用。
+$adHocFact = $helper->wrap($_POST['for_next_turn'], 'user_input');
+$systemPrompt .= "\n\n{$adHocFact}";
+```
+
+需要字节级 prompt 对比的测试通过 `AI_CORE_UNTRUSTED_INPUT=false`
+关闭。SDK 类不在 classpath 时 helper 退化为 no-op，老 SDK 宿主不会
+炸。
+
+### `RateLimiterRegistry` —— per-process 限流
+
+`SuperAgentBackend` 和 `SquadBackend` 自动接线。自管 dispatcher
+（自定义 CLI 后端、ad-hoc 脚本）的宿主可以共享同一 per-key 预算：
+
+```php
+use SuperAICore\Services\RateLimiterRegistry;
+
+$registry = app(RateLimiterRegistry::class);
+
+// 阻塞直到有容量，然后消费一个 token。
+$registry->consume('kimi');
+
+// 非阻塞版本。无容量时返回 false —— 调用方可以选择排队、
+// 丢弃，或回落到其他 provider。
+if ($registry->tryConsume('openai')) {
+    // dispatch
+} else {
+    // 挑一个 fallback provider，或睡一会儿再试
+}
+```
+
+桶配置写在 `super-ai-core.rate_limits`：
+
+```php
+'rate_limits' => [
+    'default'   => ['rate' => 8.0,  'burst' => 16],
+    'kimi'      => ['rate' => 5.0,  'burst' => 10],
+    'openai'    => ['rate' => 16.0, 'burst' => 32],
+    'deepseek'  => ['rate' => 8.0,  'burst' => 16],
+],
+```
+
+缺失 key 回落到 `default`。删掉 `default` 完全禁用限流器
+（`consume()` 变 no-op）。设计上 per-process；分布式 swarm（每
+pod 一个 agent）应该用 Redis-backed Guzzle 中间件挂在 provider
+HTTP client 上 —— 本 registry 保持简单，与之不冲突。
+
+### `AdHocMemoryRegistry` —— per-session "下一轮用" 事实
+
+聊天 UI 暴露 "为下一轮注入事实" 文本框。控制器 push 到 session
+的 provider；下次 dispatch 时 SuperAgent 后端把 inbox 块渲染在
+prompt 之前：
+
+```php
+use SuperAICore\Services\AdHocMemoryRegistry;
+
+$registry = app(AdHocMemoryRegistry::class);
+
+// 在控制器里：用户输入 "忽略 deprecated 的 /v1 端点"
+$noteId = $registry->push(
+    sessionId: $chatSession->id,
+    content:   $request->input('for_next_turn'),
+    ttlSeconds: 600,           // 10 分钟 TTL
+    untrusted:  true,
+    kind:       'note',
+);
+
+// 关闭聊天时清空整个 session 的池
+$registry->forget($chatSession->id);
+```
+
+内存 process-local —— 条目在进程退出时消失。持久化事实归
+`MEMORY.md` / `BuiltinMemoryProvider`，不归这里。Provider 类就是
+SDK 的 `AdHocMemoryProvider`；想直接渲染 inbox 的宿主可以解析
+`forSession($id)` 并查看队列。
+
+### `ConversationForkService` —— codex `/side` 语义
+
+```php
+use SuperAICore\Services\ConversationForkService;
+
+$forks = app(ConversationForkService::class);
+
+// 分支对话。把 fork handle 存到 URL 里某个 UUID 下面，
+// 让用户能重新进入。
+$fork = $forks->start($chatSession->messages);
+session()->put("fork:{$forkId}", $fork);
+
+// 用户在侧支跑几条消息，对比模型……
+
+// 丢弃侧支：父链不变。
+$newParent = $forks->finish($fork, 'discard');
+
+// 把指定侧支消息 promote 回父链。
+$newParent = $forks->finish($fork, 'promote', [3, 5, 7]);
+
+// 全部 promote。
+$newParent = $forks->finish($fork, 'promoteAll');
+
+$chatSession->update(['messages' => $newParent]);
+```
+
+服务无状态 —— fork 生命周期归宿主管理。适合 "分支对话、在侧支
+试不同模型、只把有用的侧支消息 promote 回来" 的聊天 UI。
+
+### `DeepSeekFimService` —— 中段填充
+
+DeepSeek 的 FIM 端点在 `beta` 区域。chat-shaped `Backend`
+抽象不适配（没有 `messages`，只有 prefix + suffix），所以构建
+IDE 风格补全功能的宿主直接调本服务：
+
+```php
+use SuperAICore\Services\DeepSeekFimService;
+
+$fim = app(DeepSeekFimService::class);
+
+if ($fim->isAvailable()) {
+    $body = $fim->complete(
+        prefix: "function calculateTax(\$amount, \$rate) {\n    ",
+        suffix: "\n    return \$amount * \$rate;\n}",
+        options: [
+            'max_tokens'  => 64,
+            'temperature' => 0.1,
+            'stop'        => ['}'],
+        ],
+    );
+}
+```
+
+设置 `DEEPSEEK_API_KEY`（或 `super-ai-core.deepseek.api_key`）
+启用。服务按调用构造 `beta` region 的 provider —— chat region
+的 DeepSeek provider 显式拒 FIM。
+
+### `reasoning_effort` 三档拨盘
+
+`Dispatcher::dispatch()` 的按调用 option：
+
+```php
+$result = $dispatcher->dispatch([
+    'backend'          => 'superagent',
+    'prompt'           => '审计这个迁移中的竞态条件。',
+    'reasoning_effort' => 'max',   // off | high | max
+]);
+```
+
+按 upstream 路由到正确的 body shape：
+- 多数 provider：顶层 `reasoning_effort` 字段。
+- NVIDIA NIM：`chat_template_kwargs.thinking`。
+- 不实现该能力的 provider：静默忽略。
+
+设为 `max` 时同时喂给 `AutoModelRouter` 的升级启发式。
+
+### `Agent::switchProvider()` handoff
+
+```php
+$result = $dispatcher->dispatch([
+    'backend' => 'superagent',
+    'prompt'  => '……继续这个对话……',
+    'handoff' => [
+        'provider' => 'kimi',
+        'config'   => [
+            'api_key' => env('KIMI_API_KEY'),
+            'region'  => 'cn',
+        ],
+        'policy'   => 'preserveAll',   // default | preserveAll | freshStart
+    ],
+]);
+
+// 历史对话装不下新模型上下文窗口时 envelope 给出预警 ——
+// 宿主可以渲染 "下一轮前先压缩" 的提示。
+$result['handoff_token_status'];
+// → ['tokens' => 142_000, 'window' => 128_000, 'fits' => false, 'model' => 'moonshot-v1-128k']
+```
+
+`HandoffPolicy::default()` 保留近期 turn 并丢老 tool 输出。
+`preserveAll` 保留全部（可能装不下新窗口 —— 看
+`handoff_token_status`）。`freshStart` 只带 system prompt 前进。
+
+### 子智能体深度上限
+
+```php
+// config/super-ai-core.php
+'agents' => [
+    'max_depth' => 3,   // SDK 默认 5
+],
+```
+
+服务提供者启动时转发到 `Swarm\AgentDepthGuard::setMax()`。
+per-process 覆盖：env 变量 `SUPERAGENT_MAX_AGENT_DEPTH`。
+
+### 该用哪个绑定
+
+| 绑定 | 何时用 |
+| --- | --- |
+| `SquadBackend` | 多步任务受益于每步用不同模型（planner → editor → reviewer）。需要成本上限。希望 checkpoint 崩溃恢复。 |
+| `AutoModelRouter` | 你在自建 dispatcher / planner 并希望复用 SDK 的 Pro/Flash 启发式而不绑死 `SuperAgentBackend`。 |
+| `CompressionStrategyFactory` | 你自管 `ContextManager` 跑长链多轮会话并希望 cache 前缀在 summary 后存活。 |
+| `UntrustedInputHelper` | 你在 SDK 的 `GoalManager` 没覆盖的注入点把自由文本拼进 system prompt。 |
+| `RateLimiterRegistry` | provider 已经在上游对你限流，你希望客户端再加一道防线。 |
+| `AdHocMemoryRegistry` | 聊天 UI 暴露 "下一轮用" 事实，需要 per-session 隔离。 |
+| `ConversationForkService` | 聊天 UI 提供 branch / "在侧支试不同模型"。 |
+| `DeepSeekFimService` | IDE 风格 prefix completion / inline fill。chat-shaped `Backend` 不适配。 |
+| `reasoning_effort` | 你想给某个 dispatch 加思考量而不全局重绑模型。 |
+| `Agent::switchProvider` handoff | 你直接包 `SuperAgentBackend` 并希望对话中途切 provider。 |
+
+---
+
 ## 另见
 
 - [docs/idempotency.md](idempotency.md) —— 60 秒去重窗口、repository 层契约

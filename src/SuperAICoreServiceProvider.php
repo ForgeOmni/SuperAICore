@@ -230,6 +230,89 @@ class SuperAICoreServiceProvider extends ServiceProvider
             );
         });
 
+        // ── Cross-layer cooperative modes ────────────────────────────
+        // CrossLayerDispatcher is the single seam every CLI-layer mode
+        // routes through. Bound as a singleton so `setModes()` wiring
+        // sticks; the three modes are bound lazily so cyclic ctor deps
+        // are avoided (mode → dispatcher → mode is fine because
+        // `setModes()` injects after construction).
+        $this->app->singleton(\SuperAICore\Modes\CrossLayerDispatcher::class, function ($app) {
+            return new \SuperAICore\Modes\CrossLayerDispatcher(
+                coreDispatcher: $app->make(Dispatcher::class),
+                logger:         $app->bound('log') ? $app->make('log') : null,
+            );
+        });
+
+        $this->app->singleton(\SuperAICore\Modes\CliAutoMode::class, function ($app) {
+            return new \SuperAICore\Modes\CliAutoMode(
+                dispatcher: $app->make(\SuperAICore\Modes\CrossLayerDispatcher::class),
+                logger:     $app->bound('log') ? $app->make('log') : null,
+                config:     (array) config('super-ai-core.cli_auto', []),
+            );
+        });
+        $this->app->singleton(\SuperAICore\Modes\CliSmartOrchestrator::class, function ($app) {
+            return new \SuperAICore\Modes\CliSmartOrchestrator(
+                dispatcher: $app->make(\SuperAICore\Modes\CrossLayerDispatcher::class),
+                logger:     $app->bound('log') ? $app->make('log') : null,
+                config:     (array) config('super-ai-core.cli_smart', []),
+            );
+        });
+        $this->app->singleton(\SuperAICore\Modes\CliSquadOrchestrator::class, function ($app) {
+            return new \SuperAICore\Modes\CliSquadOrchestrator(
+                dispatcher: $app->make(\SuperAICore\Modes\CrossLayerDispatcher::class),
+                logger:     $app->bound('log') ? $app->make('log') : null,
+                config:     (array) config('super-ai-core.cli_squad', []),
+            );
+        });
+
+        // Squad TeamRegistry — single source of truth for YAML team
+        // definitions. The bundled team library lives in SuperAgent
+        // SDK; hosts can layer additional directories via
+        // `super-ai-core.squad_team_dirs` config. Same 3-tier pattern
+        // as `ModelCatalog` (bundled / directories / runtime).
+        $this->app->singleton(\SuperAgent\Squad\TeamRegistry::class, function ($app) {
+            $registry = new \SuperAgent\Squad\TeamRegistry();
+            foreach ((array) config('super-ai-core.squad_team_dirs', []) as $dir) {
+                if (is_string($dir) && $dir !== '') {
+                    $registry->addDirectory($dir);
+                }
+            }
+            return $registry;
+        });
+
+        // CliModeRouter — host implementation of SDK's ModeRouter
+        // contract. Routes mode names through the three CLI
+        // orchestrators AND leaf provider tags (`cli:*` / `sdk:*`)
+        // through the cross-layer dispatcher. Registered with the
+        // SDK via SquadDispatcherBridge so any SDK code path that
+        // recurses cross-mode picks this up automatically.
+        $this->app->singleton(\SuperAICore\Modes\CliModeRouter::class, function ($app) {
+            $router = new \SuperAICore\Modes\CliModeRouter(
+                crossLayer:   $app->make(\SuperAICore\Modes\CrossLayerDispatcher::class),
+                teamRegistry: $app->make(\SuperAgent\Squad\TeamRegistry::class),
+                logger:       $app->bound('log') ? $app->make('log') : new \Psr\Log\NullLogger(),
+            );
+            $router->register($app->make(\SuperAICore\Modes\CliAutoMode::class));
+            $router->register($app->make(\SuperAICore\Modes\CliSmartOrchestrator::class));
+            $router->register($app->make(\SuperAICore\Modes\CliSquadOrchestrator::class));
+            return $router;
+        });
+
+        // Reverse bridge — SDK exposes two opt-in SPIs (since 1.0+):
+        //   - SquadDispatcherRegistry: default squad dispatcher
+        //   - ModeRouterRegistry: cross-mode router
+        // Installing both lets SDK-internal cross-mode recursion
+        // reach our CLI three-mode set, and SDK-internal squad runs
+        // route per-step dispatches through CLI backends. Loose
+        // coupling: SuperAgent doesn't know SuperAICore exists; we
+        // just implement its SPIs when the operator opts in.
+        $this->app->singleton(\SuperAICore\Modes\SquadDispatcherBridge::class, function ($app) {
+            return new \SuperAICore\Modes\SquadDispatcherBridge(
+                dispatcher: $app->make(\SuperAICore\Modes\CrossLayerDispatcher::class),
+                modeRouter: $app->make(\SuperAICore\Modes\CliModeRouter::class),
+            );
+        });
+
         // Workspace-shared plugin registry. Reads/writes
         // `<base_path>/.superaicore/workspace-plugins.json` so a team
         // can check the manifest into the repo and onboard new hires
@@ -245,6 +328,30 @@ class SuperAICoreServiceProvider extends ServiceProvider
     {
         $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
         $this->loadTranslationsFrom(__DIR__ . '/../resources/lang', 'super-ai-core');
+
+        // Cross-layer mode wiring — after register() so DI is settled.
+        // setModes() lets the dispatcher recurse on `auto` / `smart` /
+        // `squad` provider tags without each mode having to know about
+        // the other two at construction time.
+        $this->app->resolving(\SuperAICore\Modes\CrossLayerDispatcher::class, function ($dispatcher, $app) {
+            $dispatcher->setModes(
+                $app->make(\SuperAICore\Modes\CliAutoMode::class),
+                $app->make(\SuperAICore\Modes\CliSmartOrchestrator::class),
+                $app->make(\SuperAICore\Modes\CliSquadOrchestrator::class),
+            );
+        });
+
+        // Reverse bridge install — defaults ON, gated by config so an
+        // operator can opt out without rebuilding the container.
+        if ((bool) config('super-ai-core.modes.bridge_sdk_squad', true)) {
+            try {
+                $this->app->make(\SuperAICore\Modes\SquadDispatcherBridge::class)->install();
+            } catch (\Throwable) {
+                // Container resolution failure (early boot, missing SDK
+                // class) — silent degrade is correct here; the bridge
+                // is purely additive.
+            }
+        }
 
         // P2-9 — Apply `super-ai-core.agents.max_depth` to SDK's static
         // AgentDepthGuard so every sub-agent spawn under this host honors

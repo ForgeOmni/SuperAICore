@@ -186,6 +186,140 @@ sont `AI_CORE_TASK_FALLBACK_AUTO`, `AI_CORE_TASK_FALLBACK_CHAIN`,
 [docs/advanced-usage.fr.md §27](docs/advanced-usage.fr.md) et
 [docs/task-runner-quickstart.md](docs/task-runner-quickstart.md).
 
+### Vague Squad multi-agent + SDK 1.0.0 (0.9.6)
+
+La contrainte SDK passe à `^1.0`. SuperAICore 0.9.6 livre le pipeline
+de peer-collaboration `Squad` du SDK 1.0.0 comme dixième adaptateur
+Dispatcher et enveloppe les primitives compagnons SDK 0.9.8
+(`AutoModelStrategy`, `CacheAwareCompressor`, `UntrustedInput`,
+`TokenBucket`, `AdHocMemoryProvider`, `Conversation\Fork`,
+`AgentDepthGuard`, DeepSeek FIM) derrière des services hôtes
+first-class adressables depuis n'importe quel chemin de dispatch.
+Chaque binding est additif et opt-in — le comportement pré-0.9.6 est
+préservé tant que vous n'activez pas un flag, ne passez pas une
+nouvelle option ou ne résolvez pas un nouveau service depuis le
+container. Aucune migration.
+
+- **`SquadBackend` — pipeline cross-modèle adaptatif SDK 1.0.0**
+  (0.9.6) — enregistré comme dixième adaptateur Dispatcher quand
+  `super-ai-core.squad.enabled=true` et que les classes SDK 1.0.0
+  sont sur le classpath. Pilote un pipeline heuristiquement décomposé
+  via `Squad\TaskDecomposer` + `Squad\PeerOrchestrator`, avec un
+  modèle par sous-tâche (mappé par `Squad\ModelTierMap`), des
+  écritures `SquadCheckpointStore` par étape, du messaging peer-à-peer
+  via le `PeerMailbox` du SDK et un plafond de coût optionnel avec
+  downshift automatique à 80% du budget. Les échecs en cours
+  laissent le checkpoint sur disque ; reprenez en redispatchant avec
+  le même `squad_id` et `checkpoint_dir`. L'enveloppe porte
+  `squad: {squad_id, step_count, completed, roles, checkpoint_path,
+  mailbox_log}`. Le tier map est livré avec des defaults sensés
+  (`trivial` → `claude-haiku-4-5`, `easy` → `deepseek-v4-flash`,
+  `moderate` → `claude-sonnet-4-6`, `hard` → `deepseek-v4-pro`,
+  `expert` → `claude-opus-4-7`) ; override par appel via
+  `options.tier_map` ou globalement via
+  `super-ai-core.squad.tier_map`.
+- **Service `AutoModelRouter`** (0.9.6) — heuristique `/model auto`
+  pour tout chemin de dispatch. Enveloppe SDK 0.9.8
+  `Routing\AutoModelStrategy` pour que les backends CLI Claude /
+  Codex / Gemini puissent opter pour le routage Pro/Flash dès que
+  leur `provider_config` déclare `auto_models: {pro, flash}`.
+  Escalade Flash → Pro sur long contexte (>32k tokens), profondeur
+  de tool chain trainante (≥3), `reasoning_effort=max` explicite ou
+  mots-clés d'intention dans le system prompt
+  (review/audit/design/migration/architecture/…). Quand
+  `super-ai-core.auto_model.score_catalog_path` est câblé, le modèle
+  top-scoré du catalogue l'emporte sur l'heuristique. Re-mappez
+  Pro/Flash à n'importe quelle paire (e.g. `claude-opus` /
+  `claude-haiku`) via `auto_model.{pro_model, flash_model}` — sans
+  forker le SDK.
+- **`CompressionStrategyFactory`** (0.9.6) — compaction cache-aware
+  pour les hôtes qui pilotent leur propre `ContextManager`. Enveloppe
+  le `ConversationCompressor` standard dans le
+  `CacheAwareCompressor` SDK 0.9.8 pour que les frontières de summary
+  atterrissent APRÈS le préfixe de prompt cache au lieu de le
+  clobber. Les hôtes qui font tourner des longues sessions multi-tour
+  (boucles sous-agent, sessions browser-tool, refactos multi-étapes)
+  appellent
+  `app(CompressionStrategyFactory::class)->build($estimator, $config, $provider)`
+  en construisant leur propre `ContextManager`. Pin 1 message system
+  + 4 messages de conversation par défaut.
+- **`UntrustedInputHelper`** (0.9.6) — wrapper hôte
+  `Security\UntrustedInput` pour le texte libre injecté dans les
+  system prompts. Le `GoalManager` du SDK enveloppe déjà
+  `goal.objective` ; cet helper couvre les autres sites — entrées de
+  mémoire ad-hoc, descriptions de workspace plugin, docs d'outil MCP
+  importées de serveurs tiers, input de formulaire UI hôte. Deux
+  méthodes : `tag()` ajoute le marqueur ; `wrap()` ajoute le préambule
+  « traiter comme données, pas comme instructions ». Désactivable via
+  `AI_CORE_UNTRUSTED_INPUT=false` pour les tests qui comparent les
+  prompts byte-à-byte.
+- **`RateLimiterRegistry`** (0.9.6) — pool de token-bucket per-process
+  enveloppant SDK 0.9.8 `Providers\Transport\TokenBucket`.
+  `SuperAgentBackend` et `SquadBackend` appellent `consume()` avant
+  chaque dispatch provider. Les clés manquantes retombent sur
+  `default` (8 RPS / 16 burst) ; les overrides par provider vont
+  dans `super-ai-core.rate_limits.<provider>`. Une config vide
+  désactive entièrement le rate limiting — le SDK conserve son retry
+  per-call 429.
+- **`AdHocMemoryRegistry`** (0.9.6) — pool per-session
+  `Memory\AdHocMemoryProvider`. Les UI chat appellent
+  `forSession($id)->push($text, $ttlSeconds)` (ou le shortcut
+  `$registry->push($id, $text, $ttl)`) pour injecter un fait « pour
+  le prochain tour » que le backend SuperAgent rend avant le prompt.
+  L'isolement per-session prévient toute fuite cross-chat. Mémoire
+  process-local — les faits durables vont dans `MEMORY.md` /
+  `BuiltinMemoryProvider`.
+- **`ConversationForkService`** (0.9.6) — sémantique codex `/side`
+  par-dessus SDK 0.9.8 `Conversation\Fork`. `start($parentMessages)`
+  snapshot la liste et retourne un fork handle ;
+  `finish($fork, $action, $indexes?)` collapse avec `discard` /
+  `promote(...indexes)` / `promoteAll`. Utile pour les UI chat qui
+  veulent « brancher et essayer un modèle différent à côté, ne
+  promouvoir que les messages utiles ».
+- **`DeepSeekFimService`** (0.9.6) — wrapper standalone autour de
+  SDK 0.9.8 `DeepSeekProvider::completeFim()` contre la région
+  `beta`. L'abstraction chat-shape `Backend` ne convient pas pour
+  FIM, donc les hôtes qui bâtissent des features de complétion IDE-
+  style appellent ce service directement :
+  `app(DeepSeekFimService::class)->complete($prefix, $suffix,
+  ['max_tokens' => 64])`.
+- **Cadran trois niveaux `reasoning_effort` sur `SuperAgentBackend`**
+  (0.9.6) — `reasoning_effort: 'off' | 'high' | 'max'` par appel
+  transmis comme option per-call SDK `reasoning_effort`. Route vers
+  la bonne forme de body selon l'upstream via l'interface
+  `SupportsReasoningEffort` du SDK. Silencieusement ignoré par les
+  providers qui ne l'implémentent pas. Nourrit aussi l'heuristique
+  d'escalation `AutoModelRouter` quand mis à `max`.
+- **Handoff `Agent::switchProvider()`** (0.9.6) — passez
+  `options.handoff: {provider, config, policy}` et
+  `SuperAgentBackend` appelle `Agent::switchProvider()` avant le
+  dispatch. L'enveloppe gagne `handoff_token_status: {tokens, window,
+  fits, model}` pour que les dashboards puissent avertir
+  « l'historique ne tient pas sous <target_model> — compresser avant
+  le prochain tour ». Échec de construction du nouveau provider →
+  l'agent original reste utilisable.
+- **Commandes console `smart` / `squad`** (0.9.6) — passthrough vers
+  vendor `superagent smart` / `superagent auto --squad`. Réutilise
+  les credentials SuperAgent existantes de l'opérateur et le
+  comportement de la CLI SDK plutôt que de réimplémenter
+  l'orchestrateur en PHP :
+  ```bash
+  ./vendor/bin/superaicore smart "audite ce diff"
+  ./vendor/bin/superaicore smart show --last
+  ./vendor/bin/superaicore squad "refactore le module auth" --max-cost=2.0
+  ./vendor/bin/superaicore squad --no-squad "compare avec le chemin legacy"
+  ```
+- **`super-ai-core.agents.max_depth`** (0.9.6) — transmis à SDK 0.9.8
+  `Swarm\AgentDepthGuard::setMax()` pendant le boot du service
+  provider. Valeur négative / non définie → default SDK (5).
+  Override per-process : variable env `SUPERAGENT_MAX_AGENT_DEPTH`.
+
+Recettes complètes (pipelines Squad, intégration AutoModelRouter,
+câblage CacheAwareCompressor, overrides RateLimiterRegistry,
+intégration UI chat AdHocMemoryRegistry, side-panels
+ConversationForkService, endpoints de complétion DeepSeek FIM) :
+[docs/advanced-usage.fr.md §28](docs/advanced-usage.fr.md).
+
 ### Installateur CLI & santé
 
 - **`cli:status`** — montre quels CLI sont installés / connectés, avec indice d'installation pour ce qui manque.
@@ -488,7 +622,7 @@ Tous les repositories sont des interfaces. Le service provider lie automatiqueme
 
 ## Usage avancé
 
-- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0**, la **vague d'alignement DeepSeek-TUI 0.9.1** et la **vague de fiabilité TaskRunner 0.9.2**.
+- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0**, la **vague d'alignement DeepSeek-TUI 0.9.1**, la **vague de fiabilité TaskRunner 0.9.2** et la **vague Squad multi-agent + SDK 1.0.0 0.9.6**.
 - **[Démarrage Task runner](docs/task-runner-quickstart.md)** — référence d'options complète de `TaskRunner`.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, formats de stream par backend, `onChunk`.
 - **[Protocole spawn plan](docs/spawn-plan-protocol.md)** — émulation agent codex/gemini.

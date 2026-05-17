@@ -251,6 +251,67 @@ return [
         'checkpoint_dir' => env('AI_CORE_SQUAD_CHECKPOINT_DIR', null),
     ],
 
+    // ─── Squad team library (TeamRegistry, SDK-bundled + overlays) ───
+    // SDK ships ~20 production teams in vendor/forgeomni/superagent/
+    // resources/squad-teams/. Hosts that want to add their own teams
+    // (or override a bundled team by name) point here at one or more
+    // directories of YAML team files. Later directories override
+    // earlier ones — and the host can override the SDK's bundled
+    // teams entirely by registering the same name.
+    'squad_team_dirs' => array_values(array_filter(array_map('trim', explode(',', (string) env('AI_CORE_SQUAD_TEAM_DIRS', ''))))),
+
+    // ─── Cross-layer mode bridges ───
+    'modes' => [
+        // Reverse SDK squad bridge. When true, SuperAICore installs its
+        // CrossLayerDispatcher as SuperAgent SDK's default squad
+        // dispatcher via `SquadDispatcherRegistry`. This lets SDK
+        // squad calls (AutoModeAgent::runSquad, `superagent auto
+        // --squad` invoked in-process) route per-role steps onto
+        // SuperAICore CLI backends through `cli:<name>` provider tags
+        // — no per-call config required. Disable when you want SDK
+        // squad runs to stay self-contained inside the SDK.
+        'bridge_sdk_squad' => (bool) env('AI_CORE_BRIDGE_SDK_SQUAD', true),
+    ],
+
+    // ─── CLI-layer auto/smart/squad (host-side mirror of SDK modes) ───
+    // CrossLayerDispatcher routes every leaf step through one seam:
+    //   - cli:<name>  → SuperAICore CLI backend
+    //   - sdk:<name>  → SuperAgent SDK provider
+    //   - auto/smart/squad → recurse into the matching CLI-layer mode
+    // The three modes share difficulty scoring with SDK's TaskComplexity
+    // so user mental model is consistent across layers.
+    'cli_auto' => [
+        'default_cli'     => env('AI_CORE_CLI_AUTO_DEFAULT', 'cli:claude_cli'),
+        'smart_threshold' => (float) env('AI_CORE_CLI_AUTO_SMART_TH', 0.4),
+        'squad_threshold' => (float) env('AI_CORE_CLI_AUTO_SQUAD_TH', 0.7),
+        'prefer_squad'    => (bool)  env('AI_CORE_CLI_AUTO_PREFER_SQUAD', true),
+    ],
+    'cli_smart' => [
+        // difficulty band → CLI backend tag (or sdk:/auto/smart/squad)
+        'routing' => [
+            'trivial'  => env('AI_CORE_CLI_SMART_TRIVIAL',  'cli:gemini_cli'),
+            'easy'     => env('AI_CORE_CLI_SMART_EASY',     'cli:gemini_cli'),
+            'moderate' => env('AI_CORE_CLI_SMART_MODERATE', 'cli:codex_cli'),
+            'hard'     => env('AI_CORE_CLI_SMART_HARD',     'cli:claude_cli'),
+            'expert'   => env('AI_CORE_CLI_SMART_EXPERT',   'cli:claude_cli'),
+        ],
+        'merge_provider'   => env('AI_CORE_CLI_SMART_MERGE',   'cli:claude_cli'),
+        'default_provider' => env('AI_CORE_CLI_SMART_DEFAULT', 'cli:claude_cli'),
+        'max_cost_usd'     => (float) env('AI_CORE_CLI_SMART_MAX_COST', 0),
+    ],
+    'cli_squad' => [
+        // Default tier map; provider tags can mix cli:/sdk:/auto/smart/squad.
+        'tier_map' => [
+            'trivial'  => ['provider' => env('AI_CORE_CLI_SQUAD_TRIVIAL_PROV',  'cli:gemini_cli'),  'model' => env('AI_CORE_CLI_SQUAD_TRIVIAL_MODEL',  'gemini-2.5-flash')],
+            'easy'     => ['provider' => env('AI_CORE_CLI_SQUAD_EASY_PROV',     'cli:gemini_cli'),  'model' => env('AI_CORE_CLI_SQUAD_EASY_MODEL',     'gemini-2.5-flash')],
+            'moderate' => ['provider' => env('AI_CORE_CLI_SQUAD_MODERATE_PROV', 'cli:codex_cli'),   'model' => env('AI_CORE_CLI_SQUAD_MODERATE_MODEL', 'gpt-5.1')],
+            'hard'     => ['provider' => env('AI_CORE_CLI_SQUAD_HARD_PROV',     'cli:claude_cli'),  'model' => env('AI_CORE_CLI_SQUAD_HARD_MODEL',     'claude-sonnet-4-6')],
+            'expert'   => ['provider' => env('AI_CORE_CLI_SQUAD_EXPERT_PROV',   'cli:claude_cli'),  'model' => env('AI_CORE_CLI_SQUAD_EXPERT_MODEL',   'claude-opus-4-7')],
+        ],
+        'checkpoint_dir' => env('AI_CORE_CLI_SQUAD_CHECKPOINT_DIR', null),
+        'max_cost_usd'   => (float) env('AI_CORE_CLI_SQUAD_MAX_COST', 0),
+    ],
+
     // ─── Backends ───
     // Which backends are usable. Disable ones you don't need.
     'backends' => [

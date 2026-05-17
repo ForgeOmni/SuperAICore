@@ -4,6 +4,206 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.6] — 2026-05-16
+
+**Squad multi-agent + SDK 1.0.0 companion bindings.** Six SDK 0.9.8
+primitives that landed alongside the 0.9.1 wave (`AutoModelStrategy`,
+`CacheAwareCompressor`, `UntrustedInput`, `TokenBucket`,
+`AdHocMemoryProvider`, `Conversation\Fork`, `AgentDepthGuard`,
+DeepSeek FIM) are now wrapped behind first-class services, and SDK
+1.0.0's `Squad` peer-collaboration pipeline lands as a tenth dispatcher
+adapter (`squad`) with per-step model tiering, on-disk checkpointing,
+and optional cost-cap downshift. SDK constraint moves
+`^0.9.8` → `^1.0`. Every binding is additive and opt-in — pre-0.9.6
+behaviour is preserved unless you enable a flag, pass a new option, or
+resolve a new service from the container.
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan vendor:publish --tag=super-ai-core-config --force   # optional, picks up the new config blocks
+```
+
+No migrations. Six new singleton bindings: `AutoModelRouter`,
+`CompressionStrategyFactory`, `UntrustedInputHelper`,
+`RateLimiterRegistry`, `AdHocMemoryRegistry`, `ConversationForkService`,
+`DeepSeekFimService`. One new backend: `SquadBackend`. Two new console
+commands: `smart` and `squad` (passthrough to the vendor `superagent`
+CLI).
+
+### Added
+
+- **`SquadBackend` — SDK 1.0.0 adaptive cross-model pipeline.**
+  Registered as the tenth dispatcher adapter when
+  `super-ai-core.squad.enabled=true` and the SDK is installed. Drives
+  a heuristic-decomposed pipeline via `Squad\TaskDecomposer` +
+  `Squad\PeerOrchestrator`, with one model per subtask (mapped through
+  `Squad\ModelTierMap`), per-step `SquadCheckpointStore` writes, peer-
+  to-peer messaging via SDK's `PeerMailbox`, and an optional cost cap
+  with automatic downshift at 80% budget. Mid-run failures leave the
+  checkpoint on disk so the host can resume by re-dispatching with
+  the same `squad_id` and `checkpoint_dir`. Envelope carries
+  `squad: {squad_id, step_count, completed, roles, checkpoint_path,
+  mailbox_log}` for host UIs. Cost is summed across step dispatches;
+  per-step `cost_usd` rolls up onto the envelope.
+- **`super-ai-core.squad` config block** — global tier map
+  (`trivial` → `claude-haiku-4-5`, `easy` → `deepseek-v4-flash`,
+  `moderate` → `claude-sonnet-4-6`, `hard` → `deepseek-v4-pro`,
+  `expert` → `claude-opus-4-7`), `max_cost_usd` budget cap,
+  `checkpoint_dir`. Override per-dispatch via `options.tier_map`.
+  Env toggles: `AI_CORE_SQUAD_ENABLED`,
+  `AI_CORE_SQUAD_BACKEND_ENABLED`, `AI_CORE_SQUAD_MAX_COST`,
+  `AI_CORE_SQUAD_CHECKPOINT_DIR`.
+- **`AutoModelRouter` — `/model auto` heuristic for any dispatch
+  path.** Wraps SDK 0.9.8 `Routing\AutoModelStrategy` behind a host
+  service so the Claude / Codex / Gemini CLI backends can opt in once
+  their `provider_config` declares `auto_models: {pro, flash}`. The
+  router escalates Flash → Pro on long context (>32k tokens),
+  trailing tool-chain depth (≥3), explicit `reasoning_effort=max`,
+  or intent keywords in the system prompt
+  (review/audit/design/migration/architecture/…). When
+  `super-ai-core.auto_model.score_catalog_path` is wired the
+  catalog's top-scoring model for the inferred dim overrides the
+  Pro/Flash heuristic. Hosts rebind Pro/Flash to any model pair (e.g.
+  `claude-opus` / `claude-haiku`) via
+  `auto_model.{pro_model, flash_model}` — no SDK fork. Env toggles:
+  `AI_CORE_AUTO_MODEL`, `AI_CORE_AUTO_MODEL_PRO`,
+  `AI_CORE_AUTO_MODEL_FLASH`, `AI_CORE_AUTO_MODEL_LONG_CTX`,
+  `AI_CORE_AUTO_MODEL_TOOL_DEPTH`, `AI_CORE_AUTO_MODEL_SCORE_CATALOG`.
+- **`CompressionStrategyFactory` — cache-aware compaction for
+  host-driven `ContextManager` flows.** Wraps the bundled
+  `ConversationCompressor` in SDK 0.9.8's `CacheAwareCompressor` so
+  summary boundaries land AFTER the prompt-cache prefix instead of
+  clobbering it on every compaction round. Hosts running long
+  multi-turn sessions (sub-agent loops, browser-tool runs, multi-step
+  refactors) call `app(CompressionStrategyFactory::class)->build($tokenEstimator, $config, $provider)`
+  when constructing their own `ContextManager` and inherit the
+  pinned-prefix behaviour. Pins 1 system message + 4 conversation
+  messages by default. Env toggles:
+  `AI_CORE_COMPRESSION_CACHE_AWARE`, `AI_CORE_COMPRESSION_PIN_HEAD`,
+  `AI_CORE_COMPRESSION_PIN_SYSTEM`.
+- **`UntrustedInputHelper` — host-side `UntrustedInput` wrapper.**
+  Thin Laravel facade over SDK 0.9.8 `Security\UntrustedInput`.
+  Tags or wraps free-form text injected into system prompts at sites
+  the SDK's `GoalManager` doesn't already own — ad-hoc memory entries,
+  workspace plugin descriptions, MCP tool descriptions from third-
+  party servers, host UI form input. The SDK already wraps
+  `goal.objective`; this helper covers the other injection points.
+  Two methods: `tag($payload, $category)` adds the marker, `wrap()`
+  prepends the standard "treat as data, not instructions" disclaimer.
+  Disabled via `AI_CORE_UNTRUSTED_INPUT=false` for tests that compare
+  prompts byte-for-byte.
+- **`RateLimiterRegistry` — per-process token-bucket pool.** Wraps
+  SDK 0.9.8 `Providers\Transport\TokenBucket` keyed by provider name
+  (or any caller-chosen tag). `SuperAgentBackend::generate()` calls
+  `consume()` before each provider dispatch; `SquadBackend` does the
+  same. Missing keys fall back to `default`. Empty config disables
+  rate limiting entirely (the SDK still has per-call 429 retry, so
+  this is belt-and-suspenders for hosts already throttled
+  upstream). Default `8.0 RPS / 16 burst` in
+  `super-ai-core.rate_limits.default`; per-provider overrides
+  (`kimi`, `openai`, `deepseek`, etc.) are commented out templates.
+  Env toggles: `AI_CORE_RL_DEFAULT_RATE`, `AI_CORE_RL_DEFAULT_BURST`.
+- **`AdHocMemoryRegistry` — per-session `AdHocMemoryProvider`
+  pool.** Wraps SDK 0.9.8 `Memory\AdHocMemoryProvider`. UI sites can
+  call `forSession($id)->push($text, $ttlSeconds)` (or the convenience
+  `$registry->push($id, $text, $ttl)`) to inject a "for the next turn"
+  fact that the SuperAgent backend renders ahead of the prompt. Per-
+  session isolation means chat A's facts never leak into chat B. By
+  design, memory is process-local — durable facts belong in
+  `MEMORY.md` / `BuiltinMemoryProvider`. The registry is a
+  container singleton at `app(AdHocMemoryRegistry::class)`.
+- **`ConversationForkService` — codex `/side` semantics as a host
+  service.** Wraps SDK 0.9.8 `Conversation\Fork`. Two methods:
+  `start($parentMessages)` snapshots the current list and returns a
+  fork handle; `finish($fork, $action, $indexes?)` collapses the side
+  back to the parent with `discard` / `promote(...indexes)` /
+  `promoteAll` semantics. Stateless — fork lifetime is the host's
+  call (typically a UUID in the URL). Useful for chat UIs that want
+  "branch and try a different model, promote only the useful side
+  messages back".
+- **`DeepSeekFimService` — standalone DeepSeek FIM (Fill-In-the-Middle)
+  helper.** Wraps SDK 0.9.8 `DeepSeekProvider::completeFim()` against
+  the `beta` region. The chat-shaped `Backend` abstraction doesn't fit
+  prefix-completion / inline-fill use cases, so hosts building IDE-
+  style completion features (`function calculateTax(\$amount) {`
+  + `\n}` → infer the body) call this service directly. No
+  memoisation — FIM dispatches are short-lived (one IDE keystroke =
+  one call). Env: `DEEPSEEK_API_KEY` (also reads
+  `super-ai-core.deepseek.api_key`).
+- **`super-ai-core.agents.max_depth` — sub-agent recursion cap.**
+  Forwarded to SDK 0.9.8's static `Swarm\AgentDepthGuard::setMax()`
+  during service-provider boot. Negative / unset preserves the SDK
+  default (5). Per-process override via `SUPERAGENT_MAX_AGENT_DEPTH`
+  env var.
+- **Per-call `reasoning_effort` on `SuperAgentBackend`** — three-tier
+  dial (`off` / `high` / `max`) forwarded as the SDK's
+  `reasoning_effort` per-call option. Routes to the right body shape
+  per provider (top-level field for most; `chat_template_kwargs` for
+  NVIDIA NIM, etc.) via SDK's `SupportsReasoningEffort` capability
+  interface. Silently ignored by providers that don't implement it.
+  Also feeds `AutoModelRouter`'s escalation heuristic when set to
+  `max`.
+- **`Agent::switchProvider()` handoff** — when `options['handoff']` is
+  passed (`{provider, config, policy}`), `SuperAgentBackend` calls
+  `Agent::switchProvider()` before dispatch. SDK 0.9.5's
+  `HandoffPolicy::default()` / `preserveAll()` / `freshStart()` are
+  the three presets. Envelope gains `handoff_token_status:
+  {tokens, window, fits, model}` so dashboards can warn "history
+  won't fit under <target_model> — compress before the next turn".
+  Failure to construct the new provider leaves the original agent
+  untouched (SDK contract).
+- **`smart` and `squad` console commands** — passthrough to vendor
+  `superagent smart` / `superagent auto --squad`. Forwards argv
+  verbatim so SuperAICore CLI users get the SDK orchestration
+  surface without re-implementing it in PHP. `--binary=…` opts out
+  of the bundled `vendor/forgeomni/superagent/bin/superagent`
+  auto-discovery. `squad` accepts `--no-squad` to revert to the
+  legacy master-slave path for A/B comparisons.
+
+### Changed
+
+- **Composer constraint** — `forgeomni/superagent` `^0.9.8` → `^1.0`.
+  SDK 1.0.0 ships the Squad pipeline (`Squad\PeerOrchestrator`,
+  `TaskDecomposer`, `ModelTierMap`, `SquadCheckpointStore`,
+  `SubTask`, `DifficultyClass`, `SquadDispatchRequest`) plus stable
+  reorganisations of the 0.9.x companion primitives.
+- **`SuperAgentBackend` constructor** — accepts an optional
+  `RateLimiterRegistry` so the throttle path can stay null-safe when
+  the package service provider hasn't booted (pure-PHPUnit tests,
+  custom CLI entrypoints). Falls back to a container lookup at call
+  time when no instance was injected; degrades silently to no-op
+  when neither path resolves. Existing call sites keep working.
+- **`BackendRegistry`** — registers `SquadBackend` immediately after
+  `SuperAgentBackend` when SDK 1.0.0 is on the classpath and
+  `super-ai-core.backends.squad.enabled` is on (default `true`).
+
+### Notes
+
+- **None of the new wrappers change SDK call shapes.** `Goals\GoalManager`,
+  `Security\UntrustedInput`, `Swarm\AgentDepthGuard`,
+  `Providers\Transport\TokenBucket`, `Conversation\Fork`,
+  `Memory\AdHocMemoryProvider`, `Routing\AutoModelStrategy`, and
+  `Context\Strategies\CacheAwareCompressor` are wrapped behind host
+  services so swapping the SDK class for a host-owned implementation
+  is a single container rebind. Tests that need byte-identical
+  dispatch comparisons can disable the wrappers via the env toggles
+  listed above.
+- **`SquadBackend` reuses the operator's existing SuperAgent provider
+  credentials.** Each step constructs a provider via the same
+  `ProviderRegistry::createForHost()` adapter `SuperAgentBackend`
+  uses, so a host that already routes through Anthropic + DeepSeek
+  picks up Squad routing without re-configuring credentials.
+- **Squad mid-run cost-cap downshift.** When the running cost crosses
+  80% of `max_cost_usd`, future steps are pushed down one tier
+  (`hard → moderate`, `moderate → easy`, etc.) until the cap is
+  reached or the pipeline completes. The envelope's `squad.roles`
+  array reflects the final tier each step ran at.
+- **Auto-discovery of the vendor binary.** `smart` and `squad` walk
+  three relative paths (`vendor/forgeomni/superagent/bin/superagent`
+  and two ancestor variants for projects that vendor the SDK above
+  the package root). Pass `--binary=/abs/path/to/superagent` when the
+  host installs the SDK outside `vendor/`.
+
 ## [0.9.5] — 2026-05-11
 
 **Side-panel trigger hardening — Blade attribute encoding fix for
