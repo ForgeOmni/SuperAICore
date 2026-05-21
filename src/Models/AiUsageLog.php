@@ -24,6 +24,9 @@ use Illuminate\Database\Eloquent\Model;
  * @property int|null $user_id
  * @property array|null $metadata
  * @property string|null $idempotency_key
+ * @property string|null $pre_snapshot
+ * @property string|null $post_snapshot
+ * @property array|null $file_diff_summary
  */
 class AiUsageLog extends Model
 {
@@ -38,10 +41,12 @@ class AiUsageLog extends Model
         'cost_usd', 'shadow_cost_usd', 'billing_model',
         'duration_ms', 'user_id', 'metadata',
         'idempotency_key',
+        'pre_snapshot', 'post_snapshot', 'file_diff_summary',
     ];
 
     protected $casts = [
         'metadata' => 'array',
+        'file_diff_summary' => 'array',
         'input_tokens' => 'integer',
         'output_tokens' => 'integer',
         'cost_usd' => 'decimal:6',

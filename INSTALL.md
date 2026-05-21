@@ -939,6 +939,187 @@ CacheAwareCompressor wiring, RateLimiterRegistry overrides,
 AdHocMemoryRegistry chat-UI integration, ConversationForkService
 side-panels, DeepSeek FIM completion endpoints.
 
+**0.9.7 — four new migrations; SDK pin moves to `^1.0.5`.** SDK 1.0.5
+capability bump (cross-provider handoff transcoder fixes, opencode
+`BashArity` permission matching, opencode 7-section structured
+compactor summary, the real LSP client + `LSPTool`, `LlmLoopChecker`
+semantic loop detection, ACP v1 stdio server, Gemini 3.5 / 3.x with
+thinking + grounding + thought-parts) plus ten opencode-borrowed
+features (per-file diff summaries with revert, mid-run HITL question
+tool, snapshot retention, session reminders, per-agent permission
+rulesets, sub-agent permission derivation, plan mode, PTY long-lived
+shell sessions, session-share host queue). Every binding is additive
+and opt-in — pre-0.9.7 behaviour preserved unless you flip the
+corresponding flag.
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan vendor:publish --tag=super-ai-core-migrations
+php artisan migrate
+php artisan vendor:publish --tag=super-ai-core-config --force   # optional; picks up the new config blocks
+```
+
+The four migrations are additive + reversible:
+
+- `2026_05_20_000001_add_diff_summary_and_snapshots_to_ai_usage_logs.php`
+  — `ai_usage_logs` gains `pre_snapshot` (varchar 64, nullable),
+  `post_snapshot` (varchar 64, nullable), `file_diff_summary` (json,
+  nullable). Pre-existing rows get NULL; new dispatches through
+  `SuperAgentBackend` populate them automatically.
+- `2026_05_20_000002_create_ai_user_questions_table.php` — new table
+  backing the `ask_user` HITL tool.
+- `2026_05_20_000003_create_ai_pty_sessions_table.php` — new table
+  backing the PTY long-poll endpoints.
+- `2026_05_20_000004_create_ai_session_shares_table.php` — new table
+  backing the session-share host queue.
+
+Optional env knobs (every flag defaults to safe / opt-out values):
+
+```dotenv
+# ─── Shadow-git snapshots + per-file diff summary ───
+AI_CORE_SNAPSHOT_ENABLED=true
+AI_CORE_SNAPSHOT_PROJECT_ROOT=          # null → base_path() → getcwd()
+AI_CORE_SNAPSHOT_RETENTION_DAYS=7
+AI_CORE_SNAPSHOT_REVERT_ENABLED=true    # POST /usage/{id}/revert
+
+# ─── Mid-run HITL `ask_user` tool ───
+AI_CORE_TOOLS_ASK_USER=false            # off by default; flip on to expose the tool
+
+# ─── SDK 1.0.5 LSP tool ───
+AI_CORE_TOOLS_LSP=false                 # off by default; flip on for the lsp tool
+
+# ─── Opencode structured compactor summary ───
+AI_CORE_COMPRESSION_SUMMARY_PROMPT=     # set to "structured" to opt in globally
+
+# ─── CLI plan mode (Modes\CliPlanOrchestrator) ───
+AI_CORE_PLAN_ENABLED=true
+AI_CORE_PLAN_BACKEND=cli:claude_cli
+AI_CORE_PLAN_BUILD_BACKEND=cli:claude_cli
+AI_CORE_PLAN_DIR=.superagent/plans
+AI_CORE_PLAN_AUTO_APPROVE=              # null → auto-detect (HITL on = wait, off = approve)
+AI_CORE_PLAN_APPROVAL_TIMEOUT=600
+
+# ─── PTY long-lived shell sessions ───
+AI_CORE_PTY_ENABLED=false               # off by default; opt-in per deployment
+
+# ─── Session share host queue ───
+AI_CORE_SHARE_ENABLED=false
+AI_CORE_SHARE_REMOTE_URL=               # remote sharer base URL (POST /api/shares/{id})
+AI_CORE_SHARE_SECRET=                   # Bearer token sent to the remote sharer
+AI_CORE_SHARE_LOCAL_URL_TEMPLATE=       # fallback when no remote; {share_id} placeholder
+```
+
+Per-agent permission rulesets, session reminders, and the snapshot
+prune scheduler live in `super-ai-core.php`:
+
+```php
+// config/super-ai-core.php
+
+'agents' => [
+    'plan' => [
+        'permission' => [
+            '*'    => 'allow',
+            'edit' => ['*' => 'deny', '*.md' => 'allow'],
+            'write'=> ['*' => 'deny', '*.md' => 'allow'],
+        ],
+    ],
+    'explore' => [
+        'permission' => [
+            '*'     => 'deny',
+            'read'  => 'allow',
+            'grep'  => 'allow',
+            'glob'  => 'allow',
+            'bash'  => 'allow',
+        ],
+    ],
+],
+
+'reminders' => [
+    'rules' => [
+        [
+            'name' => 'plan-mode-active',
+            'when' => ['agent' => 'plan'],
+            'text' => "## Plan mode active\nWrite the plan to `.superagent/plans/{session}.md`. Do NOT call any edit/write tool against the project worktree.",
+        ],
+    ],
+],
+```
+
+Schedule snapshot pruning from `app/Console/Kernel.php`:
+
+```php
+protected function schedule(Schedule $schedule)
+{
+    $schedule->command('super-ai-core:snapshot-prune')->dailyAt('02:00');
+}
+```
+
+Eleven things worth reviewing on upgrade:
+
+1. **Per-file diff summary fires automatically.** When SDK 1.0.5's
+   `GitShadowStore` can checkpoint the worktree, every
+   `SuperAgentBackend::generate()` dispatch lands `pre_snapshot` /
+   `post_snapshot` / `file_diff_summary` on the UsageLog row. The
+   `/usage` page renders a `+N −M` badge per row. Disable globally
+   with `AI_CORE_SNAPSHOT_ENABLED=false` if you want byte-identical
+   pre-0.9.7 behaviour.
+2. **HITL `ask_user` tool is OFF by default.** The polling-loop
+   semantics in `AskUserTool::execute()` block the agent for up to
+   `timeout_seconds` (default 600), which is intentional for
+   developer-facing use but inappropriate for a queue worker that
+   needs to recycle. Flip `AI_CORE_TOOLS_ASK_USER=true` only when a
+   human will be answering questions in front of `/processes`.
+3. **`/processes/questions` poll cadence.** The UI polls every 4s.
+   When you scale up to many concurrent agents asking questions,
+   raise `AI_CORE_QUESTIONS_POLL_INTERVAL` (defaults to the 500ms
+   server-side polling baked into `AskUserTool`) — the cost is
+   nearly entirely server-side polling, not browser fanout.
+4. **Revert is a write — secure it like one.** The route is gated by
+   `AI_CORE_SNAPSHOT_REVERT_ENABLED` (default true) AND inherits the
+   `super-ai-core.route.middleware` list. On multi-tenant deployments
+   add an authorization middleware before exposing `/usage/{id}/revert`.
+5. **`super-ai-core:snapshot-prune` is per-host.** It walks
+   `~/.superagent/history/` for the user that ran the command. In a
+   multi-user box, schedule it once per user (or normalise the shadow
+   dir via `SUPERAGENT_HISTORY_DIR=/var/lib/superagent/history`).
+6. **Per-agent permission ruleset is consulted ONLY when the caller
+   didn't pass `allowed_tools` / `denied_tools`.** Explicit per-call
+   lists override the config-driven ruleset. This is intentional —
+   tooling layers above SuperAICore (PPT, SuperTeam, codex) already
+   compute their own deny lists and shouldn't be overridden silently.
+7. **Plan mode is registered with `CliModeRouter` under mode name
+   `plan`.** Dispatch with `app(CliModeRouter::class)->dispatch('plan',
+   $task, $ctx)`. When HITL is disabled, the orchestrator auto-approves
+   (intentional — keeps the orchestrator usable in CI). Set
+   `AI_CORE_PLAN_AUTO_APPROVE=false` to override.
+8. **Sub-agent permission derivation reads two signals.** Either pass
+   `parent_denied_tools` explicitly in the child dispatch options, or
+   pass `metadata.parent_agent` and let `PermissionEvaluator` resolve
+   the parent's ruleset. The deny set is monotonic across parent →
+   child — children can never elevate.
+9. **PTY is Phase 1 (long-poll, no stdin).** The `/pty/sessions/{id}/write`
+   endpoint returns 501 because PHP can't keep a pipe alive across HTTP
+   requests without a persistent worker. Use a client-side `expect`-style
+   command when input is required, or wait for Phase 2 (WebSocket via
+   Laravel Reverb / Soketi).
+10. **Session sharing has two modes.** REMOTE (`AI_CORE_SHARE_REMOTE_URL`
+    set) POSTs UsageLog rows + `file_diff_summary` to an external sharer
+    with a Bearer token. LOCAL (`AI_CORE_SHARE_LOCAL_URL_TEMPLATE` set)
+    renders the URL against the host's own SuperAICore — useful for
+    intranet deployments where "share with a colleague" means "give them
+    a link to the same Laravel instance".
+11. **SDK 1.0.5 Gemini 3.5 features pass through verbatim.**
+    `thinking` / `grounding` / `google_search` / `url_context` per-call
+    options forward to `Agent::run($prompt, $options)` and are silently
+    ignored by non-Gemini providers. `EngineCatalog` lists
+    `gemini-3.5-pro / -flash / -flash-lite` for the gemini-cli engine.
+
+See [docs/advanced-usage.md §29](docs/advanced-usage.md) for full
+recipes — per-file diff dashboard, AskUserTool integration, revert
+button, plan mode workflow, per-agent permission rulesets, sub-agent
+permission inheritance, PTY long-poll integration, session-share host
+queue, snapshot retention scheduling.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

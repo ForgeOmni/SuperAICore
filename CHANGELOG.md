@@ -4,6 +4,245 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.7] — 2026-05-20
+
+**SDK 1.0.5 bump + opencode-borrowed feature wave.** SDK constraint
+moves `^1.0` → `^1.0.5`, picking up cross-provider handoff transcoder
+fixes (0.9.5), `BashArity` permission matching, the opencode 7-section
+structured summary template, the real LSP client + `LSPTool`,
+`LlmLoopChecker` semantic loop detection, the ACP v1 stdio server, and
+the Gemini 3.5 / 3.x family with thinking + grounding + thought-part
+wiring. On top of that bump, ten patterns are ported from
+[opencode](https://github.com/sst/opencode) (`packages/opencode/src/`)
+and surfaced as first-class SuperAICore features: per-file diff
+summaries with revert, a mid-run HITL question tool, snapshot retention,
+session reminders, per-agent permission rulesets, sub-agent permission
+derivation, plan mode (plan → approve → build), long-lived PTY shell
+sessions, and a session-share host queue.
+
+Every binding is additive and opt-in — pre-0.9.7 behaviour is preserved
+unless you enable a flag, pass a new option, or resolve a new service
+from the container.
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan migrate                                              # ships four new tables / columns
+php artisan vendor:publish --tag=super-ai-core-config --force   # optional, picks up the new config blocks
+```
+
+Four new migrations land in this release (`pre_snapshot` /
+`post_snapshot` / `file_diff_summary` columns on `ai_usage_logs`;
+three new tables `ai_user_questions`, `ai_pty_sessions`,
+`ai_session_shares`). Seven new singleton bindings:
+`SnapshotDiffService`, `RemindersResolver`, `PermissionEvaluator`,
+`SubagentPermissionDeriver`, `PtyService`, `ShareSessionService`, plus
+the existing services gain optional dependencies. One new orchestrator
+(`CliPlanOrchestrator`), four new controllers (`QuestionController`,
+`RevertController`, `PtyController`, `ShareController`), one new
+Artisan command (`super-ai-core:snapshot-prune`), one new SDK tool
+(`Services\Tools\AskUserTool`).
+
+### Added — opencode borrowings
+
+Ten patterns ported from opencode (`packages/opencode/src/`). Each is
+opt-in via config / env flag and degrades to no-op when the surrounding
+wiring isn't present.
+
+- **P0-1 — Per-file diff summary (`Services\SnapshotDiffService`).**
+  SuperAgentBackend now snapshots the worktree before + after every
+  dispatch via SDK's `GitShadowStore` and produces a structured
+  `{additions, deletions, files, diffs: [{file, additions, deletions,
+  status, patch, truncated}]}` envelope. Three new columns land on
+  `ai_usage_logs`: `pre_snapshot`, `post_snapshot`,
+  `file_diff_summary`. The `/usage` page surfaces a `+N −M` badge with
+  a side-panel diff viewer on every row that produced a non-empty
+  diff. Modeled on opencode `session/summary.ts` +
+  `snapshot.diffFull()`. Diff envelope truncates at 256 KB per file
+  and 200 files total to keep UsageLog rows queryable. Resolved
+  project root: `options['project_root']` →
+  `super-ai-core.snapshot.project_root` → `base_path()` → `getcwd()`.
+- **P0-2 — Mid-run HITL question tool (`Services\Tools\AskUserTool`).**
+  When `super-ai-core.tools.ask_user_enabled` is on, SuperAgentBackend
+  attaches an `ask_user` SDK tool the model can call to interrupt and
+  ask for a clarifying decision. The tool inserts an
+  `ai_user_questions` row, polls every 500ms until the operator answers
+  via `POST /processes/questions/{id}/answer`, then returns the answer
+  as a tool result. Default timeout 600s (capped at 3600s). The
+  `/processes` page polls `/processes/questions` every 4s and renders
+  the pending row as an inline answer card (option buttons when the
+  model supplied choices, free-form text input otherwise). Modeled on
+  opencode `tool/question.ts`.
+- **P0-3 — Snapshot retention (`super-ai-core:snapshot-prune`).** Walks
+  every shadow.git repo under `GitShadowStore::defaultBaseDir()`
+  (default `~/.superagent/history`), expires the reflog of commits
+  older than `--days`, and runs `git gc --prune=now`. Defaults to
+  `super-ai-core.snapshot.retention_days` (fallback 7). Supports
+  `--dry-run` and `--base-dir`. Schedule from the host app's
+  `Kernel.php` with `$schedule->command('super-ai-core:snapshot-prune')
+  ->daily()`. Modeled on opencode's `prune = "7.days"` policy.
+- **P1-4 — Session reminders (`Services\RemindersResolver`).**
+  Config-driven synthetic system-prompt block injector. Each rule has
+  a `when` predicate (dotted-path keys → fnmatch globs against
+  dispatch options/metadata) and a `text` body. Bodies of matching
+  rules concatenate with blank lines and prepend to the caller's
+  system prompt. Config lives in `super-ai-core.reminders.rules`.
+  Modeled on opencode `session/reminders.ts`.
+- **P1-5 — Revert worktree to pre-dispatch snapshot
+  (`Http\Controllers\RevertController`).** `POST /usage/{id}/revert`
+  reads `pre_snapshot` off the UsageLog row and calls
+  `GitShadowStore::restore()`. Tracked files revert to the snapshot
+  state; untracked files added since the snapshot are LEFT in place
+  (SDK contract — opencode `session/revert.ts` semantics). Gated by
+  `super-ai-core.snapshot.revert_enabled` (default true). The `/usage`
+  page surfaces a ↩ button on every row that recorded a `pre_snapshot`.
+- **P1-6 — Per-agent permission ruleset
+  (`Services\PermissionEvaluator`).** Opencode `permission/evaluate.ts`
+  port — each rule is `{permission, pattern, action}`; the LAST
+  matching rule wins; default action is `ask`. Hosts declare per-agent
+  permission maps in `super-ai-core.agents.{name}.permission` (string
+  action OR per-pattern map). SuperAgentBackend projects the ruleset
+  onto the SDK agent's `withAllowedTools()` /  `withDeniedTools()`
+  when the caller didn't pass explicit lists.
+- **P2-7 — Plan mode (`Modes\CliPlanOrchestrator`).** Three-phase
+  plan → approve → build workflow lifted from opencode `agent/agent.ts`
+  + `tool/plan.ts`. Phase 1 dispatches a plan-only run with edit tools
+  denied; the model writes a markdown plan to
+  `.superagent/plans/{session}.md`. Phase 2 opens an `ai_user_questions`
+  row with `[Approve, Reject]` options. Phase 3 hands off to the build
+  backend with a synthetic prompt that includes the approved plan
+  text. Registered with `CliModeRouter` under mode name `plan`. Auto-
+  approves when HITL is disabled (`tools.ask_user_enabled=false`) so
+  the orchestrator stays usable in CI. Config:
+  `super-ai-core.modes.plan.*`.
+- **P2-8 — Sub-agent permission derivation
+  (`Services\SubagentPermissionDeriver`).** When a parent agent
+  dispatches a sub-agent, the deriver reads either
+  `parent_denied_tools` (explicit pass-through) or
+  `metadata.parent_agent` (resolved via the `PermissionEvaluator`'s
+  per-agent ruleset) and merges the parent's deny set into the
+  child's. Children can never elevate. Modeled on opencode
+  `agent/subagent-permissions.ts`.
+- **P3-9 — PTY long-lived shell sessions (`Services\PtyService` +
+  `Http\Controllers\PtyController`, Phase 1).** `proc_open`-backed
+  shell sessions with a flat per-session log file + cursor-keyed long-
+  poll endpoint. `POST /pty/sessions` spawns; `GET
+  /pty/sessions/{id}/poll?cursor=N` returns the slice since cursor +
+  the new cursor; `POST /pty/sessions/{id}/kill` terminates. Opt-in
+  via `super-ai-core.pty.enabled` (default false). Phase 2 (deferred)
+  will upgrade the wire to WebSocket via Laravel Reverb / Soketi
+  without changing the cursor-slice protocol. Stdin writes deferred
+  to Phase 2 because PHP can't keep a pipe alive across HTTP requests
+  without a persistent worker.
+- **P3-10 — Session share host queue (`Services\ShareSessionService` +
+  `Http\Controllers\ShareController`).** Mints a `{share_id, secret,
+  share_url}` triple per session, then pushes the session's UsageLog
+  rows + attached `file_diff_summary` payloads to a configured remote
+  sharer (`super-ai-core.share.remote_url`) as a Bearer-authenticated
+  POST. Falls back to a local URL template
+  (`super-ai-core.share.local_url_template`, `{share_id}` placeholder)
+  when no remote is configured. Two operating modes: REMOTE forwards
+  to an external service; LOCAL renders the URL against the host's
+  own SuperAICore instance for intranet deployments. Modeled on
+  opencode `share/share-next.ts`, scope-trimmed (no daemon queue —
+  re-sync fires on every `POST /share/sessions/{sessionId}/create`).
+
+### Added — SDK 1.0.5 plumbing
+
+- **`super-ai-core.tools.lsp_enabled` (env `AI_CORE_TOOLS_LSP`).**
+  Default OFF. When on, `SuperAgentBackend` prepends `lsp` to the
+  implicit `load_tools` list so the agent can call SDK 1.0.5's bundled
+  LSP client for diagnostics / hover / definition / touch against any
+  of the 9 language servers (phpactor / intelephense / gopls /
+  rust-analyzer / pyright / typescript-language-server / clangd /
+  bash-language-server / zls). Lazy via SDK `BuiltinToolRegistry`
+  classMap.
+- **`super-ai-core.compression.summary_prompt` (env
+  `AI_CORE_COMPRESSION_SUMMARY_PROMPT`).** Default null. Set to
+  `'structured'` to pick SDK 1.0.5's opencode-ported 7-section Markdown
+  summary template (Goal / Constraints / Progress / Decisions / Next
+  Steps / Critical Context / Relevant Files) — ~30-50% smaller than the
+  default 9-section prose summary and preserves blocked-item state
+  across consecutive compactions. Per-call override via
+  `options['summary_prompt']` still wins.
+- **`SuperAgentBackend::buildPerCallOptions()` forwards Gemini 3.5
+  features.** `thinking`, `grounding` / `google_search`, and
+  `url_context` pass straight through to `Agent::run($prompt,
+  $options)`. Silently ignored by non-Gemini providers (GeminiProvider
+  gates on `modelSupportsThinking()` for the thinking branch and only
+  appends the `googleSearch` / `urlContext` blocks to its own tools[]).
+- **`EngineCatalog` gemini-cli engine** now lists `gemini-3.5-pro /
+  -flash / -flash-lite`. Default model remains `gemini-2.5-pro` until
+  the system gemini CLI accepts the 3.5 slugs; SDK callers using `sdk:`
+  tags can already drive them today.
+- **`CopilotModelResolver`** `gemini` family alias now points at
+  `gemini-3-pro-preview` (the slug copilot CLI accepts), so callers
+  passing `gemini` get a resolvable id rather than the resolver
+  refusing to map.
+
+### Changed
+
+- **Composer constraint** — `forgeomni/superagent` `^1.0` → `^1.0.5`.
+- **`SuperAgentBackend` constructor** gained four optional
+  dependencies (`SnapshotDiffService`, `RemindersResolver`,
+  `PermissionEvaluator`, `SubagentPermissionDeriver`). `BackendRegistry`
+  resolves the backend via the container so these wire automatically;
+  the bare `new SuperAgentBackend($logger)` constructor still works for
+  tests that don't boot the package's service provider.
+- **`EloquentUsageRepository::record()`** filters input to
+  `AiUsageLog::$fillable` before insert, so envelope fields the
+  Dispatcher attaches that don't have columns yet (legacy schemas) no
+  longer trip Eloquent's MassAssignment guard.
+
+### Database
+
+Run `php artisan migrate` after upgrading. All four migrations are
+additive and reversible:
+
+- `2026_05_20_000001_add_diff_summary_and_snapshots_to_ai_usage_logs.php`
+  — adds `pre_snapshot` (varchar 64, nullable), `post_snapshot` (varchar
+  64, nullable), `file_diff_summary` (json, nullable) to `ai_usage_logs`.
+- `2026_05_20_000002_create_ai_user_questions_table.php` — new table
+  backing `AskUserTool`. Columns: `session_id`, `process_id`,
+  `agent_label`, `question`, `options` (json), `metadata` (json),
+  `answer`, `status` (pending|answered|cancelled|timed_out),
+  `answered_at`. Indexes on `status`, `process_id`, `session_id`.
+- `2026_05_20_000003_create_ai_pty_sessions_table.php` — new table
+  backing `PtyService`. Columns: `title`, `command`, `cwd`, `pid`,
+  `status` (running|exited|killed), `exit_code`, `log_path`, `cursor`,
+  `metadata` (json), `exited_at`.
+- `2026_05_20_000004_create_ai_session_shares_table.php` — new table
+  backing `ShareSessionService`. Columns: `session_id`, `share_id`
+  (unique), `secret`, `remote_url`, `share_url`, `status`
+  (active|revoked|failed), `metadata` (json), `synced_at`.
+
+### Routes
+
+- `GET  /processes/questions` — list pending HITL questions
+- `POST /processes/questions/{id}/answer` — POST `{answer}` to unblock
+- `POST /processes/questions/{id}/cancel` — POST to abort the polling
+  tool
+- `POST /usage/{id}/revert` — restore worktree to a row's `pre_snapshot`
+- `POST /pty/sessions` — spawn a long-lived shell session
+- `GET  /pty/sessions/{id}` — read session metadata
+- `GET  /pty/sessions/{id}/poll?cursor=N` — long-poll for new output
+- `POST /pty/sessions/{id}/kill` — terminate the session
+- `POST /share/sessions/{sessionId}/create` — mint a share link
+- `GET  /share/sessions/{sessionId}` — read share metadata
+- `POST /share/sessions/{sessionId}/destroy` — revoke a share
+
+### Why
+
+SDK 1.0.5 was a pure capability release — no breaking changes, only
+opt-in features. opencode is the most actively-developed open-source
+agent framework today; mining its `packages/opencode/src/` for
+patterns that fit SuperAICore's audit-log-first architecture gives
+the host a meaningful step up on visibility (per-file diff banner +
+revert), interactivity (mid-run HITL), safety (per-agent permissions,
+sub-agent perm inheritance, snapshot retention), workflow shape (plan
+mode), and operability (PTY streams, session sharing). Every feature
+keeps the pre-existing dispatch envelope byte-identical when the
+relevant config knob is off.
+
 ## [0.9.6] — 2026-05-16
 
 **Squad multi-agent + SDK 1.0.0 companion bindings.** Six SDK 0.9.8

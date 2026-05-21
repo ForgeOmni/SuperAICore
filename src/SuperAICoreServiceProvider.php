@@ -67,6 +67,67 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 dir:  (string) (config('super-ai-core.browser_screenshots.dir')  ?? 'super-ai-core/browser-screenshots'),
             );
         });
+
+        // P0-1 SnapshotDiffService — wraps SuperAgent GitShadowStore +
+        // shells `git --git-dir=<shadow.git> diff` for per-file diff
+        // envelopes. SuperAgentBackend reads this binding when a dispatch
+        // resolves a project root, snapshots before + after, and writes
+        // the resulting envelope onto `ai_usage_logs.file_diff_summary`.
+        $this->app->singleton(\SuperAICore\Services\SnapshotDiffService::class, function ($app) {
+            try {
+                $logger = $app->make(\Psr\Log\LoggerInterface::class);
+            } catch (\Throwable) {
+                $logger = null;
+            }
+            return new \SuperAICore\Services\SnapshotDiffService($logger);
+        });
+
+        // P1-4 RemindersResolver — synthetic system-prompt blocks rendered
+        // from `super-ai-core.reminders.*` rules and matched against
+        // dispatch options/metadata. Opt-in: empty rule list = no-op.
+        $this->app->singleton(\SuperAICore\Services\RemindersResolver::class, function () {
+            $rules = (array) (config('super-ai-core.reminders.rules') ?? []);
+            return new \SuperAICore\Services\RemindersResolver($rules);
+        });
+
+        // P1-6 PermissionEvaluator — opencode-style {permission, pattern,
+        // action} ruleset evaluator. `findLast` wildcard match, default
+        // action 'ask'. Used by SuperAgentBackend to translate per-agent
+        // configuration into allowed_tools / denied_tools at construction.
+        $this->app->singleton(\SuperAICore\Services\PermissionEvaluator::class);
+
+        // P3-9 PtyService — long-lived shell sessions (proc_open + file
+        // log + cursor poll). Phase 1: HTTP long-poll only; Phase 2 will
+        // upgrade to WebSocket via Reverb without changing the wire shape.
+        $this->app->singleton(\SuperAICore\Services\PtyService::class, function ($app) {
+            try {
+                $logger = $app->make(\Psr\Log\LoggerInterface::class);
+            } catch (\Throwable) {
+                $logger = null;
+            }
+            return new \SuperAICore\Services\PtyService($logger);
+        });
+
+        // P3-10 ShareSessionService — host-side queue that pushes
+        // session events to a configured remote share endpoint.
+        $this->app->singleton(\SuperAICore\Services\ShareSessionService::class, function ($app) {
+            try {
+                $logger = $app->make(\Psr\Log\LoggerInterface::class);
+            } catch (\Throwable) {
+                $logger = null;
+            }
+            return new \SuperAICore\Services\ShareSessionService($logger);
+        });
+
+        // P2-8 SubagentPermissionDeriver — when a parent agent dispatches
+        // a sub-agent via SuperAgent's AgentTool, this service forwards
+        // the parent's `denied_tools` so the child inherits the deny set
+        // and can never elevate.
+        $this->app->singleton(\SuperAICore\Services\SubagentPermissionDeriver::class, function ($app) {
+            return new \SuperAICore\Services\SubagentPermissionDeriver(
+                $app->make(\SuperAICore\Services\PermissionEvaluator::class),
+            );
+        });
         $this->app->singleton(CliProcessBuilderRegistry::class, function ($app) {
             return new CliProcessBuilderRegistry($app->make(EngineCatalog::class));
         });
@@ -264,6 +325,17 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 config:     (array) config('super-ai-core.cli_squad', []),
             );
         });
+        // P2-7 — Plan mode orchestrator (opencode plan agent + plan_exit
+        // port). Registered with CliModeRouter so callers can dispatch
+        // `mode: 'plan'` through the same cross-mode seam every other
+        // orchestrator uses.
+        $this->app->singleton(\SuperAICore\Modes\CliPlanOrchestrator::class, function ($app) {
+            return new \SuperAICore\Modes\CliPlanOrchestrator(
+                dispatcher: $app->make(\SuperAICore\Modes\CrossLayerDispatcher::class),
+                logger:     $app->bound('log') ? $app->make('log') : null,
+                config:     (array) config('super-ai-core.modes.plan', []),
+            );
+        });
 
         // Squad TeamRegistry — single source of truth for YAML team
         // definitions. The bundled team library lives in SuperAgent
@@ -295,6 +367,7 @@ class SuperAICoreServiceProvider extends ServiceProvider
             $router->register($app->make(\SuperAICore\Modes\CliAutoMode::class));
             $router->register($app->make(\SuperAICore\Modes\CliSmartOrchestrator::class));
             $router->register($app->make(\SuperAICore\Modes\CliSquadOrchestrator::class));
+            $router->register($app->make(\SuperAICore\Modes\CliPlanOrchestrator::class));
             return $router;
         });
 
@@ -410,6 +483,10 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 \SuperAICore\Console\Commands\SkillRankCommand::class,
                 \SuperAICore\Console\Commands\SkillEvolveCommand::class,
                 \SuperAICore\Console\Commands\SkillCandidatesCommand::class,
+                // P0-3 — shadow-git snapshot retention. Schedule via
+                // app/Console/Kernel.php in the host app:
+                //   $schedule->command('super-ai-core:snapshot-prune')->daily();
+                \SuperAICore\Console\Commands\SnapshotPruneCommand::class,
             ]);
         }
 

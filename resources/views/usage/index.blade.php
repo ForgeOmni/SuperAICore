@@ -282,6 +282,31 @@
                     <td class="text-end text-info">{{ $row->shadow_cost_usd !== null ? '$' . number_format((float) $row->shadow_cost_usd, 6) : '—' }}</td>
                     <td class="text-end text-muted">
                         {{ $row->duration_ms !== null ? $row->duration_ms . 'ms' : '—' }}
+                        @php
+                            $__diff = $row->file_diff_summary ?? null;
+                        @endphp
+                        @if(is_array($__diff) && (($__diff['files'] ?? 0) > 0))
+                            @php
+                                $__diffPanelPayload = [
+                                    'title'   => 'File diff — usage #' . $row->id,
+                                    'type'    => 'json',
+                                    'content' => json_encode($__diff, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                                ];
+                            @endphp
+                            <a href="#" class="ms-1 text-decoration-none"
+                               title="{{ $__diff['files'] }} file(s) changed; +{{ $__diff['additions'] ?? 0 }} −{{ $__diff['deletions'] ?? 0 }}"
+                               data-side-panel-trigger='@json($__diffPanelPayload)'>
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">+{{ $__diff['additions'] ?? 0 }}</span><span
+                                      class="badge bg-danger-subtle text-danger border border-danger-subtle">−{{ $__diff['deletions'] ?? 0 }}</span>
+                            </a>
+                        @endif
+                        @if($row->pre_snapshot && (bool) (config('super-ai-core.snapshot.revert_enabled') ?? true))
+                            <a href="#" class="ms-1 text-decoration-none text-warning"
+                               title="Revert worktree to pre-dispatch snapshot {{ substr($row->pre_snapshot, 0, 7) }}"
+                               onclick="event.preventDefault(); if(confirm('Revert worktree to pre-dispatch snapshot {{ substr($row->pre_snapshot, 0, 7) }}?\n\nTracked files will be restored; untracked files left in place.')) { fetch('{{ route('super-ai-core.usage.revert', $row->id) }}', { method: 'POST', headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}', 'Accept': 'application/json' } }).then(r => r.json()).then(d => alert(d.message || (d.ok ? 'Reverted.' : 'Revert failed.'))); }">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                            </a>
+                        @endif
                         @if(!empty($row->metadata))
                             @php
                                 $__sidePanelPayload = [

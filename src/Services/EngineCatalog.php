@@ -371,7 +371,16 @@ class EngineCatalog
                 // OAuth file, or gcloud ADC. Hosts should skip the loggedIn
                 // gate for this engine.
                 'auth_probe_reliable' => false,
+                // SuperAgent SDK 1.0.5 catalog lists gemini-3.5-pro / -flash /
+                // -flash-lite as the production Gemini 3.x family with thinking
+                // + grounding + thought-parts support. Surface them here so the
+                // CLI engine UI can pick them once gemini-cli routes accept
+                // the slug (the SDK can already drive them via its own
+                // GeminiProvider when used via sdk: tags).
                 'available_models'    => [
+                    'gemini-3.5-pro',
+                    'gemini-3.5-flash',
+                    'gemini-3.5-flash-lite',
                     'gemini-3-pro-preview',
                     'gemini-2.5-pro',
                     'gemini-2.5-flash',

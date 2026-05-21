@@ -18,8 +18,12 @@ use SuperAgent\Providers\ProviderRegistry;
 use SuperAICore\Contracts\Backend;
 use SuperAICore\Services\BrowserScreenshotStore;
 use SuperAICore\Services\EmbeddingProviderFactory;
+use SuperAICore\Services\PermissionEvaluator;
 use SuperAICore\Services\ProviderTypeRegistry;
 use SuperAICore\Services\RateLimiterRegistry;
+use SuperAICore\Services\RemindersResolver;
+use SuperAICore\Services\SnapshotDiffService;
+use SuperAICore\Services\SubagentPermissionDeriver;
 
 /**
  * In-process LLM + tool-use loop via forgeomni/superagent.
@@ -120,6 +124,43 @@ use SuperAICore\Services\RateLimiterRegistry;
  *                                    stays byte-identical for callers
  *                                    that don't drive a browser.
  *
+ * SDK 1.0.5 forwarded options:
+ *
+ *   - summary_prompt: 'structured'|string
+ *                                    Picks the opencode-ported 7-section
+ *                                    Markdown summary template inside
+ *                                    `ConversationCompressor` (or any
+ *                                    custom string the caller wants used
+ *                                    as the summary prompt verbatim).
+ *                                    ~30-50% smaller than the default
+ *                                    summary; preserves blocked-item
+ *                                    state across consecutive
+ *                                    compactions. Per-call wins over
+ *                                    `super-ai-core.compression.summary_prompt`
+ *                                    config default.
+ *   - thinking: ThinkingConfig|array Gemini 3.x family thinking config
+ *                                    (also honored cross-provider). The
+ *                                    SDK gates on `modelSupportsThinking()`
+ *                                    so unsupported targets silently
+ *                                    fall back to non-thinking mode.
+ *   - grounding|google_search: bool  Appends `{googleSearch: {}}` to the
+ *                                    Gemini tools[] list so the model can
+ *                                    cite Google Search results. Silent
+ *                                    no-op on non-Gemini providers.
+ *   - url_context: bool              Appends `{urlContext: {}}` to the
+ *                                    Gemini tools[] list — model can pull
+ *                                    pages by URL. Silent no-op
+ *                                    elsewhere.
+ *   - lsp tool (config: super-ai-core.tools.lsp_enabled)
+ *                                    Real LSP stdio JSON-RPC client
+ *                                    bundled with the SDK (phpactor /
+ *                                    intelephense / gopls / rust-analyzer
+ *                                    / pyright / tsserver / clangd /
+ *                                    bash-language-server / zls). Lazy
+ *                                    via BuiltinToolRegistry classMap;
+ *                                    only prepended to `load_tools` on
+ *                                    the implicit path. Default OFF.
+ *
  * Envelope additions on success:
  *   - usage.cache_read_input_tokens, usage.cache_creation_input_tokens
  *   - cost_usd:   SDK's own turn-summed cost. Dispatcher prefers this
@@ -146,6 +187,10 @@ class SuperAgentBackend implements Backend
         protected ?EmbeddingProviderFactory $embeddingFactory = null,
         protected ?BrowserScreenshotStore $screenshotStore = null,
         protected ?RateLimiterRegistry $rateLimiter = null,
+        protected ?SnapshotDiffService $snapshotDiff = null,
+        protected ?RemindersResolver $reminders = null,
+        protected ?PermissionEvaluator $permissions = null,
+        protected ?SubagentPermissionDeriver $subagentPerms = null,
     ) {}
 
     public function name(): string
@@ -169,9 +214,32 @@ class SuperAgentBackend implements Backend
             $agent = $this->buildAgent($options, $providerConfig);
             $mcpManager = $this->attachMcpTools($agent, $options);
 
-            if (!empty($options['system'])) {
-                $agent->withSystemPrompt((string) $options['system']);
+            // Compose system prompt: caller-supplied → RemindersResolver
+            // synthetic block (opencode session/reminders.ts pattern). The
+            // reminders prepend in front of any caller system so an agent
+            // can both inherit the caller's role + receive context-sensitive
+            // guidance ("you're in a plan-mode session", "you just switched
+            // agents", etc.) without the caller having to know about it.
+            $system = (string) ($options['system'] ?? '');
+            if ($this->reminders !== null) {
+                $reminderBlock = $this->reminders->resolve($options);
+                if ($reminderBlock !== '') {
+                    $system = $system === '' ? $reminderBlock : $reminderBlock . "\n\n" . $system;
+                }
             }
+            if ($system !== '') {
+                $agent->withSystemPrompt($system);
+            }
+
+            // P0-1 — capture the pre-run shadow snapshot so the dispatch can
+            // surface "what this run changed" in the UsageLog row, and so
+            // POST /usage/{id}/revert can restore the worktree to its
+            // pre-call state. Silent no-op when no project root is wired,
+            // SnapshotDiffService isn't bound, or git is missing on PATH.
+            $projectRoot = $this->resolveProjectRoot($options);
+            $preSnapshot = $projectRoot !== null && $this->snapshotDiff !== null
+                ? $this->snapshotDiff->snapshot($projectRoot, 'pre-dispatch')
+                : null;
 
             // SDK 0.9.8 token-bucket rate limiter (8 RPS / 16 burst by
             // default, configurable per provider). Blocks until capacity;
@@ -276,6 +344,31 @@ class SuperAgentBackend implements Backend
                 $envelope['latest_screenshot_url'] = $screenshotUrl;
             }
 
+            // P0-1 — capture the post-run snapshot + structured per-file
+            // diff. Dispatcher persists `pre_snapshot` / `post_snapshot` /
+            // `file_diff_summary` onto the UsageLog row so `/processes`
+            // can render the per-file additions/deletions banner +
+            // expandable patch view, and `POST /usage/{id}/revert` can
+            // restore the worktree later. All three keys are omitted from
+            // the envelope when SnapshotDiffService isn't bound, no project
+            // root is wired, or git is missing on PATH — backend stays
+            // byte-identical for callers that don't drive a tracked repo.
+            if ($projectRoot !== null && $this->snapshotDiff !== null) {
+                $postSnapshot = $this->snapshotDiff->snapshot($projectRoot, 'post-dispatch');
+                if ($preSnapshot !== null) {
+                    $envelope['pre_snapshot'] = $preSnapshot;
+                }
+                if ($postSnapshot !== null) {
+                    $envelope['post_snapshot'] = $postSnapshot;
+                }
+                if ($preSnapshot !== null && $postSnapshot !== null && $preSnapshot !== $postSnapshot) {
+                    $diff = $this->snapshotDiff->diff($projectRoot, $preSnapshot, $postSnapshot);
+                    if ($diff !== null) {
+                        $envelope['file_diff_summary'] = $diff;
+                    }
+                }
+            }
+
             return $envelope;
         } catch (ContextWindowExceededException $e) {
             $this->logProviderError($e, 'context_window_exceeded');
@@ -350,7 +443,95 @@ class SuperAgentBackend implements Backend
             $perCall['trace_context'] = $options['trace_context'];
         }
 
+        // SDK 1.0.5 — opencode-ported `summary_prompt: 'structured'` sentinel
+        // selects the 7-section Markdown summary in `ConversationCompressor`,
+        // ~30-50% smaller than the default 9-section prose summary and
+        // preserves blocked-item state across consecutive compactions.
+        // Precedence: explicit per-call option wins; otherwise the config
+        // default at `super-ai-core.compression.summary_prompt` fires when set.
+        if (isset($options['summary_prompt']) && is_string($options['summary_prompt']) && $options['summary_prompt'] !== '') {
+            $perCall['summary_prompt'] = $options['summary_prompt'];
+        } else {
+            $defaultPrompt = $this->configString('super-ai-core.compression.summary_prompt', '');
+            if ($defaultPrompt !== '') {
+                $perCall['summary_prompt'] = $defaultPrompt;
+            }
+        }
+
+        // SDK 1.0.5 — Gemini 3.x family thinking + grounding + url_context.
+        // GeminiProvider reads these straight off Agent options (per the
+        // 1.0.5 changelog) and translates each to the right wire shape:
+        //   - thinking: accepts a `ThinkingConfig` instance OR a raw config
+        //     array; gated by `modelSupportsThinking()`.
+        //   - grounding|google_search: appends `{googleSearch: {}}` to tools[].
+        //   - url_context: appends `{urlContext: {}}` to tools[].
+        // Silently ignored by non-Gemini providers, so forwarding is safe.
+        if (array_key_exists('thinking', $options)) {
+            $perCall['thinking'] = $options['thinking'];
+        }
+        if (array_key_exists('grounding', $options)) {
+            $perCall['grounding'] = $options['grounding'];
+        }
+        if (array_key_exists('google_search', $options)) {
+            $perCall['google_search'] = $options['google_search'];
+        }
+        if (array_key_exists('url_context', $options)) {
+            $perCall['url_context'] = $options['url_context'];
+        }
+
         return $perCall;
+    }
+
+    /**
+     * Resolve the absolute project root the shadow store should mirror.
+     * Precedence:
+     *   1. options['project_root']  — host-owned explicit hook
+     *   2. config('super-ai-core.snapshot.project_root')  — operator default
+     *   3. base_path()              — Laravel app root, when bound
+     *   4. getcwd()                 — last-resort fallback
+     *
+     * Returns null when the resolved path doesn't exist or isn't a directory
+     * (caller silently degrades to "no snapshot").
+     */
+    protected function resolveProjectRoot(array $options): ?string
+    {
+        $candidates = [
+            $options['project_root'] ?? null,
+            $this->configString('super-ai-core.snapshot.project_root', ''),
+        ];
+        if (function_exists('base_path')) {
+            try {
+                $candidates[] = base_path();
+            } catch (\Throwable) {
+                // Container not bound; skip.
+            }
+        }
+        $candidates[] = getcwd() ?: null;
+
+        foreach ($candidates as $cand) {
+            if (!is_string($cand) || $cand === '') continue;
+            if (!is_dir($cand)) continue;
+            $resolved = realpath($cand);
+            if ($resolved === false) continue;
+            return $resolved;
+        }
+        return null;
+    }
+
+    /**
+     * Read a string config value with container-binding safety. Mirrors
+     * `configBool()` so backend code can run from unit tests that don't
+     * boot the Laravel container.
+     */
+    protected function configString(string $key, string $default = ''): string
+    {
+        if (!function_exists('config')) return $default;
+        try {
+            $val = config($key, $default);
+            return is_string($val) ? $val : $default;
+        } catch (\Throwable) {
+            return $default;
+        }
     }
 
     /**
@@ -557,11 +738,40 @@ class SuperAgentBackend implements Backend
 
         $agent = $this->makeAgent($agentConfig);
 
-        if (!empty($options['allowed_tools']) && is_array($options['allowed_tools'])) {
-            $agent->withAllowedTools(array_values($options['allowed_tools']));
+        // P1-6 — per-agent permission ruleset. When the caller supplies an
+        // explicit allowed_tools / denied_tools, those win (they're the
+        // sharpest signal). Otherwise we consult the PermissionEvaluator
+        // against `super-ai-core.agents.{agent}.permission`. This is how
+        // host configs declare "the `plan` agent can read everything but
+        // can only edit *.md files" without per-call boilerplate.
+        //
+        // P2-8 — sub-agent permission derivation. A child agent must
+        // inherit its parent's deny set (read-only parent → read-only
+        // child). We merge the parent's denied list into whatever the
+        // agent-level rules / explicit options produce so the deny set
+        // monotonically grows down the hierarchy.
+        $agentName = (string) ($options['agent']
+            ?? ($options['metadata']['agent'] ?? ''));
+        $derivedPerms = ($this->permissions !== null && $agentName !== '')
+            ? $this->permissions->deriveForAgent($agentName)
+            : null;
+
+        $allowed = $options['allowed_tools'] ?? null;
+        if (is_array($allowed) && $allowed !== []) {
+            $agent->withAllowedTools(array_values($allowed));
+        } elseif ($derivedPerms !== null && $derivedPerms['allowed_tools'] !== []) {
+            $agent->withAllowedTools($derivedPerms['allowed_tools']);
         }
-        if (!empty($options['denied_tools']) && is_array($options['denied_tools'])) {
-            $agent->withDeniedTools(array_values($options['denied_tools']));
+
+        $explicitDenied = $options['denied_tools'] ?? null;
+        $explicitDenied = is_array($explicitDenied) ? array_values($explicitDenied) : [];
+        $agentDenied    = $derivedPerms['denied_tools'] ?? [];
+        $parentDenied   = $this->subagentPerms !== null
+            ? $this->subagentPerms->deriveDenied($options)
+            : [];
+        $allDenied = array_values(array_unique(array_merge($explicitDenied, $agentDenied, $parentDenied)));
+        if ($allDenied !== []) {
+            $agent->withDeniedTools($allDenied);
         }
 
         // 0.9.7 — `browser` tool isn't in BuiltinToolRegistry::classMap so
@@ -569,6 +779,11 @@ class SuperAgentBackend implements Backend
         // is on. Pre-existing `addTool()` for MCP runs after this in
         // generate(), so MCP tools win on name collision (none today).
         $this->attachBrowserTool($agent, $options);
+        // P0-2 — mid-run HITL `ask_user` tool. Opt-in via
+        // `super-ai-core.tools.ask_user_enabled`. Permission resolution
+        // already ran above this point, so the tool inherits the same
+        // allowed/denied set as every other tool surface.
+        $this->attachAskUserTool($agent, $options);
 
         return $agent;
     }
@@ -586,6 +801,11 @@ class SuperAgentBackend implements Backend
         $tools = [];
         if ($this->configBool('super-ai-core.tools.agent_grep_enabled', false)) {
             $tools[] = 'agent_grep';
+        }
+        // SDK 1.0.5 opencode-ported LSP tool — diagnostics / hover / definition /
+        // touch actions against bundled language servers. Lazy via classMap.
+        if ($this->configBool('super-ai-core.tools.lsp_enabled', false)) {
+            $tools[] = 'lsp';
         }
         return $tools;
     }
@@ -640,6 +860,39 @@ class SuperAgentBackend implements Backend
         } catch (\Throwable $e) {
             if ($this->logger) {
                 $this->logger->debug('SuperAgentBackend: skipping browser tool wiring: ' . $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * P0-2 — register the `ask_user` HITL tool when the operator opted in
+     * (`super-ai-core.tools.ask_user_enabled`). The tool inserts an
+     * `ai_user_questions` row, polls for an answer, and returns the user's
+     * reply as a tool result. Dispatch context (session_id / process_id /
+     * agent_label) is read off the same options the UI uses to scope
+     * Process Monitor rows so the question card lands in the right panel.
+     *
+     * @param array<string,mixed> $options
+     */
+    protected function attachAskUserTool(Agent $agent, array $options): void
+    {
+        if (!$this->configBool('super-ai-core.tools.ask_user_enabled', false)) return;
+        if (!class_exists(\SuperAICore\Services\Tools\AskUserTool::class)) return;
+
+        $sessionId = $options['metadata']['session_id'] ?? ($options['session_id'] ?? null);
+        $processId = $options['process_id']             ?? ($options['external_label'] ?? null);
+        $agentLabel = $options['metadata']['agent']     ?? ($options['agent'] ?? null);
+
+        try {
+            $tool = new \SuperAICore\Services\Tools\AskUserTool(
+                sessionId:  is_string($sessionId)  && $sessionId  !== '' ? $sessionId  : null,
+                processId:  is_string($processId)  && $processId  !== '' ? $processId  : null,
+                agentLabel: is_string($agentLabel) && $agentLabel !== '' ? $agentLabel : null,
+            );
+            $agent->addTool($tool);
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->debug('SuperAgentBackend: skipping ask_user tool wiring: ' . $e->getMessage());
             }
         }
     }

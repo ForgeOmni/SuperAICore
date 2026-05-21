@@ -21,6 +21,8 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague d'outils jcode (0.9.0 / SDK 0.9.7)](#vague-doutils-jcode-090--sdk-097)
   - [Vague d'alignement DeepSeek-TUI (0.9.1 / SDK 0.9.8)](#vague-dalignement-deepseek-tui-091--sdk-098)
   - [Vague de fiabilité TaskRunner (0.9.2)](#vague-de-fiabilité-taskrunner-092)
+  - [Vague Squad multi-agent + SDK 1.0.0 (0.9.6)](#vague-squad-multi-agent--sdk-100-096)
+  - [Vague de fonctionnalités inspirées d'opencode (0.9.7 / SDK 1.0.5)](#vague-de-fonctionnalités-inspirées-dopencode-097--sdk-105)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -319,6 +321,132 @@ câblage CacheAwareCompressor, overrides RateLimiterRegistry,
 intégration UI chat AdHocMemoryRegistry, side-panels
 ConversationForkService, endpoints de complétion DeepSeek FIM) :
 [docs/advanced-usage.fr.md §28](docs/advanced-usage.fr.md).
+
+### Vague de fonctionnalités inspirées d'opencode (0.9.7 / SDK 1.0.5)
+
+La contrainte SDK passe de `^1.0` à `^1.0.5`, intégrant les correctifs
+de transcoder pour le handoff cross-provider, le matching de permissions
+opencode `BashArity`, le template de résumé compacté à 7 sections,
+le vrai client LSP du SDK (`LSPTool`), la détection sémantique de
+boucle `LlmLoopChecker`, le serveur ACP v1 stdio, et la famille
+Gemini 3.5 / 3.x avec thinking + grounding + thought-parts. Sur ce
+bump SDK, dix patterns d'[opencode](https://github.com/sst/opencode)
+(`packages/opencode/src/`) sont portés et exposés comme fonctionnalités
+de première classe. Lancez `php artisan migrate` après mise à jour —
+0.9.7 livre 3 nouvelles tables + 3 nouvelles colonnes sur
+`ai_usage_logs`.
+
+- **Résumé de diff par fichier sur chaque dispatch** (0.9.7) —
+  `SuperAgentBackend` photographie le worktree avant et après chaque
+  appel via le `GitShadowStore` du SDK, puis
+  `Services\SnapshotDiffService` produit un envelope structuré
+  `{additions, deletions, files, diffs[]}` où chaque diff porte
+  `{file, additions, deletions, status, patch, truncated}`. Persisté
+  sur `ai_usage_logs.file_diff_summary` à côté des deux hashs de
+  snapshot (`pre_snapshot`, `post_snapshot`). La page `/usage`
+  affiche un badge `+N −M` par ligne + un side-panel pour visualiser
+  le diff. Modélisé sur opencode `session/summary.ts` +
+  `snapshot.diffFull()`.
+- **Outil HITL `ask_user` mid-run** (0.9.7) —
+  `Services\Tools\AskUserTool` (opt-in via
+  `AI_CORE_TOOLS_ASK_USER=true`) permet à l'agent d'interrompre et
+  poser une question de clarification à l'opérateur avec options
+  prédéfinies. Les lignes atterrissent dans la nouvelle table
+  `ai_user_questions` et sont rendues comme cartes inline sur
+  `/processes` (polling 4s). Modélisé sur opencode `tool/question.ts`.
+  Endpoints : `/processes/questions{,/{id}/answer,/{id}/cancel}`.
+- **Revert du worktree au snapshot pré-dispatch** (0.9.7) —
+  `POST /usage/{id}/revert` lit `pre_snapshot` sur la ligne UsageLog
+  et restaure le worktree via le `GitShadowStore::restore()` du SDK.
+  Les fichiers trackés sont restaurés ; les fichiers non-trackés sont
+  laissés en place. Gardé par `AI_CORE_SNAPSHOT_REVERT_ENABLED`
+  (défaut on). La page `/usage` affiche un bouton ↩ sur chaque ligne
+  ayant un snapshot.
+- **Rétention shadow-git** (0.9.7) —
+  Commande Artisan `super-ai-core:snapshot-prune` parcourt chaque
+  `shadow.git` sous `~/.superagent/history/`, expire le reflog des
+  commits plus vieux que `--days` (défaut 7), puis lance
+  `git gc --prune=now`. Supporte `--dry-run`. À programmer depuis
+  `Kernel.php` :
+  `$schedule->command('super-ai-core:snapshot-prune')->daily()`.
+  Modélisé sur la politique `prune = "7.days"` d'opencode.
+- **Rappels de session par injection synthétique** (0.9.7) —
+  `Services\RemindersResolver` lit
+  `super-ai-core.reminders.rules` et préfixe des blocs synthétiques de
+  system prompt quand le prédicat `when` (chemins en notation
+  pointée → globs fnmatch contre options/metadata) correspond.
+  Modélisé sur opencode `session/reminders.ts`.
+- **Ruleset de permissions par agent** (0.9.7) —
+  `Services\PermissionEvaluator` porte opencode
+  `permission/evaluate.ts` (règles `{permission, pattern, action}`,
+  last-match-wins, wildcards fnmatch, action par défaut `ask`).
+  Configurez par agent dans `super-ai-core.agents.{name}.permission` ;
+  `SuperAgentBackend` projette le ruleset sur le
+  `withAllowedTools()` / `withDeniedTools()` de l'agent SDK quand
+  l'appelant n'a pas passé de listes explicites.
+- **Mode plan (`Modes\CliPlanOrchestrator`)** (0.9.7) —
+  workflow en trois phases plan → approve → build. Phase 1 dispatche
+  une run plan-only (outils d'édition refusés sauf pour le fichier
+  plan) et écrit un markdown plan dans
+  `.superagent/plans/{session}.md`. Phase 2 ouvre une ligne
+  `ai_user_questions` avec `[Approve, Reject]`. Phase 3 délègue au
+  build backend avec un prompt synthétique contenant le plan
+  approuvé. Enregistré avec `CliModeRouter` sous le nom de mode
+  `plan`. Auto-approuve quand HITL est désactivé pour rester
+  utilisable en CI. Config : `super-ai-core.modes.plan.*`. Modélisé
+  sur opencode `agent/agent.ts` + `tool/plan.ts`.
+- **Dérivation de permissions sous-agent** (0.9.7) —
+  `Services\SubagentPermissionDeriver` fusionne les `denied_tools` du
+  parent dans ceux de l'enfant pour qu'un parent read-only produise
+  toujours des enfants read-only. Lit
+  `options['parent_denied_tools']` (explicite) ou
+  `options['metadata']['parent_agent']` (résolu via le
+  `PermissionEvaluator`). Modélisé sur opencode
+  `agent/subagent-permissions.ts`.
+- **Sessions shell PTY long-terme, Phase 1** (0.9.7) —
+  `Services\PtyService` + `Http\Controllers\PtyController`
+  spawnent des sessions `proc_open` et streamment stdout via
+  long-poll par cursor. Endpoints :
+  `POST /pty/sessions` (spawn),
+  `GET /pty/sessions/{id}/poll?cursor=N` (poll),
+  `POST /pty/sessions/{id}/kill` (terminer). Opt-in via
+  `AI_CORE_PTY_ENABLED=true`. Phase 2 (différée) passera le transport
+  à WebSocket via Reverb / Soketi sans changer le protocole cursor.
+- **File d'attente hôte pour partage de session** (0.9.7) —
+  `Services\ShareSessionService` génère un triplet `{share_id,
+  secret, share_url}` par session et POST les lignes UsageLog + les
+  payloads `file_diff_summary` attachés vers un sharer distant
+  configurable (`AI_CORE_SHARE_REMOTE_URL`) avec un Bearer token. Se
+  rabat sur un template d'URL local
+  (`AI_CORE_SHARE_LOCAL_URL_TEMPLATE`, avec placeholder
+  `{share_id}`) si aucune URL distante n'est configurée. Modélisé sur
+  opencode `share/share-next.ts`.
+- **Outil LSP SDK 1.0.5** (0.9.7) — opt-in via
+  `AI_CORE_TOOLS_LSP=true` ; `SuperAgentBackend` ajoute `lsp` au
+  `load_tools` implicite. L'agent récupère le client LSP intégré du
+  SDK (phpactor / intelephense / gopls / rust-analyzer / pyright /
+  tsserver / clangd / bash-language-server / zls). Chargé en lazy par
+  le `BuiltinToolRegistry` classMap du SDK.
+- **Résumé compacté structuré (opencode)** (0.9.7) — réglez
+  `AI_CORE_COMPRESSION_SUMMARY_PROMPT=structured` pour activer le
+  template Markdown 7 sections du SDK sur chaque dispatch
+  (Goal / Constraints / Progress / Decisions / Next Steps / Critical
+  Context / Relevant Files). ~30-50% plus court que le résumé 9
+  sections par défaut et préserve l'état blocked entre compactions.
+  `options['summary_prompt']` per-call l'emporte.
+- **Gemini 3.5 thinking + grounding + URL context** (0.9.7) —
+  les options per-call `thinking`, `grounding` / `google_search`, et
+  `url_context` passent directement au `GeminiProvider` du SDK
+  (ignorées silencieusement par les autres providers).
+  `EngineCatalog` liste désormais `gemini-3.5-pro / -flash /
+  -flash-lite` pour le moteur gemini-cli ; `CopilotModelResolver`
+  reçoit un alias famille `gemini` résolvant vers
+  `gemini-3-pro-preview`.
+
+Recettes complètes (tableau de bord diff par fichier, intégration
+AskUserTool, workflow mode plan, rappels de session, permissions par
+agent, sessions PTY, partage de session) :
+[docs/advanced-usage.fr.md §29](docs/advanced-usage.fr.md).
 
 ### Installateur CLI & santé
 

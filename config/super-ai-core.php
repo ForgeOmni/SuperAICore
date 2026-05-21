@@ -145,6 +145,26 @@ return [
         // SuperAgentBackend instantiates + addTool()'s it directly when
         // this flag is on.
         'browser_enabled'    => (bool) env('AI_CORE_TOOLS_BROWSER', false),
+
+        // Mid-run HITL `ask_user` tool. Opt-in. When on, SuperAgentBackend
+        // attaches the `AskUserTool` (writes to `ai_user_questions`, polls
+        // for the answer, blocks the agent loop on user reply). UI lives
+        // at `/processes/questions` — render an inline card per pending row.
+        'ask_user_enabled'   => (bool) env('AI_CORE_TOOLS_ASK_USER', false),
+
+        // SDK 1.0.5 `LSPTool` (`lsp`) — opencode-ported stdio JSON-RPC
+        // language-server client. Exposes diagnostics / hover /
+        // definition / touch actions against any of the 9 bundled
+        // servers (phpactor, intelephense, gopls, rust-analyzer,
+        // pyright, typescript-language-server, clangd,
+        // bash-language-server, zls) detected by composer.json / go.mod
+        // / Cargo.toml / package.json / etc. Lazy-loaded via SDK
+        // BuiltinToolRegistry classMap, so this just adds 'lsp' to
+        // load_tools on the implicit path. Default OFF because the
+        // tool spawns a subprocess per (server, root-dir) pair; flip
+        // on when the agent should be able to consult diagnostics
+        // mid-loop rather than only via Bash.
+        'lsp_enabled'        => (bool) env('AI_CORE_TOOLS_LSP', false),
     ],
 
     // ─── UI features (0.9.0) ───
@@ -194,6 +214,97 @@ return [
         'cache_aware' => (bool) env('AI_CORE_COMPRESSION_CACHE_AWARE', true),
         'pin_head'    => (int)  env('AI_CORE_COMPRESSION_PIN_HEAD', 4),
         'pin_system'  => (bool) env('AI_CORE_COMPRESSION_PIN_SYSTEM', true),
+
+        // SDK 1.0.5 — opencode-style 7-section structured Markdown summary
+        // template, ~30-50% smaller output than the default 9-section prose
+        // summary and preserves blocked-item state across compactions.
+        // Set to 'structured' to opt every dispatch into it; set to null
+        // (default) to keep SDK behaviour. Per-call override remains
+        // available via `options.summary_prompt`.
+        'summary_prompt' => env('AI_CORE_COMPRESSION_SUMMARY_PROMPT', null),
+    ],
+
+    // ─── Shadow-git snapshots + per-file diff summaries (opencode-inspired) ───
+    // SuperAgentBackend uses SuperAgent SDK's `GitShadowStore` to checkpoint
+    // the worktree before + after each dispatch. SnapshotDiffService then
+    // produces a structured `{additions, deletions, files, diffs[]}` envelope
+    // that lands on the UsageLog row as `file_diff_summary`.
+    //
+    // `POST /usage/{id}/revert` reads `pre_snapshot` and calls
+    // `GitShadowStore::restore()`. `super-ai-core:snapshot-prune` walks every
+    // shadow repo under `~/.superagent/history/` and trims commits older
+    // than `retention_days`.
+    'snapshot' => [
+        'enabled'        => (bool) env('AI_CORE_SNAPSHOT_ENABLED', true),
+        // When null, resolveProjectRoot() falls back to base_path() → getcwd().
+        // Set this when running SuperAICore from a service that should
+        // checkpoint a different worktree (e.g. a multi-tenant runner).
+        'project_root'   => env('AI_CORE_SNAPSHOT_PROJECT_ROOT', null),
+        'retention_days' => (int) env('AI_CORE_SNAPSHOT_RETENTION_DAYS', 7),
+        'max_file_mb'    => (float) env('AI_CORE_SNAPSHOT_MAX_FILE_MB', 2.0),
+        // Allow operators to disable revert in shared deployments (the
+        // route still exists but returns 403 when this is false).
+        'revert_enabled' => (bool) env('AI_CORE_SNAPSHOT_REVERT_ENABLED', true),
+    ],
+
+    // ─── Session reminders (opencode-style synthetic prompt blocks) ───
+    // Each rule has:
+    //   - `when`:  array<string,string> — option/metadata key → value (or
+    //             glob via fnmatch); ALL must match. Empty / omitted = always.
+    //   - `text`:  the markdown block to prepend to the system prompt
+    //   - `name`:  optional debug label
+    // Rules fire in order and concatenate their text with a blank line
+    // between them. RemindersResolver short-circuits when no rules match.
+    'reminders' => [
+        'rules' => [
+            // Example rule (commented to keep default behaviour byte-identical):
+            //   ['name' => 'plan-mode-active',
+            //    'when' => ['agent' => 'plan'],
+            //    'text' => "## Plan mode active\nWrite the plan to `.superagent/plans/{session}.md`. Do NOT call any edit/write tool against the project worktree."],
+        ],
+    ],
+
+    // ─── PTY long-lived shell sessions (P3-9 Phase 1) ───
+    // Enable to surface the `/pty/sessions` endpoints. Phase 1 is
+    // long-poll only (proc_open + flat log + cursor). Phase 2 will add
+    // WebSocket streaming via Reverb; the wire shape stays the same.
+    // Disabled by default because spawning long-lived processes from
+    // an HTTP controller has clear failure modes — read the PtyService
+    // docblock before opting in on a multi-tenant deployment.
+    'pty' => [
+        'enabled' => (bool) env('AI_CORE_PTY_ENABLED', false),
+    ],
+
+    // ─── Session share (P3-10) ───
+    // When `remote_url` is set, ShareSessionService POSTs session-event
+    // batches to that endpoint. Leave empty to disable sharing entirely
+    // (the route returns 403). The `secret` is sent as a Bearer token.
+    'share' => [
+        'enabled'    => (bool) env('AI_CORE_SHARE_ENABLED', false),
+        'remote_url' => env('AI_CORE_SHARE_REMOTE_URL', ''),
+        'secret'     => env('AI_CORE_SHARE_SECRET', ''),
+        // When `remote_url` is empty and `local_url_template` is set,
+        // ShareSessionService falls back to a self-hosted share view
+        // (the host's own SuperAICore can serve as the share viewer).
+        'local_url_template' => env('AI_CORE_SHARE_LOCAL_URL_TEMPLATE', ''),
+    ],
+
+    // ─── Per-agent permission ruleset (opencode-inspired) ───
+    // Each key maps an agent NAME to an opencode-style permission map.
+    // The map keys are tool names; values are either:
+    //   - 'allow' / 'deny' / 'ask' (broadcast for that tool)
+    //   - array<string,string> of glob → action overrides
+    // PermissionEvaluator turns this into allowed_tools / denied_tools on
+    // the SuperAgentBackend. Plan-mode pattern lifted from opencode
+    // `agent/agent.ts`:
+    //
+    //   'plan' => [
+    //       '*'    => 'allow',
+    //       'edit' => ['*' => 'deny', '*.md' => 'allow'],
+    //       'write'=> ['*' => 'deny', '*.md' => 'allow'],
+    //   ],
+    'agents' => [
+        // Default empty — host opt-in.
     ],
 
     // ─── Security primitives (SDK 0.9.8) ───
@@ -260,17 +371,28 @@ return [
     // teams entirely by registering the same name.
     'squad_team_dirs' => array_values(array_filter(array_map('trim', explode(',', (string) env('AI_CORE_SQUAD_TEAM_DIRS', ''))))),
 
-    // ─── Cross-layer mode bridges ───
+    // ─── Cross-layer mode bridges + CLI plan mode (P2-7) ───
+    // - bridge_sdk_squad: reverse SDK squad bridge. When true,
+    //   SuperAICore installs its CrossLayerDispatcher as SuperAgent SDK's
+    //   default squad dispatcher via `SquadDispatcherRegistry`. This lets
+    //   SDK squad calls (AutoModeAgent::runSquad, `superagent auto
+    //   --squad` invoked in-process) route per-role steps onto
+    //   SuperAICore CLI backends through `cli:<name>` provider tags —
+    //   no per-call config required.
+    // - plan: two-phase plan/build orchestrator. See CliPlanOrchestrator
+    //   for the workflow contract.
     'modes' => [
-        // Reverse SDK squad bridge. When true, SuperAICore installs its
-        // CrossLayerDispatcher as SuperAgent SDK's default squad
-        // dispatcher via `SquadDispatcherRegistry`. This lets SDK
-        // squad calls (AutoModeAgent::runSquad, `superagent auto
-        // --squad` invoked in-process) route per-role steps onto
-        // SuperAICore CLI backends through `cli:<name>` provider tags
-        // — no per-call config required. Disable when you want SDK
-        // squad runs to stay self-contained inside the SDK.
         'bridge_sdk_squad' => (bool) env('AI_CORE_BRIDGE_SDK_SQUAD', true),
+        'plan' => [
+            'enabled'          => (bool)   env('AI_CORE_PLAN_ENABLED', true),
+            'plan_backend'     => (string) env('AI_CORE_PLAN_BACKEND', 'cli:claude_cli'),
+            'build_backend'    => (string) env('AI_CORE_PLAN_BUILD_BACKEND', 'cli:claude_cli'),
+            'plan_dir'         => (string) env('AI_CORE_PLAN_DIR', '.superagent/plans'),
+            // null = auto-detect (uses HITL when tools.ask_user_enabled,
+            // else auto-approves so the orchestrator stays usable in CI)
+            'auto_approve'     => env('AI_CORE_PLAN_AUTO_APPROVE', null),
+            'approval_timeout' => (int)    env('AI_CORE_PLAN_APPROVAL_TIMEOUT', 600),
+        ],
     ],
 
     // ─── CLI-layer auto/smart/squad (host-side mirror of SDK modes) ───

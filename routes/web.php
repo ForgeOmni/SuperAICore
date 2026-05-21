@@ -15,6 +15,10 @@ use SuperAICore\Http\Controllers\IntegrationController;
 use SuperAICore\Http\Controllers\LocaleController;
 use SuperAICore\Http\Controllers\ProcessController;
 use SuperAICore\Http\Controllers\ProviderController;
+use SuperAICore\Http\Controllers\PtyController;
+use SuperAICore\Http\Controllers\QuestionController;
+use SuperAICore\Http\Controllers\RevertController;
+use SuperAICore\Http\Controllers\ShareController;
 use SuperAICore\Http\Controllers\UsageApiController;
 use SuperAICore\Http\Controllers\UsageController;
 use Illuminate\Support\Facades\Route;
@@ -95,6 +99,35 @@ Route::post('processes/kill', [ProcessController::class, 'kill'])->name('process
 Route::get('processes/{process}/log', [ProcessController::class, 'log'])
     ->where('process', '[A-Za-z0-9_.-]+')
     ->name('processes.log');
+
+// ─── Mid-run HITL question endpoint (P0-2 — opencode question.ts) ───
+// AskUserTool inserts pending rows; the UI polls /questions and posts
+// the answer back. Status flips unblock the AskUserTool's polling loop.
+Route::get('processes/questions',                  [QuestionController::class, 'index'])->name('processes.questions.index');
+Route::post('processes/questions/{id}/answer',     [QuestionController::class, 'answer'])->where('id', '[0-9]+')->name('processes.questions.answer');
+Route::post('processes/questions/{id}/cancel',     [QuestionController::class, 'cancel'])->where('id', '[0-9]+')->name('processes.questions.cancel');
+
+// ─── Revert worktree to pre-dispatch snapshot (P1-5) ───
+// Reads `pre_snapshot` off the UsageLog row and calls
+// `GitShadowStore::restore()`. Disabled when
+// super-ai-core.snapshot.revert_enabled = false.
+Route::post('usage/{id}/revert', [RevertController::class, 'revert'])->where('id', '[0-9]+')->name('usage.revert');
+
+// ─── PTY long-lived shell stream (P3-9) ───
+// Phase 1: long-poll endpoints (no WebSocket). Phase 2 may upgrade to WS
+// via Laravel Reverb when streaming UX demands it.
+Route::post('pty/sessions',                   [PtyController::class, 'create'])->name('pty.create');
+Route::get('pty/sessions/{id}',               [PtyController::class, 'show'])->where('id', '[0-9]+')->name('pty.show');
+Route::post('pty/sessions/{id}/write',        [PtyController::class, 'write'])->where('id', '[0-9]+')->name('pty.write');
+Route::get('pty/sessions/{id}/poll',          [PtyController::class, 'poll'])->where('id', '[0-9]+')->name('pty.poll');
+Route::post('pty/sessions/{id}/kill',         [PtyController::class, 'kill'])->where('id', '[0-9]+')->name('pty.kill');
+
+// ─── Share session (P3-10) ───
+// Pushes session events to a remote sharer (configured per
+// `super-ai-core.share.remote_url`). Returns the share id + url.
+Route::post('share/sessions/{sessionId}/create',  [ShareController::class, 'create'])->name('share.create');
+Route::post('share/sessions/{sessionId}/destroy', [ShareController::class, 'destroy'])->name('share.destroy');
+Route::get('share/sessions/{sessionId}',          [ShareController::class, 'show'])->name('share.show');
 
 // ─── Headless usage API (v1) ───
 // JSON aggregate endpoint mirroring codex's app-server `/v1/usage`.

@@ -21,6 +21,8 @@
   - [jcode 配套工具波次（0.9.0 / SDK 0.9.7）](#jcode-配套工具波次090--sdk-097)
   - [DeepSeek-TUI 对齐波次（0.9.1 / SDK 0.9.8）](#deepseek-tui-对齐波次091--sdk-098)
   - [TaskRunner 可靠性波次（0.9.2）](#taskrunner-可靠性波次092)
+  - [Squad 多智能体 + SDK 1.0.0 波次（0.9.6）](#squad-多智能体--sdk-100-波次096)
+  - [opencode 借鉴特性波次（0.9.7 / SDK 1.0.5）](#opencode-借鉴特性波次097--sdk-105)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -277,6 +279,109 @@ CacheAwareCompressor 布线、RateLimiterRegistry 覆盖、
 AdHocMemoryRegistry 聊天 UI 接入、ConversationForkService
 侧边面板、DeepSeek FIM 补全端点）见
 [docs/advanced-usage.zh-CN.md §28](docs/advanced-usage.zh-CN.md)。
+
+### opencode 借鉴特性波次（0.9.7 / SDK 1.0.5）
+
+SDK 约束 `^1.0` → `^1.0.5`，引入跨 provider handoff 的 transcoder
+修复、opencode `BashArity` 权限匹配、opencode 7 段紧凑摘要模板、
+SDK 内置的真实 LSP 客户端（`LSPTool`）、`LlmLoopChecker` 语义循环
+检测、ACP v1 stdio 服务器，以及带 thinking + grounding + thought-
+parts 的 Gemini 3.5 / 3.x 系列。在 SDK bump 之上，又从
+[opencode](https://github.com/sst/opencode)（`packages/opencode/src/`）
+移植了 10 个模式作为 SuperAICore 的第一类特性。升级后请运行
+`php artisan migrate` —— 0.9.7 新增 3 张表 + `ai_usage_logs` 上 3
+个新字段。
+
+- **每次调度的逐文件 diff 摘要**（0.9.7）—— `SuperAgentBackend`
+  通过 SDK 的 `GitShadowStore` 在每次调用前后对工作区做快照，
+  `Services\SnapshotDiffService` 生成结构化的
+  `{additions, deletions, files, diffs[]}` envelope，每个 diff 含
+  `{file, additions, deletions, status, patch, truncated}`。落库在
+  `ai_usage_logs.file_diff_summary`，同时记录两个 snapshot 哈希
+  （`pre_snapshot`、`post_snapshot`）。`/usage` 页在每行显示 `+N −M`
+  badge + 侧边 diff 查看面板。对应 opencode `session/summary.ts` +
+  `snapshot.diffFull()`。
+- **运行中 HITL `ask_user` 工具**（0.9.7）——
+  `Services\Tools\AskUserTool`（通过 `AI_CORE_TOOLS_ASK_USER=true`
+  启用）允许 agent 在运行中中断并询问操作者，可附预定义选项。
+  行写入新表 `ai_user_questions`，在 `/processes` 上以内联卡片渲染
+  （4 秒轮询）。对应 opencode `tool/question.ts`。端点：
+  `/processes/questions{,/{id}/answer,/{id}/cancel}`。
+- **工作区回滚到调度前 snapshot**（0.9.7）——
+  `POST /usage/{id}/revert` 读取 UsageLog 行的 `pre_snapshot` 并通过
+  SDK 的 `GitShadowStore::restore()` 还原。已追踪文件回滚，未追踪文件
+  保留。由 `AI_CORE_SNAPSHOT_REVERT_ENABLED` 控制（默认开）。
+  `/usage` 页在记录有 snapshot 的行上显示 ↩ 按钮。
+- **Shadow-git snapshot 保留策略**（0.9.7）——
+  `super-ai-core:snapshot-prune` Artisan 命令遍历
+  `~/.superagent/history/` 下每个 `shadow.git`，过期 `--days` 前的
+  reflog（默认 7），随后执行 `git gc --prune=now`。支持 `--dry-run`。
+  在宿主 `Kernel.php` 中用
+  `$schedule->command('super-ai-core:snapshot-prune')->daily()`
+  排程。对应 opencode 的 `prune = "7.days"` 策略。
+- **会话提醒合成注入**（0.9.7）—— `Services\RemindersResolver`
+  读取 `super-ai-core.reminders.rules`，当某条规则的 `when` 谓词
+  （以 dotted-path → fnmatch 通配符匹配调度 options/metadata）命中
+  时，把合成的 system-prompt 区块前置到调用方的系统提示。对应
+  opencode `session/reminders.ts`。
+- **按 agent 权限规则集**（0.9.7）—— `Services\PermissionEvaluator`
+  移植 opencode `permission/evaluate.ts`（`{permission, pattern, action}`
+  规则、last-match-wins、fnmatch 通配、默认 `ask`）。在
+  `super-ai-core.agents.{name}.permission` 按 agent 配置；
+  `SuperAgentBackend` 在调用方未显式传 `allowed_tools` / `denied_tools`
+  时把规则集投影到 SDK agent 的 `withAllowedTools()` /
+  `withDeniedTools()`。
+- **Plan mode（`Modes\CliPlanOrchestrator`）**（0.9.7）——
+  三阶段 plan → approve → build 流程。第 1 阶段以 plan-only 模式运行
+  模型（仅允许写 plan 文件），把 markdown 计划写入
+  `.superagent/plans/{session}.md`。第 2 阶段开 `ai_user_questions`
+  行让操作者 `[Approve, Reject]`。第 3 阶段把任务交给 build backend，
+  附带含已批准计划的合成 prompt。已通过 `CliModeRouter` 在
+  `plan` 模式名下注册。HITL 关闭时自动批准，保证 CI 可用。配置：
+  `super-ai-core.modes.plan.*`。对应 opencode `agent/agent.ts` +
+  `tool/plan.ts`。
+- **子 agent 权限推导**（0.9.7）—— `Services\SubagentPermissionDeriver`
+  把父 agent 的 `denied_tools` 合并到子 agent，从而 read-only 父
+  agent 永远产生 read-only 子 agent。读取
+  `options['parent_denied_tools']`（显式）或
+  `options['metadata']['parent_agent']`（通过 `PermissionEvaluator`
+  解析）。对应 opencode `agent/subagent-permissions.ts`。
+- **PTY 长连接 shell 会话，Phase 1**（0.9.7）——
+  `Services\PtyService` + `Http\Controllers\PtyController`
+  spawn `proc_open` 子进程，通过 cursor 长轮询把 stdout 流给客户端。
+  端点：`POST /pty/sessions`（spawn）、
+  `GET /pty/sessions/{id}/poll?cursor=N`（poll）、
+  `POST /pty/sessions/{id}/kill`（terminate）。通过
+  `AI_CORE_PTY_ENABLED=true` 启用。Phase 2（暂缓）将通过
+  Reverb / Soketi 把传输升级为 WebSocket，cursor 协议不变。
+- **会话分享主机队列**（0.9.7）—— `Services\ShareSessionService`
+  为每个会话生成 `{share_id, secret, share_url}` 三元组，并把会话的
+  UsageLog 行 + `file_diff_summary` 负载以 Bearer 鉴权的 POST 推送到
+  远端分享服务（`AI_CORE_SHARE_REMOTE_URL`）。未配置远端时回退到
+  本地 URL 模板（`AI_CORE_SHARE_LOCAL_URL_TEMPLATE`，含
+  `{share_id}` 占位符）。对应 opencode `share/share-next.ts`。
+- **SDK 1.0.5 LSP 工具**（0.9.7）—— 通过
+  `AI_CORE_TOOLS_LSP=true` 启用，`SuperAgentBackend` 把 `lsp` 加入
+  隐式 `load_tools`。agent 可调用 SDK 内置的 LSP 客户端（phpactor /
+  intelephense / gopls / rust-analyzer / pyright / tsserver / clangd /
+  bash-language-server / zls）。由 SDK 的 `BuiltinToolRegistry`
+  classMap 懒加载。
+- **Opencode 结构化紧凑摘要**（0.9.7）—— 设
+  `AI_CORE_COMPRESSION_SUMMARY_PROMPT=structured` 让每次调度使用 SDK
+  的 7 段 Markdown 摘要模板（Goal / Constraints / Progress /
+  Decisions / Next Steps / Critical Context / Relevant Files）。比
+  默认 9 段摘要小约 30-50%，跨多次紧凑能保留 blocked 状态。每次调用
+  的 `options['summary_prompt']` 优先级更高。
+- **Gemini 3.5 thinking + grounding + URL context**（0.9.7）——
+  `thinking`、`grounding` / `google_search`、`url_context` 等 per-call
+  选项直接转发给 SDK 的 `GeminiProvider`（其他 provider 静默忽略）。
+  `EngineCatalog` 在 gemini-cli 引擎下列出
+  `gemini-3.5-pro / -flash / -flash-lite`；`CopilotModelResolver`
+  新增 `gemini` 家族别名映射到 `gemini-3-pro-preview`。
+
+完整菜谱（逐文件 diff 仪表盘、AskUserTool 接入、plan mode 工作流、
+会话提醒、按 agent 权限、PTY 会话、会话分享）见
+[docs/advanced-usage.zh-CN.md §29](docs/advanced-usage.zh-CN.md)。
 
 ### CLI 安装器与健康检查
 

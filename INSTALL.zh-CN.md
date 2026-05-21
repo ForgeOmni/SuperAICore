@@ -931,6 +931,170 @@ DEEPSEEK_API_KEY=
 ConversationForkService 侧边面板、DeepSeek FIM 补全端点）见
 [docs/advanced-usage.zh-CN.md §28](docs/advanced-usage.zh-CN.md)。
 
+**0.9.7 —— 4 个新迁移；SDK 约束升至 `^1.0.5`。** SDK 1.0.5 能力包
+（跨 provider handoff transcoder 修复、opencode `BashArity` 权限匹配、
+opencode 7 段结构化摘要、SDK 自带真实 LSP 客户端 + `LSPTool`、
+`LlmLoopChecker` 语义循环检测、ACP v1 stdio 服务器、带 thinking +
+grounding + thought-parts 的 Gemini 3.5 / 3.x）+ 10 个 opencode 借鉴
+特性（逐文件 diff + revert、运行中 HITL 问询工具、snapshot 保留策略、
+会话提醒、按 agent 权限规则集、子 agent 权限推导、plan mode、PTY 长
+连接 shell、会话分享主机队列）。所有 binding 均为 additive + opt-in；
+未启用对应 flag 的宿主，0.9.7 之前行为保持不变。
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+php artisan vendor:publish --tag=super-ai-core-migrations
+php artisan migrate
+php artisan vendor:publish --tag=super-ai-core-config --force   # 可选；获取新 config 块
+```
+
+4 个迁移均为 additive + 可回滚：
+
+- `2026_05_20_000001_add_diff_summary_and_snapshots_to_ai_usage_logs.php`
+  —— `ai_usage_logs` 新增 `pre_snapshot`（varchar 64，可空）、
+  `post_snapshot`（varchar 64，可空）、`file_diff_summary`（json，
+  可空）。旧行为 NULL；通过 `SuperAgentBackend` 的新调用会自动填充。
+- `2026_05_20_000002_create_ai_user_questions_table.php` —— 新表，
+  支撑 `ask_user` HITL 工具。
+- `2026_05_20_000003_create_ai_pty_sessions_table.php` —— 新表，
+  支撑 PTY 长轮询端点。
+- `2026_05_20_000004_create_ai_session_shares_table.php` —— 新表，
+  支撑会话分享主机队列。
+
+可选环境开关（默认全部安全 / 关闭）：
+
+```dotenv
+# ─── Shadow-git 快照 + 逐文件 diff 摘要 ───
+AI_CORE_SNAPSHOT_ENABLED=true
+AI_CORE_SNAPSHOT_PROJECT_ROOT=          # null → base_path() → getcwd()
+AI_CORE_SNAPSHOT_RETENTION_DAYS=7
+AI_CORE_SNAPSHOT_REVERT_ENABLED=true    # POST /usage/{id}/revert
+
+# ─── 运行中 HITL `ask_user` 工具 ───
+AI_CORE_TOOLS_ASK_USER=false            # 默认关，需要时打开
+
+# ─── SDK 1.0.5 LSP 工具 ───
+AI_CORE_TOOLS_LSP=false                 # 默认关；打开后 lsp 工具会被加入 load_tools
+
+# ─── Opencode 结构化压缩摘要 ───
+AI_CORE_COMPRESSION_SUMMARY_PROMPT=     # 设为 "structured" 全局启用
+
+# ─── CLI plan mode（Modes\CliPlanOrchestrator）───
+AI_CORE_PLAN_ENABLED=true
+AI_CORE_PLAN_BACKEND=cli:claude_cli
+AI_CORE_PLAN_BUILD_BACKEND=cli:claude_cli
+AI_CORE_PLAN_DIR=.superagent/plans
+AI_CORE_PLAN_AUTO_APPROVE=              # null → 自动检测（HITL 开 = 等审批，关 = 自动通过）
+AI_CORE_PLAN_APPROVAL_TIMEOUT=600
+
+# ─── PTY 长连接 shell ───
+AI_CORE_PTY_ENABLED=false               # 默认关；按部署需要打开
+
+# ─── 会话分享主机队列 ───
+AI_CORE_SHARE_ENABLED=false
+AI_CORE_SHARE_REMOTE_URL=               # 远端 sharer 基础 URL（POST /api/shares/{id}）
+AI_CORE_SHARE_SECRET=                   # 发给远端的 Bearer token
+AI_CORE_SHARE_LOCAL_URL_TEMPLATE=       # 无远端时的本地 fallback；含 {share_id} 占位
+```
+
+按 agent 权限规则集、会话提醒、snapshot prune 调度都放在
+`super-ai-core.php`：
+
+```php
+// config/super-ai-core.php
+
+'agents' => [
+    'plan' => [
+        'permission' => [
+            '*'    => 'allow',
+            'edit' => ['*' => 'deny', '*.md' => 'allow'],
+            'write'=> ['*' => 'deny', '*.md' => 'allow'],
+        ],
+    ],
+    'explore' => [
+        'permission' => [
+            '*'     => 'deny',
+            'read'  => 'allow',
+            'grep'  => 'allow',
+            'glob'  => 'allow',
+            'bash'  => 'allow',
+        ],
+    ],
+],
+
+'reminders' => [
+    'rules' => [
+        [
+            'name' => 'plan-mode-active',
+            'when' => ['agent' => 'plan'],
+            'text' => "## Plan 模式已激活\n请把计划写到 `.superagent/plans/{session}.md`，不要对工作区文件调用任何 edit/write 工具。",
+        ],
+    ],
+],
+```
+
+在 `app/Console/Kernel.php` 排程 snapshot 清理：
+
+```php
+protected function schedule(Schedule $schedule)
+{
+    $schedule->command('super-ai-core:snapshot-prune')->dailyAt('02:00');
+}
+```
+
+升级时值得过一遍的 11 件事：
+
+1. **逐文件 diff 摘要自动启动。** 只要 SDK 1.0.5 的 `GitShadowStore`
+   能为工作区打快照，每次 `SuperAgentBackend::generate()` 都会把
+   `pre_snapshot` / `post_snapshot` / `file_diff_summary` 写到
+   UsageLog 行；`/usage` 上每行渲染 `+N −M` 徽章。要保持 0.9.7 之前
+   完全 byte-identical 行为可设 `AI_CORE_SNAPSHOT_ENABLED=false`。
+2. **HITL `ask_user` 工具默认关。** `AskUserTool::execute()` 的轮询
+   语义会阻塞 agent 最多 `timeout_seconds`（默认 600），适合人在
+   `/processes` 前面回答的场景，不适合需要回收的 queue worker。只有
+   当人会盯着 `/processes` 答题时才开 `AI_CORE_TOOLS_ASK_USER=true`。
+3. **`/processes/questions` 轮询节奏。** UI 每 4 秒拉一次，服务端
+   `AskUserTool` 每 500ms 查一次 DB。并发问询很高时主要成本在服务端
+   DB 查询，不在浏览器扇出。
+4. **Revert 是写操作 —— 按写操作鉴权。** 路由由
+   `AI_CORE_SNAPSHOT_REVERT_ENABLED`（默认开）和
+   `super-ai-core.route.middleware` 中间件链双重控制。多租户部署在
+   `/usage/{id}/revert` 前再加授权中间件。
+5. **`super-ai-core:snapshot-prune` 是 per-host 的。** 它遍历执行用户
+   `~/.superagent/history/`。多用户机上请按用户分别排程，或者通过
+   `SUPERAGENT_HISTORY_DIR=/var/lib/superagent/history` 把 shadow 目录
+   归并到一处。
+6. **按 agent 权限规则集只在调用方未传 `allowed_tools` /
+   `denied_tools` 时生效。** 显式 per-call 列表覆盖 config-driven
+   ruleset。这是有意为之 —— 上层（PPT / SuperTeam / codex）已经各自
+   算好了 deny 列表，不应被静默覆盖。
+7. **Plan mode 在 `CliModeRouter` 下以 mode 名 `plan` 注册。** 用
+   `app(CliModeRouter::class)->dispatch('plan', $task, $ctx)` 调度。
+   HITL 关时编排器自动批准（为 CI 留口子）。要强制等待审批设
+   `AI_CORE_PLAN_AUTO_APPROVE=false`。
+8. **子 agent 权限推导读两个信号。** 要么在子 dispatch options 显式
+   传 `parent_denied_tools`，要么传 `metadata.parent_agent` 让
+   `PermissionEvaluator` 自己解析父的规则集。deny 集在父 → 子链路上
+   单调增长 —— 子 agent 永不能 elevate。
+9. **PTY 是 Phase 1（长轮询，无 stdin）。**
+   `/pty/sessions/{id}/write` 返回 501，因为 PHP 没法在 HTTP 请求间
+   保持 pipe 存活（除非常驻 worker）。需要输入时客户端用 `expect`
+   风格命令，或等 Phase 2（Laravel Reverb / Soketi 的 WebSocket）。
+10. **会话分享有两种模式。** REMOTE（`AI_CORE_SHARE_REMOTE_URL` 已配）
+    Bearer POST 到外部 sharer；LOCAL（`AI_CORE_SHARE_LOCAL_URL_TEMPLATE`
+    已配）把 URL 渲染到宿主自身的 SuperAICore —— 内网"把会话分享给
+    同事"通常用本地模式。
+11. **SDK 1.0.5 Gemini 3.5 特性直通。** `thinking` / `grounding` /
+    `google_search` / `url_context` per-call 选项透传给
+    `Agent::run($prompt, $options)`，非 Gemini provider 静默忽略。
+    `EngineCatalog` 为 gemini-cli 引擎列出 `gemini-3.5-pro / -flash /
+    -flash-lite`。
+
+完整菜谱（逐文件 diff 看板、AskUserTool 接入、revert 按钮、plan
+mode 工作流、按 agent 权限规则集、子 agent 权限继承、PTY 长轮询
+接入、会话分享主机队列、snapshot 保留调度）见
+[docs/advanced-usage.zh-CN.md §29](docs/advanced-usage.zh-CN.md)。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

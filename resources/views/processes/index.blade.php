@@ -85,6 +85,115 @@
     </div>
 </div>
 
+{{-- P0-2: pending HITL questions emitted by AskUserTool. Poll every 4s,
+     render as warning cards above the stats bar, post answers back via
+     /processes/questions/{id}/answer. Hidden when no rows. --}}
+@if((bool) (config('super-ai-core.tools.ask_user_enabled') ?? false))
+<div id="ai-questions-panel" class="mb-3" style="display:none">
+    <div class="alert alert-warning d-flex align-items-start" style="padding: 0.5rem 0.75rem">
+        <i class="bi bi-question-circle me-2 mt-1"></i>
+        <div class="flex-grow-1 small">
+            <strong>Pending question(s):</strong>
+            <div id="ai-questions-list" class="mt-1"></div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const panel = document.getElementById('ai-questions-panel');
+    const list  = document.getElementById('ai-questions-list');
+    const csrf  = document.querySelector('meta[name="csrf-token"]')?.content
+               || '{{ csrf_token() }}';
+
+    function renderQuestion(q) {
+        const wrap = document.createElement('div');
+        wrap.className = 'mb-2 p-2 border rounded bg-white';
+        const head = document.createElement('div');
+        head.className = 'fw-semibold mb-1';
+        head.textContent = q.question;
+        wrap.appendChild(head);
+
+        const meta = document.createElement('div');
+        meta.className = 'text-muted small mb-2';
+        const parts = [];
+        if (q.process_id)  parts.push('process=' + q.process_id);
+        if (q.session_id)  parts.push('session=' + q.session_id);
+        if (q.agent_label) parts.push('agent=' + q.agent_label);
+        meta.textContent = parts.join(' · ');
+        wrap.appendChild(meta);
+
+        const opts = Array.isArray(q.options) ? q.options : [];
+        if (opts.length > 0) {
+            const btnRow = document.createElement('div');
+            btnRow.className = 'd-flex flex-wrap gap-2';
+            opts.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-sm btn-outline-primary';
+                btn.textContent = opt.label || '';
+                if (opt.description) btn.title = opt.description;
+                btn.onclick = () => answer(q.id, opt.label || '');
+                btnRow.appendChild(btn);
+            });
+            wrap.appendChild(btnRow);
+        } else {
+            const inputRow = document.createElement('div');
+            inputRow.className = 'input-group input-group-sm';
+            const inp = document.createElement('input');
+            inp.type = 'text';
+            inp.className = 'form-control';
+            inp.placeholder = 'Type your answer…';
+            const sendBtn = document.createElement('button');
+            sendBtn.className = 'btn btn-primary';
+            sendBtn.textContent = 'Send';
+            sendBtn.onclick = () => { if (inp.value.trim() !== '') answer(q.id, inp.value); };
+            inputRow.appendChild(inp);
+            inputRow.appendChild(sendBtn);
+            wrap.appendChild(inputRow);
+        }
+
+        const cancelLink = document.createElement('a');
+        cancelLink.href = '#';
+        cancelLink.className = 'small text-muted ms-2';
+        cancelLink.textContent = 'cancel';
+        cancelLink.onclick = (e) => { e.preventDefault(); cancel(q.id); };
+        wrap.appendChild(cancelLink);
+
+        return wrap;
+    }
+
+    function answer(id, value) {
+        fetch('{{ url(config('super-ai-core.route.prefix', 'super-ai-core')) }}/processes/questions/' + id + '/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+            body: JSON.stringify({ answer: value }),
+        }).then(() => poll());
+    }
+
+    function cancel(id) {
+        fetch('{{ url(config('super-ai-core.route.prefix', 'super-ai-core')) }}/processes/questions/' + id + '/cancel', {
+            method: 'POST',
+            headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+        }).then(() => poll());
+    }
+
+    async function poll() {
+        try {
+            const res  = await fetch('{{ url(config('super-ai-core.route.prefix', 'super-ai-core')) }}/processes/questions', { headers: { 'Accept': 'application/json' } });
+            const data = await res.json();
+            const rows = (data.questions || []);
+            list.innerHTML = '';
+            if (rows.length === 0) { panel.style.display = 'none'; return; }
+            panel.style.display = '';
+            rows.forEach(q => list.appendChild(renderQuestion(q)));
+        } catch (e) { /* swallow */ }
+    }
+
+    poll();
+    setInterval(poll, 4000);
+})();
+</script>
+@endif
+
 @php
     $running = collect($processes)->where('status', 'running')->count();
     $zombie  = collect($processes)->where('status', 'zombie')->count();

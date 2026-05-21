@@ -39,8 +39,20 @@ class BackendRegistry
         }
         // SuperAgent backend is hidden entirely when the forgeomni/superagent
         // SDK is not installed, regardless of config — avoids a dead option.
+        // Resolve via container so the optional SnapshotDiffService /
+        // RemindersResolver / PermissionEvaluator / SubagentPermissionDeriver
+        // dependencies wire automatically. Falls back to a bare constructor
+        // when the container isn't bound (early CLI / unit tests).
         if (($config['superagent']['enabled'] ?? true) && $sdkAvailable()) {
-            $this->register(new SuperAgentBackend($logger));
+            $backend = null;
+            if (function_exists('app')) {
+                try {
+                    $backend = app(SuperAgentBackend::class);
+                } catch (\Throwable) {
+                    $backend = null;
+                }
+            }
+            $this->register($backend ?? new SuperAgentBackend($logger));
         }
         // SDK 1.0.0 Squad — multi-agent peer collaboration with per-step
         // model tiering and checkpointing. Requires the SDK like

@@ -48,7 +48,17 @@
       "Bash(vendor/bin/phpunit tests/Unit/Modes/ tests/Unit/Squad/)",
       "Bash(vendor/bin/phpunit --filter='CliModeRouter|CrossModeIntegration')",
       "Bash(vendor/bin/phpunit --filter='CliSquadCrossMode')",
-      "Bash(vendor/bin/phpunit tests/Unit/Squad tests/Unit/Modes)"
+      "Bash(vendor/bin/phpunit tests/Unit/Squad tests/Unit/Modes)",
+      "Bash(gh release *)",
+      "Bash(grep -rn \"compress\\(\\\\$\" /Users/xiyang/PhpstormProjects/SuperAICore/vendor/forgeomni/superagent/src/)",
+      "Bash(vendor/bin/phpunit --no-coverage)",
+      "Bash(vendor/bin/phpunit --filter EngineCatalogTest)",
+      "Bash(git stash *)",
+      "Bash(vendor/bin/phpunit --filter SuperAgentBackendTest)",
+      "Bash(vendor/bin/phpunit --filter \"CopilotModelResolver|CompressionStrategyFactory\")",
+      "Bash(grep -n 'usage->record\\\\|metadata.*=>\\\\|$data\\\\[' /Users/xiyang/PhpstormProjects/SuperAICore/src/Services/UsageRecorder.php)",
+      "Bash(grep -n 'fillable\\\\|$fillable\\\\|protected.*\\\\$casts\\\\|protected $casts' /Users/xiyang/PhpstormProjects/SuperAICore/src/Models/AiUsageLog.php)",
+      "Bash(grep -n 'attachBrowserTool\\\\|attachAskUserTool\\\\|withAllowedTools\\\\|withDeniedTools\\\\|return $agent' /Users/xiyang/PhpstormProjects/SuperAICore/src/Backends/SuperAgentBackend.php)"
     ]
   }
 }

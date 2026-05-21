@@ -259,6 +259,16 @@ class Dispatcher
                                                  ?? ($result['has_cross_mode'] ?? null),
                 ]) ?: null,
                 'idempotency_key' => $idempotencyKey,
+                // P0-1 — shadow-git snapshots + per-file diff envelope. All
+                // three are nullable; backends that don't run through
+                // SuperAgentBackend / GitShadowStore (CLI engines without
+                // PHP-side checkpointing) leave them null.
+                'pre_snapshot'      => isset($result['pre_snapshot']) && is_string($result['pre_snapshot'])
+                                         ? substr($result['pre_snapshot'], 0, 64) : null,
+                'post_snapshot'     => isset($result['post_snapshot']) && is_string($result['post_snapshot'])
+                                         ? substr($result['post_snapshot'], 0, 64) : null,
+                'file_diff_summary' => isset($result['file_diff_summary']) && is_array($result['file_diff_summary'])
+                                         ? $result['file_diff_summary'] : null,
             ]);
             if ($usageLogId !== null) {
                 $result['usage_log_id'] = $usageLogId;

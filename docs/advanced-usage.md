@@ -2631,6 +2631,480 @@ env var.
 
 ---
 
+## 29. SDK 1.0.5 bump + opencode-borrowed feature wave (0.9.7)
+
+Ten patterns lifted from [opencode](https://github.com/sst/opencode)
+on top of the SDK 1.0.5 capability release. The headline is a
+visibility-first dispatch envelope: every SuperAgent dispatch now
+records per-file diffs against a pre/post shadow-git snapshot, the UI
+gets a +/- banner and a revert button, and the agent can interrupt to
+ask the operator a clarifying question without the host having to
+build a side channel. The rest is operational scaffolding: per-agent
+permission rulesets, sub-agent permission inheritance, snapshot
+retention, plan/build mode, PTY shell sessions, and session sharing.
+
+### 29.1 Per-file diff summary + revert button
+
+**Goal**: every dispatch that touches the worktree should leave a
+machine-readable record of what changed, with a one-click revert path
+when the model wrote something it shouldn't have.
+
+**Wiring**:
+
+```bash
+# SDK 1.0.5 (via 0.9.7 SuperAICore bump) — automatic, no config needed
+php artisan migrate                       # picks up the three new ai_usage_logs columns
+
+# Verify the snapshot store is reachable
+php -r 'require "vendor/autoload.php"; var_dump((new SuperAgent\Checkpoint\GitShadowStore(getcwd()))->shadowDir());'
+```
+
+The Dispatcher writes three new columns on `ai_usage_logs`:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `pre_snapshot` | varchar(64) | Shadow-git commit captured BEFORE the dispatch ran. Used by `POST /usage/{id}/revert`. |
+| `post_snapshot` | varchar(64) | Shadow-git commit captured AFTER the dispatch ran. Used as the `to` side of the per-file diff. |
+| `file_diff_summary` | json | `{additions, deletions, files, diffs: [{file, additions, deletions, status, patch, truncated}], truncated}` envelope. |
+
+**Reading the diff envelope from PHP**:
+
+```php
+use SuperAICore\Models\AiUsageLog;
+
+$row = AiUsageLog::find($usageLogId);
+$diff = $row->file_diff_summary;
+echo "+ {$diff['additions']} − {$diff['deletions']} across {$diff['files']} files\n";
+
+foreach ($diff['diffs'] as $f) {
+    echo "  {$f['status']} {$f['file']}   +{$f['additions']} −{$f['deletions']}\n";
+    if ($f['truncated']) {
+        echo "    (patch truncated at 256 KB)\n";
+    }
+}
+```
+
+**Reverting**:
+
+```bash
+# UI: click the ↩ button on a /usage row that has a pre_snapshot.
+# Headless:
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/usage/$ID/revert"
+# → {"ok":true,"message":"Worktree restored to snapshot ab1c2d3.","snapshot":"ab1c2d3…"}
+```
+
+Untracked files added since the snapshot are LEFT in place — the
+restore matches SuperAgent SDK's `GitShadowStore::restore()` contract.
+This is intentional: it lets you keep new logs / artifacts while still
+reverting tracked source files.
+
+**Tuning**:
+
+- `AI_CORE_SNAPSHOT_PROJECT_ROOT` — override the path the shadow store
+  mirrors. Default resolution: `options['project_root']` →
+  `super-ai-core.snapshot.project_root` → `base_path()` → `getcwd()`.
+- `AI_CORE_SNAPSHOT_ENABLED=false` — disable diff recording entirely
+  for a byte-identical pre-0.9.7 envelope.
+- `AI_CORE_SNAPSHOT_REVERT_ENABLED=false` — keep recording but disable
+  the revert endpoint (returns 403).
+- Per-file patches truncate at 256 KB; the whole diff caps at 200 files.
+
+**Daily prune**:
+
+```bash
+php artisan super-ai-core:snapshot-prune --days=7 --dry-run
+php artisan super-ai-core:snapshot-prune --days=7
+```
+
+Or schedule from `app/Console/Kernel.php`:
+
+```php
+protected function schedule(Schedule $schedule)
+{
+    $schedule->command('super-ai-core:snapshot-prune')->dailyAt('02:00');
+}
+```
+
+### 29.2 Mid-run HITL `ask_user` tool
+
+**Goal**: the agent should be able to interrupt and ask the operator
+for a decision when it discovers a fork in the road, instead of
+guessing wrong or waiting for the next prompt.
+
+**Wiring**:
+
+```dotenv
+AI_CORE_TOOLS_ASK_USER=true
+```
+
+That's it. `SuperAgentBackend` attaches `AskUserTool` to every dispatch
+when the flag is on. The tool inserts an `ai_user_questions` row, polls
+every 500ms, and returns the operator's answer (or an error when the
+timeout fires).
+
+**What the model emits** (visible in the agent's tool-use trace):
+
+```json
+{
+  "name": "ask_user",
+  "input": {
+    "question": "The migration adds a NOT NULL column to a 50M-row table. Apply with `IF NOT EXISTS` or write a batched backfill?",
+    "options": [
+      {"label": "IF NOT EXISTS", "description": "One-shot; brief table lock"},
+      {"label": "Batched backfill", "description": "Slow but no lock; safer in production"}
+    ],
+    "timeout_seconds": 1200
+  }
+}
+```
+
+**What the operator sees** on `/processes`: an inline warning card with
+the question, optional buttons for the predefined choices, and a
+free-form text input when no choices were supplied. The card polls
+`/processes/questions` every 4 seconds and disappears when the row's
+status flips to `answered`.
+
+**Programmatic answer** (when you need a non-UI client):
+
+```bash
+curl -X POST -H "Content-Type: application/json" -H "X-CSRF-TOKEN: $TOKEN" \
+  "$BASE_URL/processes/questions/$QUESTION_ID/answer" \
+  -d '{"answer": "Batched backfill"}'
+```
+
+**When NOT to use it**:
+
+- Long-running unattended queue workers — the polling loop blocks the
+  agent for up to `timeout_seconds` (default 600s, capped at 3600s).
+  Leave `AI_CORE_TOOLS_ASK_USER` off for jobs that run without a human
+  present.
+- Branchless decisions the conversation context already disambiguates.
+  The tool description tells the model not to ask for guesses the user
+  could infer; trust that gate.
+
+### 29.3 Session reminders
+
+**Goal**: prepend context-sensitive guidance to the system prompt
+without the caller having to know about it. Useful for plan-mode
+markers, security-sensitive areas, project-specific conventions, etc.
+
+**Config** (`config/super-ai-core.php`):
+
+```php
+'reminders' => [
+    'rules' => [
+        [
+            'name' => 'plan-mode-active',
+            'when' => ['agent' => 'plan'],
+            'text' => "## Plan mode active\nWrite the plan to `.superagent/plans/{session}.md`. Do NOT call any edit/write tool against the project worktree.",
+        ],
+        [
+            'name' => 'security-sensitive-area',
+            'when' => ['metadata.path' => 'src/Auth/*'],
+            'text' => "## Security note\nThis directory holds auth + permission code. Prefer additive changes; flag anything that touches token storage for human review.",
+        ],
+        [
+            'name' => 'compliance-region-eu',
+            'when' => ['metadata.region' => 'eu'],
+            'text' => "## Compliance\nThis dispatch runs in the EU region — GDPR rules apply. Do not include user PII in any prompt body.",
+        ],
+    ],
+],
+```
+
+**Match semantics**:
+
+- `when` keys are dotted-path lookups into `$options` passed to
+  `Dispatcher::dispatch()`. Empty `when` (or omitted) means "always
+  match" — useful for a global compliance banner.
+- Values support shell-style globs (`fnmatch`) so `'metadata.path' =>
+  'src/Auth/*'` matches anything under `src/Auth/`.
+- Rules fire in declaration order; matching bodies are joined with a
+  blank line and prepended to the caller's system prompt.
+
+### 29.4 Per-agent permission ruleset
+
+**Goal**: declarative per-agent tool gating. The `plan` agent should
+only be able to write `.md` plan files; the `explore` agent should be
+read-only; the `build` agent should have the full surface.
+
+**Config** (`config/super-ai-core.php`):
+
+```php
+'agents' => [
+    'plan' => [
+        'permission' => [
+            '*'     => 'allow',
+            'edit'  => ['*' => 'deny', '*.md' => 'allow'],
+            'write' => ['*' => 'deny', '*.md' => 'allow'],
+        ],
+    ],
+    'explore' => [
+        'permission' => [
+            '*'     => 'deny',
+            'read'  => 'allow',
+            'grep'  => 'allow',
+            'glob'  => 'allow',
+            'list'  => 'allow',
+            'bash'  => 'allow',
+        ],
+    ],
+    'build' => [
+        'permission' => [
+            '*' => 'allow',
+        ],
+    ],
+],
+```
+
+**Evaluation semantics** (opencode `permission/evaluate.ts`):
+
+- Rule shape: `{permission, pattern, action}`. Values can be strings
+  (broadcast action for that tool) or per-pattern maps.
+- LAST matching rule wins. A broad `'*' => 'allow'` followed by a
+  specific `'edit' => 'deny'` results in `edit` denied.
+- Default action when nothing matches: `ask`. The evaluator's
+  `project()` method surfaces three lists — `allowed_tools`,
+  `denied_tools`, `ask_tools` — and SuperAgentBackend wires the first
+  two onto the agent. `ask_tools` lets a host build its own HITL hook
+  on a narrower surface.
+
+**Triggering**: pass `options['agent']` (or `metadata.agent`) on the
+dispatch. SuperAgentBackend reads it, consults the evaluator, and
+attaches the resulting allowed/denied lists to the SDK `Agent` —
+unless the caller passed explicit `allowed_tools` / `denied_tools`,
+which always wins.
+
+### 29.5 Plan mode workflow
+
+**Goal**: the model writes a plan to a markdown file; the operator
+approves; the build agent executes the approved plan. Same shape as
+opencode's plan_enter / plan_exit pattern.
+
+**Dispatch**:
+
+```php
+use SuperAICore\Modes\CliModeRouter;
+use SuperAgent\Modes\ModeContext;
+
+$ctx = ModeContext::root('plan');
+$result = app(CliModeRouter::class)->dispatch(
+    'plan',
+    "Refactor the auth middleware to drop the legacy session-token storage path.",
+    $ctx,
+);
+
+echo $result->text;                // build phase output (or plan text if rejected)
+echo $result->modeSpecific['plan_file'];   // .superagent/plans/{session}.md
+echo $result->modeSpecific['phase'];       // completed | plan_rejected
+```
+
+**What happens in order**:
+
+1. **Plan phase**: dispatched against `super-ai-core.modes.plan.plan_backend`
+   (default `cli:claude_cli`). Synthetic system prompt + the
+   `super-ai-core.agents.plan.permission` ruleset (when declared) deny
+   edits outside the plan file. The model writes
+   `.superagent/plans/{session}.md`.
+2. **Approval phase**: an `ai_user_questions` row goes up asking the
+   operator to `[Approve, Reject]`. The orchestrator polls every 500ms
+   until `approval_timeout` (default 600s). When HITL is disabled
+   (`tools.ask_user_enabled=false`), auto-approves so the orchestrator
+   stays usable in CI.
+3. **Build phase**: dispatched against `super-ai-core.modes.plan.build_backend`
+   with a synthetic prompt that points at the approved plan file +
+   includes its full text.
+
+**Config** (`config/super-ai-core.php`):
+
+```php
+'modes' => [
+    'plan' => [
+        'enabled'          => true,
+        'plan_backend'     => 'cli:claude_cli',
+        'build_backend'    => 'cli:claude_cli',
+        'plan_dir'         => '.superagent/plans',
+        'auto_approve'     => null,           // null = auto-detect
+        'approval_timeout' => 600,
+    ],
+],
+```
+
+### 29.6 Sub-agent permission derivation
+
+**Goal**: when a parent agent dispatches a sub-agent (via SuperAgent's
+`AgentTool` or any nested dispatch), the child must inherit the
+parent's deny list. A read-only parent always produces read-only
+children.
+
+**Two signal sources**:
+
+```php
+// Option A: explicit pass-through (use this from your own dispatcher when
+// you know exactly what the parent denied)
+$child = $dispatcher->dispatch([
+    'prompt'              => $task,
+    'agent'               => 'explore',
+    'parent_denied_tools' => ['edit', 'write', 'bash'],
+]);
+
+// Option B: agent-name resolution (let the PermissionEvaluator look up
+// the parent's ruleset from config). Cleaner when the parent is one
+// of the agents declared in super-ai-core.agents.{name}.permission.
+$child = $dispatcher->dispatch([
+    'prompt'   => $task,
+    'agent'    => 'explore',
+    'metadata' => ['parent_agent' => 'plan'],
+]);
+```
+
+**Merge semantics**: child's effective deny set is
+`union(explicit_child_denied, agent_rule_denied, parent_denied)`. It's
+monotonic — children can never elevate.
+
+### 29.7 PTY long-lived shell sessions (Phase 1)
+
+**Goal**: stream long-running shell processes (test watchers, `tail
+-f`, `npm run dev`) into the UI without blocking the agent loop.
+
+**Wiring**:
+
+```dotenv
+AI_CORE_PTY_ENABLED=true
+```
+
+**Spawn**:
+
+```bash
+curl -X POST -H "Content-Type: application/json" -H "X-CSRF-TOKEN: $TOKEN" \
+  "$BASE_URL/pty/sessions" \
+  -d '{"command":"npm run dev","cwd":"/srv/app","title":"vite watcher"}'
+# → {"ok":true,"session":{"id":42,"pid":12345,"status":"running","log_path":"..."}}
+```
+
+**Poll**:
+
+```bash
+curl "$BASE_URL/pty/sessions/42/poll?cursor=0"
+# → {"ok":true,"id":42,"chunk":"vite v5.4.0 ready in 184ms\n  ➜  Local:   http://...","cursor":48,"status":"running","exit_code":null}
+
+# Next poll resumes from the returned cursor
+curl "$BASE_URL/pty/sessions/42/poll?cursor=48"
+```
+
+**Terminate**:
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/pty/sessions/42/kill"
+```
+
+**Phase 1 limitations**:
+
+- No stdin. The `write` endpoint returns 501. PHP can't keep a pipe
+  alive across HTTP requests without a persistent worker.
+- No real TTY. We spawn via `proc_open`, not `openpty`. Consumers that
+  need real terminal semantics (curses-mode TUIs, escape-sequence
+  cursor positioning) won't render right.
+
+**Phase 2 (deferred)** will upgrade the wire to WebSocket via Laravel
+Reverb / Soketi, keeping the cursor-keyed protocol unchanged.
+
+### 29.8 Session share host queue
+
+**Goal**: mint a shareable URL for a session so a colleague can review
+the agent's audit trail without DB access.
+
+**REMOTE mode** (push to an external sharer):
+
+```dotenv
+AI_CORE_SHARE_ENABLED=true
+AI_CORE_SHARE_REMOTE_URL=https://share.acme.example.com
+AI_CORE_SHARE_SECRET=opaque-bearer-token-the-sharer-accepts
+```
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/share/sessions/$SESSION_ID/create"
+# → {"ok":true,"share_id":"abc123…","share_url":"https://share.acme.example.com/shares/abc123…","status":"active","message":"Share ready."}
+```
+
+**LOCAL mode** (intranet — host's own SuperAICore serves the share):
+
+```dotenv
+AI_CORE_SHARE_ENABLED=true
+AI_CORE_SHARE_LOCAL_URL_TEMPLATE=https://internal.acme.example.com/super-ai-core/shares/{share_id}
+```
+
+The local URL template is rendered by substituting `{share_id}` into
+the placeholder. ShareSessionService writes the row but does NOT push
+anywhere; the host is expected to surface a route that reads the row
+and renders the session by its `share_id`.
+
+**Revocation**:
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/share/sessions/$SESSION_ID/destroy"
+```
+
+The local row flips to `revoked`. For REMOTE mode, a best-effort DELETE
+also fires against `<remote_url>/api/shares/<share_id>` — failures are
+silenced because the local revocation alone is sufficient to stop
+surfacing the link.
+
+### 29.9 SDK 1.0.5 plumbing — LSP, structured compactor, Gemini 3.5
+
+- **LSP tool** — set `AI_CORE_TOOLS_LSP=true` and SuperAgentBackend
+  prepends `lsp` to the implicit `load_tools` list. The agent gets
+  `lsp.diagnostics($file)` / `lsp.hover($file, $line, $col)` /
+  `lsp.definition($file, $line, $col)` / `lsp.touch($file)` against
+  any of the SDK's 9 bundled language servers (phpactor, intelephense,
+  gopls, rust-analyzer, pyright, typescript-language-server, clangd,
+  bash-language-server, zls). Per-server root markers are
+  composer.json / go.mod / Cargo.toml / etc.
+- **Structured compactor summary** — set
+  `AI_CORE_COMPRESSION_SUMMARY_PROMPT=structured` to opt every
+  dispatch into SDK 1.0.5's 7-section template (Goal / Constraints /
+  Progress / Decisions / Next Steps / Critical Context / Relevant
+  Files). ~30-50% smaller than the default; preserves blocked-item
+  state across consecutive compactions. Per-call
+  `options['summary_prompt']` wins.
+- **Gemini 3.5 features** — pass `thinking`, `grounding` /
+  `google_search`, `url_context` as per-call options on
+  `Dispatcher::dispatch()`. SuperAgentBackend forwards them to
+  `Agent::run($prompt, $options)`; the SDK's `GeminiProvider` gates on
+  `modelSupportsThinking()` for the thinking branch and only appends
+  `{googleSearch: {}}` / `{urlContext: {}}` to its own `tools[]`.
+  Silently ignored by non-Gemini providers.
+- **Cross-provider handoff transcoder fixes** — SDK 0.9.5's
+  `ChatCompletionsProvider::convertMessage()` early-return bug
+  (corrupted multi-turn tool-use traces against Kimi / GLM / MiniMax /
+  Qwen / OpenAI / OpenRouter / LMStudio) is fixed in the SDK 1.0.5
+  pin. Hosts using `max_turns > 1` against any of those providers
+  upgrade silently — no code changes.
+- **`gemini-3.5-pro / -flash / -flash-lite` in `EngineCatalog`** — the
+  three Gemini 3.5 slugs are now available models for the gemini-cli
+  engine and surface in the dropdown. The system gemini CLI may not
+  accept the 3.5 slugs yet; SDK callers using `sdk:` tags drive them
+  fine today.
+
+### 29.10 When to use each
+
+| You want… | Reach for… |
+|---|---|
+| "show me what this dispatch actually changed" | Per-file diff summary (§29.1) |
+| "undo this run's worktree edits" | Revert endpoint (§29.1) |
+| "agent should ask the user before doing X" | `ask_user` tool (§29.2) |
+| "context-sensitive system-prompt prepend" | Session reminders (§29.3) |
+| "this agent must be read-only" | Per-agent ruleset (§29.4) |
+| "plan first, build only after approval" | Plan mode (§29.5) |
+| "sub-agents must inherit parent's deny set" | Sub-agent perm derivation (§29.6) |
+| "stream a long-running shell into the UI" | PTY sessions (§29.7) |
+| "share this session with a colleague" | Session share queue (§29.8) |
+| "agent needs LSP diagnostics mid-loop" | LSP tool (§29.9) |
+| "smaller compactor summary for long sessions" | `summary_prompt: structured` (§29.9) |
+| "Gemini 3.5 thinking + grounding" | Gemini 3.5 per-call options (§29.9) |
+
+---
+
 ## See also
 
 - [docs/idempotency.md](idempotency.md) — 60s dedup window, repository-level contract

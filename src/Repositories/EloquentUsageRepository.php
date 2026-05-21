@@ -33,7 +33,22 @@ class EloquentUsageRepository implements UsageRepository
             }
         }
 
-        return AiUsageLog::create($data)->id;
+        return AiUsageLog::create($this->onlyFillable($data))->id;
+    }
+
+    /**
+     * Filter the input array down to AiUsageLog's fillable columns so
+     * extra envelope fields the host added (e.g. `pre_snapshot` /
+     * `post_snapshot` / `file_diff_summary` on hosts that haven't run
+     * the 2026_05_20 migration yet) don't trip Eloquent's MassAssignment
+     * guard or hit a non-existent column on legacy schemas. Falls back
+     * to the raw row when the model doesn't expose fillable.
+     */
+    private function onlyFillable(array $data): array
+    {
+        $fillable = (new AiUsageLog())->getFillable();
+        if ($fillable === []) return $data;
+        return array_intersect_key($data, array_flip($fillable));
     }
 
     public function summary(?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null): array
