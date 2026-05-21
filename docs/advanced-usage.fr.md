@@ -2588,6 +2588,493 @@ service provider. Override per-process via la variable env
 
 ---
 
+## 29. Bump SDK 1.0.5 + vague de fonctionnalités inspirées d'opencode (0.9.7)
+
+Dix patterns portés depuis [opencode](https://github.com/sst/opencode)
+au-dessus du release de capacités SDK 1.0.5. La ligne directrice est un
+envelope de dispatch visibility-first : chaque dispatch SuperAgent
+enregistre désormais les diffs par fichier entre un snapshot shadow-git
+pre/post, l'UI obtient un bandeau +/- et un bouton de revert, et l'agent
+peut interrompre pour poser une question de clarification à l'opérateur
+sans que l'hôte n'ait à construire un canal latéral. Le reste est de la
+scafolderie opérationnelle : rulesets de permissions par agent,
+héritage de permissions sous-agent, rétention des snapshots, mode plan
+/ build, sessions shell PTY et partage de session.
+
+### 29.1 Résumé de diff par fichier + bouton revert
+
+**But** : chaque dispatch qui touche au worktree doit laisser une trace
+machine-lisible de ce qui a changé, avec un chemin de revert en un clic
+quand le modèle a écrit quelque chose qu'il n'aurait pas dû.
+
+**Câblage** :
+
+```bash
+# SDK 1.0.5 (via le bump SuperAICore 0.9.7) — automatique, aucune config
+php artisan migrate                       # récupère les trois nouvelles colonnes ai_usage_logs
+
+# Vérifiez que le shadow store est joignable
+php -r 'require "vendor/autoload.php"; var_dump((new SuperAgent\Checkpoint\GitShadowStore(getcwd()))->shadowDir());'
+```
+
+Le Dispatcher écrit trois nouvelles colonnes sur `ai_usage_logs` :
+
+| Colonne | Type | Signification |
+|---|---|---|
+| `pre_snapshot` | varchar(64) | Commit shadow-git capturé AVANT le dispatch. Utilisé par `POST /usage/{id}/revert`. |
+| `post_snapshot` | varchar(64) | Commit shadow-git capturé APRÈS le dispatch. Côté `to` du diff par fichier. |
+| `file_diff_summary` | json | Envelope `{additions, deletions, files, diffs: [{file, additions, deletions, status, patch, truncated}], truncated}`. |
+
+**Lire l'envelope diff depuis PHP** :
+
+```php
+use SuperAICore\Models\AiUsageLog;
+
+$row = AiUsageLog::find($usageLogId);
+$diff = $row->file_diff_summary;
+echo "+ {$diff['additions']} − {$diff['deletions']} sur {$diff['files']} fichiers\n";
+
+foreach ($diff['diffs'] as $f) {
+    echo "  {$f['status']} {$f['file']}   +{$f['additions']} −{$f['deletions']}\n";
+    if ($f['truncated']) {
+        echo "    (patch tronqué à 256 KB)\n";
+    }
+}
+```
+
+**Revert** :
+
+```bash
+# UI : cliquez le bouton ↩ sur une ligne /usage qui a un pre_snapshot.
+# Headless :
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/usage/$ID/revert"
+# → {"ok":true,"message":"Worktree restored to snapshot ab1c2d3.","snapshot":"ab1c2d3…"}
+```
+
+Les fichiers non-trackés ajoutés depuis le snapshot sont LAISSÉS en
+place — le restore matche le contrat
+`GitShadowStore::restore()` du SuperAgent SDK. C'est volontaire : vous
+gardez les nouveaux logs / artefacts tout en revertant les sources
+trackées.
+
+**Réglages** :
+
+- `AI_CORE_SNAPSHOT_PROJECT_ROOT` — override du chemin que le shadow
+  store mirroir. Résolution par défaut :
+  `options['project_root']` → `super-ai-core.snapshot.project_root` →
+  `base_path()` → `getcwd()`.
+- `AI_CORE_SNAPSHOT_ENABLED=false` — désactive complètement
+  l'enregistrement de diff pour un envelope pré-0.9.7 byte-identique.
+- `AI_CORE_SNAPSHOT_REVERT_ENABLED=false` — continue d'enregistrer mais
+  l'endpoint revert renvoie 403.
+- Les patches par fichier tronquent à 256 KB ; le diff entier cap à 200
+  fichiers.
+
+**Prune quotidien** :
+
+```bash
+php artisan super-ai-core:snapshot-prune --days=7 --dry-run
+php artisan super-ai-core:snapshot-prune --days=7
+```
+
+Ou programmez depuis `app/Console/Kernel.php` :
+
+```php
+protected function schedule(Schedule $schedule)
+{
+    $schedule->command('super-ai-core:snapshot-prune')->dailyAt('02:00');
+}
+```
+
+### 29.2 Outil HITL `ask_user` mid-run
+
+**But** : l'agent peut interrompre et demander une décision à
+l'opérateur quand il découvre une bifurcation, au lieu de deviner ou
+d'attendre le prochain prompt.
+
+**Câblage** :
+
+```dotenv
+AI_CORE_TOOLS_ASK_USER=true
+```
+
+C'est tout. `SuperAgentBackend` attache `AskUserTool` à chaque dispatch
+quand le flag est on. L'outil insère une ligne `ai_user_questions`,
+poll toutes les 500ms, et renvoie la réponse de l'opérateur (ou une
+erreur si le timeout fire).
+
+**Ce que le modèle émet** (visible dans la trace tool-use) :
+
+```json
+{
+  "name": "ask_user",
+  "input": {
+    "question": "La migration ajoute une colonne NOT NULL à une table de 50M lignes. Appliquer avec `IF NOT EXISTS` ou écrire un backfill par lot ?",
+    "options": [
+      {"label": "IF NOT EXISTS", "description": "One-shot ; lock table bref"},
+      {"label": "Backfill par lot", "description": "Lent mais sans lock ; plus sûr en prod"}
+    ],
+    "timeout_seconds": 1200
+  }
+}
+```
+
+**Ce que l'opérateur voit** sur `/processes` : une carte d'avertissement
+inline avec la question, des boutons optionnels pour les choix
+prédéfinis, et un champ texte libre quand aucun choix n'est fourni. La
+carte poll `/processes/questions` toutes les 4 secondes et disparaît
+quand le statut de la ligne passe à `answered`.
+
+**Réponse programmatique** (pour un client non-UI) :
+
+```bash
+curl -X POST -H "Content-Type: application/json" -H "X-CSRF-TOKEN: $TOKEN" \
+  "$BASE_URL/processes/questions/$QUESTION_ID/answer" \
+  -d '{"answer": "Backfill par lot"}'
+```
+
+**Quand NE PAS utiliser** :
+
+- Workers de queue long-terme sans surveillance — la boucle de polling
+  bloque l'agent jusqu'à `timeout_seconds` (défaut 600s, capé à
+  3600s). Laissez `AI_CORE_TOOLS_ASK_USER` off pour les jobs qui
+  tournent sans humain présent.
+- Décisions sans bifurcation que le contexte de la conversation
+  désambiguïse déjà. La description de l'outil dit au modèle de ne pas
+  demander de devinettes que l'utilisateur pourrait inférer.
+
+### 29.3 Rappels de session
+
+**But** : préfixer le system prompt avec une guidance context-sensitive
+sans que l'appelant ne le sache. Utile pour marqueurs mode plan, zones
+sécurité-sensible, conventions projet, etc.
+
+**Config** (`config/super-ai-core.php`) :
+
+```php
+'reminders' => [
+    'rules' => [
+        [
+            'name' => 'plan-mode-active',
+            'when' => ['agent' => 'plan'],
+            'text' => "## Mode plan actif\nÉcrivez le plan dans `.superagent/plans/{session}.md`. N'appelez AUCUN outil edit/write contre le worktree projet.",
+        ],
+        [
+            'name' => 'security-sensitive-area',
+            'when' => ['metadata.path' => 'src/Auth/*'],
+            'text' => "## Note sécurité\nCe répertoire contient le code auth + permissions. Préférez les changements additifs ; flaggez tout ce qui touche au stockage de token pour review humain.",
+        ],
+        [
+            'name' => 'compliance-region-eu',
+            'when' => ['metadata.region' => 'eu'],
+            'text' => "## Conformité\nCe dispatch tourne dans la région EU — les règles GDPR s'appliquent. N'incluez aucune PII utilisateur dans le corps du prompt.",
+        ],
+    ],
+],
+```
+
+**Sémantique de matching** :
+
+- Les clés `when` sont des lookups en notation pointée dans `$options`
+  passé à `Dispatcher::dispatch()`. `when` vide (ou omis) signifie
+  « match toujours » — utile pour une bannière de conformité globale.
+- Les valeurs supportent des globs shell-style (`fnmatch`), donc
+  `'metadata.path' => 'src/Auth/*'` matche n'importe quoi sous
+  `src/Auth/`.
+- Les règles tirent dans l'ordre de déclaration ; les bodies qui
+  matchent sont joints par une ligne blanche et préfixés au system
+  prompt de l'appelant.
+
+### 29.4 Ruleset de permissions par agent
+
+**But** : gating d'outils déclaratif par agent. L'agent `plan` ne doit
+écrire que des fichiers `.md` de plan ; l'agent `explore` doit être en
+lecture seule ; l'agent `build` doit avoir toute la surface.
+
+**Config** (`config/super-ai-core.php`) :
+
+```php
+'agents' => [
+    'plan' => [
+        'permission' => [
+            '*'     => 'allow',
+            'edit'  => ['*' => 'deny', '*.md' => 'allow'],
+            'write' => ['*' => 'deny', '*.md' => 'allow'],
+        ],
+    ],
+    'explore' => [
+        'permission' => [
+            '*'     => 'deny',
+            'read'  => 'allow',
+            'grep'  => 'allow',
+            'glob'  => 'allow',
+            'list'  => 'allow',
+            'bash'  => 'allow',
+        ],
+    ],
+    'build' => [
+        'permission' => [
+            '*' => 'allow',
+        ],
+    ],
+],
+```
+
+**Sémantique d'évaluation** (opencode `permission/evaluate.ts`) :
+
+- Forme de règle : `{permission, pattern, action}`. Les valeurs peuvent
+  être string (action broadcast pour cet outil) ou map per-pattern.
+- **La DERNIÈRE règle qui matche gagne**. Un large
+  `'*' => 'allow'` suivi d'un spécifique `'edit' => 'deny'` aboutit à
+  `edit` deny.
+- Action par défaut si rien ne matche : `ask`. La méthode `project()`
+  de l'évaluateur expose trois listes — `allowed_tools`,
+  `denied_tools`, `ask_tools` — et SuperAgentBackend câble les deux
+  premières sur l'agent. `ask_tools` laisse un hôte construire son
+  propre hook HITL sur une surface plus étroite.
+
+**Déclenchement** : passez `options['agent']` (ou `metadata.agent`)
+dans le dispatch. SuperAgentBackend le lit, consulte l'évaluateur, et
+attache les listes allowed/denied à l'`Agent` SDK — sauf si l'appelant
+a passé `allowed_tools` / `denied_tools` explicites, qui gagnent
+toujours.
+
+### 29.5 Workflow mode plan
+
+**But** : le modèle écrit un plan dans un fichier markdown ;
+l'opérateur approuve ; l'agent build exécute le plan approuvé. Même
+forme que le pattern plan_enter / plan_exit d'opencode.
+
+**Dispatch** :
+
+```php
+use SuperAICore\Modes\CliModeRouter;
+use SuperAgent\Modes\ModeContext;
+
+$ctx = ModeContext::root('plan');
+$result = app(CliModeRouter::class)->dispatch(
+    'plan',
+    "Refactorer le middleware auth pour drop le chemin de stockage legacy session-token.",
+    $ctx,
+);
+
+echo $result->text;                // sortie phase build (ou texte plan si refusé)
+echo $result->modeSpecific['plan_file'];   // .superagent/plans/{session}.md
+echo $result->modeSpecific['phase'];       // completed | plan_rejected
+```
+
+**Ce qui se passe dans l'ordre** :
+
+1. **Phase plan** : dispatché contre
+   `super-ai-core.modes.plan.plan_backend` (défaut `cli:claude_cli`).
+   Le system prompt synthétique + le ruleset
+   `super-ai-core.agents.plan.permission` (quand déclaré) refusent les
+   édits hors du fichier plan. Le modèle écrit
+   `.superagent/plans/{session}.md`.
+2. **Phase approbation** : une ligne `ai_user_questions` monte
+   demandant à l'opérateur `[Approve, Reject]`. L'orchestrateur poll
+   toutes les 500ms jusqu'à `approval_timeout` (défaut 600s). Quand
+   HITL est désactivé (`tools.ask_user_enabled=false`), auto-approuve
+   pour que l'orchestrateur reste utilisable en CI.
+3. **Phase build** : dispatché contre
+   `super-ai-core.modes.plan.build_backend` avec un prompt synthétique
+   qui pointe vers le fichier plan approuvé + inclut son texte
+   complet.
+
+**Config** (`config/super-ai-core.php`) :
+
+```php
+'modes' => [
+    'plan' => [
+        'enabled'          => true,
+        'plan_backend'     => 'cli:claude_cli',
+        'build_backend'    => 'cli:claude_cli',
+        'plan_dir'         => '.superagent/plans',
+        'auto_approve'     => null,           // null = auto-détection
+        'approval_timeout' => 600,
+    ],
+],
+```
+
+### 29.6 Dérivation de permissions sous-agent
+
+**But** : quand un agent parent dispatche un sous-agent (via
+l'`AgentTool` de SuperAgent ou n'importe quel dispatch imbriqué),
+l'enfant doit hériter de la liste deny du parent. Un parent read-only
+produit toujours des enfants read-only.
+
+**Deux sources de signal** :
+
+```php
+// Option A : pass-through explicite (utilisez-le depuis votre propre
+// dispatcher quand vous savez exactement ce que le parent a refusé)
+$child = $dispatcher->dispatch([
+    'prompt'              => $task,
+    'agent'               => 'explore',
+    'parent_denied_tools' => ['edit', 'write', 'bash'],
+]);
+
+// Option B : résolution par nom d'agent (laissez le PermissionEvaluator
+// chercher le ruleset du parent dans la config). Plus propre quand le
+// parent est un des agents déclarés dans
+// super-ai-core.agents.{name}.permission.
+$child = $dispatcher->dispatch([
+    'prompt'   => $task,
+    'agent'    => 'explore',
+    'metadata' => ['parent_agent' => 'plan'],
+]);
+```
+
+**Sémantique de merge** : set deny effectif de l'enfant =
+`union(explicit_child_denied, agent_rule_denied, parent_denied)`.
+Monotone — les enfants ne peuvent jamais élever.
+
+### 29.7 Sessions shell PTY long-terme (Phase 1)
+
+**But** : streamer les processus shell long-running (watchers de tests,
+`tail -f`, `npm run dev`) dans l'UI sans bloquer la boucle agent.
+
+**Câblage** :
+
+```dotenv
+AI_CORE_PTY_ENABLED=true
+```
+
+**Spawn** :
+
+```bash
+curl -X POST -H "Content-Type: application/json" -H "X-CSRF-TOKEN: $TOKEN" \
+  "$BASE_URL/pty/sessions" \
+  -d '{"command":"npm run dev","cwd":"/srv/app","title":"vite watcher"}'
+# → {"ok":true,"session":{"id":42,"pid":12345,"status":"running","log_path":"..."}}
+```
+
+**Poll** :
+
+```bash
+curl "$BASE_URL/pty/sessions/42/poll?cursor=0"
+# → {"ok":true,"id":42,"chunk":"vite v5.4.0 ready in 184ms\n  ➜  Local:   http://...","cursor":48,"status":"running","exit_code":null}
+
+# Le poll suivant reprend depuis le cursor renvoyé
+curl "$BASE_URL/pty/sessions/42/poll?cursor=48"
+```
+
+**Terminer** :
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/pty/sessions/42/kill"
+```
+
+**Limitations Phase 1** :
+
+- Pas de stdin. L'endpoint `write` renvoie 501. PHP ne peut pas garder
+  un pipe vivant entre requêtes HTTP sans worker persistant.
+- Pas de vrai TTY. On spawn via `proc_open`, pas `openpty`. Les
+  consommateurs qui ont besoin de sémantique terminal réelle (TUI mode
+  curses, positionnement de curseur par séquence d'échappement) ne
+  rendront pas correctement.
+
+**Phase 2 (différée)** upgradera le transport à WebSocket via Laravel
+Reverb / Soketi, le protocole keyed-cursor restant inchangé.
+
+### 29.8 File d'attente hôte pour partage de session
+
+**But** : générer une URL partageable pour une session afin qu'un
+collègue puisse review la trace d'audit de l'agent sans accès DB.
+
+**Mode REMOTE** (push vers un sharer externe) :
+
+```dotenv
+AI_CORE_SHARE_ENABLED=true
+AI_CORE_SHARE_REMOTE_URL=https://share.acme.example.com
+AI_CORE_SHARE_SECRET=opaque-bearer-token-the-sharer-accepts
+```
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/share/sessions/$SESSION_ID/create"
+# → {"ok":true,"share_id":"abc123…","share_url":"https://share.acme.example.com/shares/abc123…","status":"active","message":"Share ready."}
+```
+
+**Mode LOCAL** (intranet — le propre SuperAICore de l'hôte sert le
+partage) :
+
+```dotenv
+AI_CORE_SHARE_ENABLED=true
+AI_CORE_SHARE_LOCAL_URL_TEMPLATE=https://internal.acme.example.com/super-ai-core/shares/{share_id}
+```
+
+Le template d'URL local est rendu en substituant `{share_id}` dans le
+placeholder. ShareSessionService écrit la ligne mais NE pousse nulle
+part ; l'hôte est censé exposer une route qui lit la ligne et rend la
+session par son `share_id`.
+
+**Révocation** :
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/share/sessions/$SESSION_ID/destroy"
+```
+
+La ligne locale passe à `revoked`. En mode REMOTE, un DELETE
+best-effort fire aussi contre `<remote_url>/api/shares/<share_id>` —
+les échecs sont silencés parce que la révocation locale seule suffit
+à arrêter d'exposer le lien.
+
+### 29.9 Plomberie SDK 1.0.5 — LSP, compactor structuré, Gemini 3.5
+
+- **Outil LSP** — réglez `AI_CORE_TOOLS_LSP=true` et
+  SuperAgentBackend ajoute `lsp` à la liste `load_tools` implicite.
+  L'agent obtient `lsp.diagnostics($file)` /
+  `lsp.hover($file, $line, $col)` /
+  `lsp.definition($file, $line, $col)` / `lsp.touch($file)` contre
+  l'un des 9 serveurs LSP intégrés du SDK (phpactor, intelephense,
+  gopls, rust-analyzer, pyright, typescript-language-server, clangd,
+  bash-language-server, zls). Les root markers par serveur sont
+  composer.json / go.mod / Cargo.toml / etc.
+- **Résumé compacté structuré** — réglez
+  `AI_CORE_COMPRESSION_SUMMARY_PROMPT=structured` pour opter chaque
+  dispatch dans le template 7 sections du SDK 1.0.5 (Goal /
+  Constraints / Progress / Decisions / Next Steps / Critical Context
+  / Relevant Files). ~30-50% plus court que le défaut ; préserve
+  l'état blocked entre compactions. `options['summary_prompt']`
+  per-call gagne.
+- **Fonctionnalités Gemini 3.5** — passez `thinking`, `grounding` /
+  `google_search`, `url_context` comme options per-call sur
+  `Dispatcher::dispatch()`. SuperAgentBackend les transmet à
+  `Agent::run($prompt, $options)` ; le `GeminiProvider` du SDK gate
+  sur `modelSupportsThinking()` pour la branche thinking et
+  n'appende `{googleSearch: {}}` / `{urlContext: {}}` que sur ses
+  propres `tools[]`. Ignoré silencieusement par les autres providers.
+- **Correctifs transcoder handoff cross-provider** — le bug
+  d'early-return de `ChatCompletionsProvider::convertMessage()` du SDK
+  0.9.5 (qui corrompait les traces tool-use multi-tours contre Kimi /
+  GLM / MiniMax / Qwen / OpenAI / OpenRouter / LMStudio) est fixé dans
+  le pin SDK 1.0.5. Les hôtes utilisant `max_turns > 1` contre l'un de
+  ces providers upgrade silencieusement — pas de changement de code.
+- **`gemini-3.5-pro / -flash / -flash-lite` dans `EngineCatalog`** —
+  les trois slugs Gemini 3.5 sont désormais des available_models pour
+  le moteur gemini-cli et apparaissent dans le dropdown. La CLI gemini
+  système peut ne pas accepter les slugs 3.5 encore ; les appelants
+  SDK utilisant les tags `sdk:` les drivent aujourd'hui.
+
+### 29.10 Quand utiliser quoi
+
+| Vous voulez … | Utilisez … |
+|---|---|
+| « Montre-moi ce que ce dispatch a vraiment changé » | Résumé diff par fichier (§29.1) |
+| « Annule les édits worktree de ce run » | Endpoint revert (§29.1) |
+| « L'agent doit demander à l'utilisateur avant de faire X » | Outil `ask_user` (§29.2) |
+| « Préfixe de system prompt context-sensitive » | Rappels de session (§29.3) |
+| « Cet agent doit être read-only » | Ruleset par agent (§29.4) |
+| « Plan d'abord, build seulement après approbation » | Mode plan (§29.5) |
+| « Les sous-agents doivent hériter du set deny du parent » | Dérivation perm sous-agent (§29.6) |
+| « Streamer un shell long-running dans l'UI » | Sessions PTY (§29.7) |
+| « Partager cette session avec un collègue » | File de partage de session (§29.8) |
+| « L'agent a besoin de diagnostics LSP mid-loop » | Outil LSP (§29.9) |
+| « Résumé compacteur plus court pour sessions longues » | `summary_prompt: structured` (§29.9) |
+| « Gemini 3.5 thinking + grounding » | Options per-call Gemini 3.5 (§29.9) |
+
+---
+
 ## Voir aussi
 
 - [docs/idempotency.md](idempotency.md) — fenêtre de dédup 60s, contrat niveau repository

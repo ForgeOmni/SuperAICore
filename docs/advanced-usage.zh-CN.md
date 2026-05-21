@@ -2497,6 +2497,456 @@ per-process 覆盖：env 变量 `SUPERAGENT_MAX_AGENT_DEPTH`。
 
 ---
 
+## 29. SDK 1.0.5 升级 + opencode 借鉴特性波次（0.9.7）
+
+在 SDK 1.0.5 能力包之上从 [opencode](https://github.com/sst/opencode)
+移植的 10 个模式。主线是 visibility-first 的 dispatch envelope：每次
+SuperAgent 调度记录 pre/post shadow-git 快照下的逐文件 diff，UI 上每行
+显示 `+N −M` 条带 + revert 按钮，agent 也可中断流程问操作者要决策，
+不再需要宿主自己搭旁路。其余是运维脚手架：按 agent 权限规则集、子
+agent 权限继承、snapshot 保留策略、plan/build 模式、PTY shell 会话、
+会话分享。
+
+### 29.1 逐文件 diff 摘要 + revert 按钮
+
+**目标**：每次触及工作区的调度都留下可机读的变更记录，模型写错时
+一键回滚。
+
+**接入**：
+
+```bash
+# SDK 1.0.5（经 0.9.7 SuperAICore bump）—— 全自动，无需配置
+php artisan migrate                       # 拉取 ai_usage_logs 上的 3 列
+
+# 验证 shadow 仓库可达
+php -r 'require "vendor/autoload.php"; var_dump((new SuperAgent\Checkpoint\GitShadowStore(getcwd()))->shadowDir());'
+```
+
+Dispatcher 在 `ai_usage_logs` 上写 3 列：
+
+| 列 | 类型 | 含义 |
+|---|---|---|
+| `pre_snapshot` | varchar(64) | 调度运行**前**抓的 shadow-git commit。`POST /usage/{id}/revert` 使用。 |
+| `post_snapshot` | varchar(64) | 调度运行**后**抓的 shadow-git commit。作为逐文件 diff 的 `to` 端。 |
+| `file_diff_summary` | json | `{additions, deletions, files, diffs: [{file, additions, deletions, status, patch, truncated}], truncated}` 信封。 |
+
+**从 PHP 读 diff 信封**：
+
+```php
+use SuperAICore\Models\AiUsageLog;
+
+$row = AiUsageLog::find($usageLogId);
+$diff = $row->file_diff_summary;
+echo "+ {$diff['additions']} − {$diff['deletions']}，{$diff['files']} 个文件\n";
+
+foreach ($diff['diffs'] as $f) {
+    echo "  {$f['status']} {$f['file']}   +{$f['additions']} −{$f['deletions']}\n";
+    if ($f['truncated']) {
+        echo "    （patch 截断在 256 KB）\n";
+    }
+}
+```
+
+**回滚**：
+
+```bash
+# UI：在 /usage 里点带有 pre_snapshot 行上的 ↩ 按钮。
+# Headless：
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/usage/$ID/revert"
+# → {"ok":true,"message":"Worktree restored to snapshot ab1c2d3.","snapshot":"ab1c2d3…"}
+```
+
+快照之后新增的未追踪文件**不**会被动 —— 匹配 SuperAgent SDK
+`GitShadowStore::restore()` 的契约。这是有意为之：你保留新生成的日志
+/ 产物，同时回滚已追踪的源文件。
+
+**可调参数**：
+
+- `AI_CORE_SNAPSHOT_PROJECT_ROOT` —— 重写 shadow 镜像的路径。默认解析
+  顺序：`options['project_root']` →
+  `super-ai-core.snapshot.project_root` → `base_path()` → `getcwd()`。
+- `AI_CORE_SNAPSHOT_ENABLED=false` —— 完全关闭 diff 记录，回到 0.9.7
+  之前的 byte-identical 信封。
+- `AI_CORE_SNAPSHOT_REVERT_ENABLED=false` —— 继续记录但 revert 端点
+  返回 403。
+- 每个文件的 patch 截断在 256 KB；整个 diff 上限 200 个文件。
+
+**每日 prune**：
+
+```bash
+php artisan super-ai-core:snapshot-prune --days=7 --dry-run
+php artisan super-ai-core:snapshot-prune --days=7
+```
+
+或在 `app/Console/Kernel.php` 里排程：
+
+```php
+protected function schedule(Schedule $schedule)
+{
+    $schedule->command('super-ai-core:snapshot-prune')->dailyAt('02:00');
+}
+```
+
+### 29.2 运行中 HITL `ask_user` 工具
+
+**目标**：模型遇到分叉时能中断流程问操作者要决定，而不是猜错或者
+等到下一次 prompt。
+
+**接入**：
+
+```dotenv
+AI_CORE_TOOLS_ASK_USER=true
+```
+
+就这一行。flag 开启后 `SuperAgentBackend` 在每次调度里都挂上
+`AskUserTool`。工具向 `ai_user_questions` 写一行，每 500ms 查一次状态，
+拿到操作者的回答（或 timeout 报错）就返回。
+
+**模型发出的 tool-use**（在 trace 里可见）：
+
+```json
+{
+  "name": "ask_user",
+  "input": {
+    "question": "迁移要给 5000 万行的表加 NOT NULL 列。用 `IF NOT EXISTS` 单次跑，还是写分批回填？",
+    "options": [
+      {"label": "IF NOT EXISTS", "description": "一次性；短时间锁表"},
+      {"label": "分批回填", "description": "慢但无锁；生产更安全"}
+    ],
+    "timeout_seconds": 1200
+  }
+}
+```
+
+**操作者在 `/processes` 看到的**：一张警告卡片，含问题、预定义选项
+按钮（或无选项时的自由文本输入框）。卡片每 4 秒轮询
+`/processes/questions`；行状态翻为 `answered` 后自动消失。
+
+**非 UI 客户端答复**：
+
+```bash
+curl -X POST -H "Content-Type: application/json" -H "X-CSRF-TOKEN: $TOKEN" \
+  "$BASE_URL/processes/questions/$QUESTION_ID/answer" \
+  -d '{"answer": "分批回填"}'
+```
+
+**何时**不**适合用**：
+
+- 长时间无人值守的 queue worker —— 轮询循环会阻塞 agent 最多
+  `timeout_seconds`（默认 600s，上限 3600s）。无人盯的任务请不要开
+  `AI_CORE_TOOLS_ASK_USER`。
+- 上下文已能消歧的无分叉决策。工具描述里明确告诉模型"不要问用户
+  自己能推出来的问题"，相信这个 gate。
+
+### 29.3 会话提醒
+
+**目标**：根据上下文给 system prompt 加前缀（plan 模式标志、安全
+敏感区域、项目专属约定 …），不需要调用方关心。
+
+**配置**（`config/super-ai-core.php`）：
+
+```php
+'reminders' => [
+    'rules' => [
+        [
+            'name' => 'plan-mode-active',
+            'when' => ['agent' => 'plan'],
+            'text' => "## Plan 模式已激活\n请把计划写到 `.superagent/plans/{session}.md`，不要对工作区文件调用任何 edit/write 工具。",
+        ],
+        [
+            'name' => 'security-sensitive-area',
+            'when' => ['metadata.path' => 'src/Auth/*'],
+            'text' => "## 安全提示\n该目录涉及鉴权 + 权限代码。优先做增量改动；任何触及 token 存储的改动请标记需人工 review。",
+        ],
+        [
+            'name' => 'compliance-region-eu',
+            'when' => ['metadata.region' => 'eu'],
+            'text' => "## 合规\n本次调度在 EU 区域 —— 适用 GDPR。任何 prompt 都不要包含用户 PII。",
+        ],
+    ],
+],
+```
+
+**匹配语义**：
+
+- `when` 的 key 是 dotted-path，在 `Dispatcher::dispatch()` 传入的
+  `$options` 上查找。空 `when`（或不写）意味"始终匹配" —— 适合做
+  全局合规横幅。
+- 值支持 shell 风格通配符（`fnmatch`），所以
+  `'metadata.path' => 'src/Auth/*'` 会匹配 `src/Auth/` 下的所有文件。
+- 规则按声明顺序触发；命中的 body 之间空一行拼接，并前置到调用方
+  的 system prompt。
+
+### 29.4 按 agent 权限规则集
+
+**目标**：声明式的每 agent 工具门禁。`plan` agent 只能写 `.md` 计划
+文件；`explore` agent 只读；`build` agent 全开。
+
+**配置**（`config/super-ai-core.php`）：
+
+```php
+'agents' => [
+    'plan' => [
+        'permission' => [
+            '*'     => 'allow',
+            'edit'  => ['*' => 'deny', '*.md' => 'allow'],
+            'write' => ['*' => 'deny', '*.md' => 'allow'],
+        ],
+    ],
+    'explore' => [
+        'permission' => [
+            '*'     => 'deny',
+            'read'  => 'allow',
+            'grep'  => 'allow',
+            'glob'  => 'allow',
+            'list'  => 'allow',
+            'bash'  => 'allow',
+        ],
+    ],
+    'build' => [
+        'permission' => [
+            '*' => 'allow',
+        ],
+    ],
+],
+```
+
+**求值语义**（opencode `permission/evaluate.ts`）：
+
+- 规则形状：`{permission, pattern, action}`。值可以是 string（对该
+  工具广播 action）或按 pattern 分支的 map。
+- **最后一条匹配的规则胜出**。先 `'*' => 'allow'`、再
+  `'edit' => 'deny'`，`edit` 就被拒。
+- 没规则匹配时默认 action 是 `ask`。evaluator 的 `project()` 方法
+  输出三个 list —— `allowed_tools`、`denied_tools`、`ask_tools`，
+  SuperAgentBackend 把前两个接到 agent。`ask_tools` 让宿主在更窄的
+  范围上接 HITL 钩子。
+
+**触发**：在 dispatch 里传 `options['agent']`（或
+`metadata.agent`）。SuperAgentBackend 读到后查 evaluator，把结果接到
+SDK `Agent` —— 除非调用方显式传了 `allowed_tools` / `denied_tools`，
+那就以显式为准。
+
+### 29.5 Plan mode 工作流
+
+**目标**：模型把计划写到 markdown 文件；操作者批准；build agent
+照计划执行。对应 opencode 的 plan_enter / plan_exit。
+
+**调度**：
+
+```php
+use SuperAICore\Modes\CliModeRouter;
+use SuperAgent\Modes\ModeContext;
+
+$ctx = ModeContext::root('plan');
+$result = app(CliModeRouter::class)->dispatch(
+    'plan',
+    "重构 auth middleware，去掉旧的 session-token 存储路径。",
+    $ctx,
+);
+
+echo $result->text;                // build 阶段输出（或被拒绝则是计划全文）
+echo $result->modeSpecific['plan_file'];   // .superagent/plans/{session}.md
+echo $result->modeSpecific['phase'];       // completed | plan_rejected
+```
+
+**按顺序发生的事**：
+
+1. **Plan 阶段**：调度到 `super-ai-core.modes.plan.plan_backend`
+   （默认 `cli:claude_cli`）。合成的 system prompt +
+   `super-ai-core.agents.plan.permission` 规则集（如声明）拒绝写
+   plan 文件以外的内容。模型写
+   `.superagent/plans/{session}.md`。
+2. **审批阶段**：开 `ai_user_questions` 行让操作者
+   `[Approve, Reject]`。编排器每 500ms 查一次，直到
+   `approval_timeout`（默认 600s）。HITL 关时
+   （`tools.ask_user_enabled=false`）自动通过，确保 CI 可用。
+3. **Build 阶段**：调度到 `super-ai-core.modes.plan.build_backend`，
+   合成的 prompt 指向已批准的 plan 文件 + 包含其全文。
+
+**配置**（`config/super-ai-core.php`）：
+
+```php
+'modes' => [
+    'plan' => [
+        'enabled'          => true,
+        'plan_backend'     => 'cli:claude_cli',
+        'build_backend'    => 'cli:claude_cli',
+        'plan_dir'         => '.superagent/plans',
+        'auto_approve'     => null,           // null = 自动检测
+        'approval_timeout' => 600,
+    ],
+],
+```
+
+### 29.6 子 agent 权限推导
+
+**目标**：父 agent 调度子 agent（通过 SuperAgent 的 `AgentTool` 或
+任何嵌套调度）时，子必须继承父的 deny 集。read-only 父必产生
+read-only 子。
+
+**两种信号源**：
+
+```php
+// 方案 A：显式 pass-through（你自己写 dispatcher 且确切知道父禁了什么时用）
+$child = $dispatcher->dispatch([
+    'prompt'              => $task,
+    'agent'               => 'explore',
+    'parent_denied_tools' => ['edit', 'write', 'bash'],
+]);
+
+// 方案 B：按 agent 名解析（让 PermissionEvaluator 自己查父的规则集）。
+// 父是 super-ai-core.agents.{name}.permission 里已声明的 agent 时
+// 这条更干净。
+$child = $dispatcher->dispatch([
+    'prompt'   => $task,
+    'agent'    => 'explore',
+    'metadata' => ['parent_agent' => 'plan'],
+]);
+```
+
+**合并语义**：子有效 deny 集 =
+`union(explicit_child_denied, agent_rule_denied, parent_denied)`。
+单调 —— 子永不能 elevate。
+
+### 29.7 PTY 长连接 shell 会话（Phase 1）
+
+**目标**：把长时间运行的 shell 进程（测试 watcher、`tail -f`、
+`npm run dev`）流到 UI，不阻塞 agent 循环。
+
+**接入**：
+
+```dotenv
+AI_CORE_PTY_ENABLED=true
+```
+
+**Spawn**：
+
+```bash
+curl -X POST -H "Content-Type: application/json" -H "X-CSRF-TOKEN: $TOKEN" \
+  "$BASE_URL/pty/sessions" \
+  -d '{"command":"npm run dev","cwd":"/srv/app","title":"vite watcher"}'
+# → {"ok":true,"session":{"id":42,"pid":12345,"status":"running","log_path":"..."}}
+```
+
+**Poll**：
+
+```bash
+curl "$BASE_URL/pty/sessions/42/poll?cursor=0"
+# → {"ok":true,"id":42,"chunk":"vite v5.4.0 ready in 184ms\n  ➜  Local:   http://...","cursor":48,"status":"running","exit_code":null}
+
+# 下次 poll 从返回的 cursor 续传
+curl "$BASE_URL/pty/sessions/42/poll?cursor=48"
+```
+
+**Terminate**：
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/pty/sessions/42/kill"
+```
+
+**Phase 1 限制**：
+
+- 不支持 stdin。`write` 端点返回 501。PHP 没法在 HTTP 请求间保持 pipe
+  存活（除非常驻 worker）。
+- 不是真 TTY。我们用 `proc_open` 而不是 `openpty`。需要真正终端语义
+  的（curses 风格 TUI、escape 序列移动光标）渲染不正确。
+
+**Phase 2（暂缓）** 把传输换成 Laravel Reverb / Soketi 的
+WebSocket，cursor 协议不变。
+
+### 29.8 会话分享主机队列
+
+**目标**：为会话生成可分享 URL，让同事不通过 DB 就能 review agent
+审计 trail。
+
+**REMOTE 模式**（推到外部 sharer）：
+
+```dotenv
+AI_CORE_SHARE_ENABLED=true
+AI_CORE_SHARE_REMOTE_URL=https://share.acme.example.com
+AI_CORE_SHARE_SECRET=opaque-bearer-token-the-sharer-accepts
+```
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/share/sessions/$SESSION_ID/create"
+# → {"ok":true,"share_id":"abc123…","share_url":"https://share.acme.example.com/shares/abc123…","status":"active","message":"Share ready."}
+```
+
+**LOCAL 模式**（内网 —— 宿主自己的 SuperAICore 当 share 视图）：
+
+```dotenv
+AI_CORE_SHARE_ENABLED=true
+AI_CORE_SHARE_LOCAL_URL_TEMPLATE=https://internal.acme.example.com/super-ai-core/shares/{share_id}
+```
+
+本地 URL 模板把 `{share_id}` 占位符替换出实际 URL。ShareSessionService
+仅写行，**不**做任何推送；宿主需要自己实现一条路由按 `share_id` 读
+行并渲染会话。
+
+**Revoke**：
+
+```bash
+curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/share/sessions/$SESSION_ID/destroy"
+```
+
+本地行翻为 `revoked`。REMOTE 模式下还会 best-effort DELETE
+`<remote_url>/api/shares/<share_id>` —— 失败静默忽略，因为本地撤销
+本身已经足够停止暴露链接。
+
+### 29.9 SDK 1.0.5 配套 —— LSP、结构化压缩摘要、Gemini 3.5
+
+- **LSP 工具** —— 设 `AI_CORE_TOOLS_LSP=true`，SuperAgentBackend 在
+  隐式 `load_tools` 里加上 `lsp`。agent 即可调用
+  `lsp.diagnostics($file)` / `lsp.hover($file, $line, $col)` /
+  `lsp.definition($file, $line, $col)` / `lsp.touch($file)`，背后是
+  SDK 自带的 9 个语言服务器（phpactor、intelephense、gopls、
+  rust-analyzer、pyright、typescript-language-server、clangd、
+  bash-language-server、zls）。各服务器的 root marker 是
+  composer.json / go.mod / Cargo.toml 等。
+- **结构化压缩摘要** —— 设
+  `AI_CORE_COMPRESSION_SUMMARY_PROMPT=structured` 让每次调度都用 SDK
+  1.0.5 的 7 段模板（Goal / Constraints / Progress / Decisions /
+  Next Steps / Critical Context / Relevant Files）。比默认小 30-50%，
+  跨多次压缩能保留 blocked 状态。每次调用的
+  `options['summary_prompt']` 优先级更高。
+- **Gemini 3.5 特性** —— `thinking`、`grounding` / `google_search`、
+  `url_context` 作为 per-call 选项传给 `Dispatcher::dispatch()`。
+  SuperAgentBackend 把它们转发给 `Agent::run($prompt, $options)`；
+  SDK 的 `GeminiProvider` 在 thinking 分支上看
+  `modelSupportsThinking()` gate，仅在自己的 `tools[]` 里追加
+  `{googleSearch: {}}` / `{urlContext: {}}`。非 Gemini provider 静默
+  忽略。
+- **跨 provider handoff transcoder 修复** —— SDK 0.9.5 的
+  `ChatCompletionsProvider::convertMessage()` 在第一个 `tool_use`
+  block 提前 return（破坏 Kimi / GLM / MiniMax / Qwen / OpenAI /
+  OpenRouter / LMStudio 的多轮 tool-use 回放）的 bug 已在 SDK 1.0.5
+  pin 修复。`max_turns > 1` 用上述任一 provider 的宿主升级即可，
+  无需改代码。
+- **`gemini-3.5-pro / -flash / -flash-lite` 进 `EngineCatalog`** ——
+  3 个 Gemini 3.5 slug 成为 gemini-cli 引擎的 available_models 并
+  出现在下拉。系统 gemini CLI 可能还不识别 3.5 slug；用 `sdk:` 标签的
+  SDK 调用方今天就能驱动。
+
+### 29.10 各项适用场景速查
+
+| 你想做 … | 用 … |
+|---|---|
+| "告诉我这次调度到底改了啥" | 逐文件 diff 摘要（§29.1） |
+| "撤销这次 run 的工作区改动" | revert 端点（§29.1） |
+| "让 agent 在做 X 之前问用户" | `ask_user` 工具（§29.2） |
+| "按上下文给 system prompt 加前缀" | 会话提醒（§29.3） |
+| "这个 agent 必须只读" | 按 agent 规则集（§29.4） |
+| "先 plan、批准后再 build" | Plan mode（§29.5） |
+| "子 agent 必须继承父的 deny 集" | 子 agent 权限推导（§29.6） |
+| "把长跑 shell 流到 UI" | PTY 会话（§29.7） |
+| "把会话分享给同事" | 会话分享队列（§29.8） |
+| "agent 想中途看 LSP 诊断" | LSP 工具（§29.9） |
+| "长会话想要更小的压缩摘要" | `summary_prompt: structured`（§29.9） |
+| "Gemini 3.5 thinking + grounding" | Gemini 3.5 per-call 选项（§29.9） |
+
+---
+
 ## 另见
 
 - [docs/idempotency.md](idempotency.md) —— 60 秒去重窗口、repository 层契约
