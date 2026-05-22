@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-Laravel package for unified AI execution across seven execution engines — **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, **GitHub Copilot CLI**, **AWS Kiro CLI**, **Moonshot Kimi Code CLI**, and **SuperAgent SDK**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, and a complete admin UI.
+Laravel package for unified AI execution across eight execution engines — **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, **GitHub Copilot CLI**, **AWS Kiro CLI**, **Moonshot Kimi Code CLI**, **Alibaba Qwen Code CLI**, and **SuperAgent SDK**. Ships with a framework-agnostic CLI, a capability-based dispatcher, MCP server management, usage tracking, cost analytics, an OpenAI-compatible proxy, magic-trace ring-buffer tracing, and a complete admin UI.
 
 Works standalone in a fresh Laravel install. The UI is optional and fully overridable — embed it inside a host application (e.g. SuperTeam) or disable it entirely when only the services are needed.
 
@@ -23,6 +23,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [TaskRunner reliability wave (0.9.2)](#taskrunner-reliability-wave-092)
   - [Squad multi-agent + SDK 1.0.0 wave (0.9.6)](#squad-multi-agent--sdk-100-wave-096)
   - [opencode-borrowed feature wave (0.9.7 / SDK 1.0.5)](#opencode-borrowed-feature-wave-097--sdk-105)
+  - [Qwen + tracing + 9Router wave (0.9.8)](#qwen--tracing--9router-wave-098)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -60,17 +61,18 @@ Each feature below is tagged with the version it landed in. Features without a t
 
 ### Execution engines + provider types
 
-- **Seven execution engines** unified behind a single `Dispatcher` contract:
+- **Eight execution engines** unified behind a single `Dispatcher` contract:
   - **Claude Code CLI** — provider types: `builtin` (local login), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`.
   - **Codex CLI** — `builtin` (ChatGPT login), `openai`, `openai-compatible`.
   - **Gemini CLI** — `builtin` (Google OAuth), `google-ai`, `vertex`.
   - **GitHub Copilot CLI** — `builtin` only (`copilot` binary owns OAuth/keychain/refresh). Reads `.claude/skills/` natively (zero-translation skill pass-through). **Subscription billed** — tracked separately on the dashboard.
   - **AWS Kiro CLI** *(since 0.6.1)* — `builtin` (local `kiro-cli login`), `kiro-api` (stored key injected as `KIRO_API_KEY` for headless). Ships the richest out-of-the-box CLI feature set — native agents, skills, MCP, and **subagent DAG orchestration** (no `SpawnPlan` emulation). Reads Claude's `SKILL.md` format verbatim. **Subscription billed** — credit-based Pro / Pro+ / Power plans.
   - **Moonshot Kimi Code CLI** *(since 0.6.8)* — `builtin` (`kimi login` OAuth via `auth.kimi.com`). Complements the SDK's direct-HTTP `KimiProvider` by covering the OAuth-subscription agentic-loop path, mirroring the `anthropic_api` ↔ `claude_cli` split. Native `Agent` fanout is honoured by default; opt into AICore's three-phase Pipeline via `use_native_agents=false`. **Subscription billed** — Moonshot Pro / Power.
+  - **Alibaba Qwen Code CLI** *(since 0.9.8)* — gemini-cli fork (`QwenLM/qwen-code` v0.16.0). API key only via `DASHSCOPE_API_KEY` / `QWEN_API_KEY` (Qwen OAuth was EOL'd 2026-04-15). Default model `qwen3.7-max` — 1M context, $2.50/$7.50 per 1M, speaks Anthropic's `/v1/messages` natively (drop-in for Claude in fallback chains). **Usage billed.**
   - **SuperAgent SDK** — provider types: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` *(since 0.7.0)* and `lmstudio` *(since 0.7.0)*.
 - **`openai-responses` provider type** *(since 0.7.0)* — routes through the SDK's `OpenAIResponsesProvider` against `/v1/responses`. Auto-detects Azure OpenAI deployments from the `base_url` pattern (adds `api-version=2025-04-01-preview` query string; override via `extra_config.azure_api_version`). When the row stores an `access_token` from a host-app ChatGPT-OAuth flow instead of an API key, the SDK flips the base URL to `chatgpt.com/backend-api/codex` so Plus / Pro / Business subscribers hit their subscription quota.
 - **`lmstudio` provider type** *(since 0.7.0)* — local LM Studio server (default `http://localhost:1234`). OpenAI-compat wire; no real API key needed — the SDK synthesises a placeholder `Authorization` header.
-- **Ten dispatcher adapters** behind the seven engines (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `kimi_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`). CLI adapters when a provider uses `builtin` / `kiro-api`; HTTP adapters when it uses an API key. Addressable directly from the CLI when needed.
+- **Eleven dispatcher adapters** behind the eight engines (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `kimi_cli`, `qwen_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`). CLI adapters when a provider uses `builtin` / `kiro-api`; HTTP adapters when it uses an API key. Addressable directly from the CLI when needed.
 - **`EngineCatalog` single source of truth** — engine labels, icons, dispatcher backends, supported provider types, available models, and the declarative `ProcessSpec` (binary, version/auth-status args, prompt/output/model flags, default flags) live in one PHP service. Adding a new CLI engine means editing `EngineCatalog::seed()` and every picker updates automatically. Host apps override per-engine fields via `super-ai-core.engines` config. `modelOptions($key)` / `modelAliases($key)` *(since 0.5.9)* drive host-app model dropdowns.
 
 ### Skill & sub-agent runner
@@ -419,6 +421,106 @@ mode workflow, session reminders, per-agent permissions, PTY sessions,
 session sharing):
 [docs/advanced-usage.md §29](docs/advanced-usage.md).
 
+### Qwen + tracing + 9Router wave (0.9.8)
+
+The eighth execution engine, an always-on Dispatcher trace ring
+(`chrome://tracing`-viewable, auto-dumps on quota / null result /
+auto-rotate), an OpenAI-compatible proxy at
+`/super-ai-core/v1/chat/completions`, multi-account round-robin with
+cooldowns, real SSE streaming on the three HTTP backends, pre-emptive
+OAuth refreshers for Claude / Codex / Copilot / Kiro, Pi-style
+session tree branching, a progressive-disclosure skill index for the
+non-skill-native CLIs, a pi v3 JSONL exporter, and a `gh-watch`
+GitHub PR / CI reaction engine. No SDK bump — every feature in this
+wave is host-side; the SuperAgent constraint stays at `^1.0.5`.
+
+- **Qwen Code CLI as the 8th engine (`qwen_cli`)** *(0.9.8)* — fork of
+  `gemini-cli` adapted for Alibaba's Qwen family. Implements
+  `Backend`, `StreamingBackend`, and `ScriptedSpawnBackend` so it
+  slots into every existing dispatch path. API key only
+  (`DASHSCOPE_API_KEY` / `QWEN_API_KEY`); OAuth EOL'd 2026-04-15.
+  Default model `qwen3.7-max` (1M context, $2.50/$7.50 per 1M, native
+  Anthropic `/v1/messages` protocol — drop-in for Claude in fallback
+  chains). Toggle via `AI_CORE_QWEN_CLI_ENABLED`.
+- **Dispatcher trace ring (`Tracing\TraceCollector`)** *(0.9.8)* —
+  always-on, lock-free ring of `llm` / `cache` / `provider` / `tool` /
+  `error` events. ~150 KB at 1024 events; zero file-system cost when
+  disabled. Auto-dumps to Chrome Trace Event JSON (viewable in
+  `chrome://tracing`, `https://ui.perfetto.dev`, or the bundled
+  `trace-viewer.html`) on `error` / `rotate` / `timeout` triggers.
+  `SuperAgentBackend` auto-dumps with `trigger=rotate` for
+  `quota_exceeded` / `usage_not_included` / `server_overloaded` /
+  `cyber_policy` so the post-mortem captures the failing envelope.
+  Manual flush: `php artisan dispatcher:dump-trace`. UI:
+  `/super-ai-core/traces`.
+- **OpenAI-compatible proxy** *(0.9.8)* —
+  `Http\Controllers\OpenAiCompatibleController` exposes
+  `GET /v1/models` + `POST /v1/chat/completions` (streaming + non-streaming).
+  `model` accepts either a literal id or an `ai_routing_combos.name`,
+  so Cursor / Cline / Roo / Kiro / continue.dev / the OpenAI SDK can
+  drop in unchanged. Streaming chunks shaped exactly like OpenAI's.
+- **Real SSE streaming on the three HTTP backends** *(0.9.8)* —
+  `AnthropicApiBackend`, `OpenAiApiBackend`, `GeminiApiBackend`
+  implement the new `Contracts\StreamableTextBackend` interface,
+  yielding canonical envelopes (`{type:'text'|'thinking'|'tool_use_delta'|'usage'|'stop'}`).
+  The OpenAI-compat proxy consumes these directly.
+- **Named routing combos (`ai_routing_combos`)** *(0.9.8)* — ordered
+  `[{provider, model}, ...]` resolved at dispatch time. Sits above
+  the static `tier_map`. CRUD: `/super-ai-core/routing/combos[/{name}]`.
+  Per-call override: `--combo=NAME` on `smart` / `squad` / `auto`.
+- **Multi-account round-robin (`AccountRoundRobin`)** *(0.9.8)* —
+  picks the active, non-cooled-down account with the lowest
+  `(priority, last_used_at)` tuple via atomic compare-and-update.
+  `cooldown()` marks accounts for 10 min on `QuotaExceededException`
+  / null result. Backed by the new `ai_provider_accounts` table.
+- **OAuth refresher registry** *(0.9.8)* — pre-emptive token refresh
+  for the four CLIs that own OAuth state in on-disk JSON
+  (Claude / Codex / Copilot / Kiro). Drive via
+  `php artisan super-ai-core:oauth-refresh`; schedule from
+  `app/Console/Kernel.php` with `->everyTenMinutes()`.
+- **Pi-style session tree branching** *(0.9.8)* —
+  `Services\SessionBranchManager` + `ai_session_branches` table.
+  Forking creates a new branch from an old entry; switching
+  auto-summarises the abandoned branch so context isn't lost.
+  Endpoints: `/sessions/{session}/tree`, `/sessions/{session}/fork`,
+  `/sessions/{session}/switch`.
+- **Progressive-disclosure skill index** *(0.9.8)* —
+  `Services\SkillIndexBuilder` emits a compact XML index of every
+  `SKILL.md` (name + description, no body) that `CodexCliBackend` /
+  `GeminiCliBackend` prepend to every prompt. The model reads the
+  body via its existing file-read tool only when it picks a skill.
+  Suppress with `options['skills_disabled']=true` or `--no-skills`.
+- **Pi `kind` discriminator on `ask_user`** *(0.9.8)* — `select` /
+  `confirm` / `input` / `editor` so the `/processes/questions` UI
+  renders the right widget per call (default `select` preserves 0.9.7
+  behaviour).
+- **Caveman mode (`--caveman`)** *(0.9.8)* — output-token compression
+  reminder ported from 9Router. Empirically saves 30-65% on output
+  tokens for reasoning-quick tasks (not for long-form writing).
+- **GitHub PR / CI watcher (`super-ai-core:gh-watch`)** *(0.9.8)* —
+  claude-octopus pattern. Polls every active `ai_pr_watchers` row
+  (ETag-cached), fires per-row actions (`ask_user` / `spawn_squad` /
+  `webhook` / `log`). Schedule via `->everyFiveMinutes()` or daemonise
+  with `--loop=30`.
+- **Pi v3 session JSONL exporter** *(0.9.8)* —
+  `php artisan task-results:export-jsonl` emits one file per
+  `metadata.session_id`. Opt-in via `--i-understand` (the format is
+  lossy); supports `--anonymize`, `--since`.
+- **Apache Arrow tabular round-trip (`Arrow\ArrowSerializer`)** *(0.9.8)* —
+  minimal IPC stream writer (no `apache/arrow` PECL dependency). Opt
+  in per dispatch with `output_format: 'arrow'`; the envelope gains a
+  base64-encoded Arrow stream. 10–100× faster than JSON for wide
+  tabular agent payloads.
+- **SuperTeam agents browser (`/super-ai-core/agents`)** *(0.9.8)* —
+  reads `.claude/agents/*.md` from configurable roots and groups by
+  category (Strategy / Product / Engineering / Business / Security / …).
+  Config: `super-ai-core.agent_catalog.paths`.
+
+Full recipes (Qwen CLI install, tracing viewer setup, OpenAI proxy
+client setup, routing combo CRUD, multi-account onboarding, OAuth
+refresher schedule, session branch forking, gh-watch row schema):
+[docs/advanced-usage.md §30](docs/advanced-usage.md).
+
 ### CLI installer & health
 
 - **`cli:status`** — shows which engine CLIs are installed / logged in, plus install hints for anything missing.
@@ -515,7 +617,8 @@ Optional, only when the respective backend is enabled:
 - `copilot` CLI on `$PATH` — `npm i -g @github/copilot` (then `copilot login`)
 - `kiro-cli` on `$PATH` — [install from kiro.dev](https://kiro.dev/cli/) (then `kiro-cli login`, or set `KIRO_API_KEY` for headless Pro/Pro+/Power)
 - `kimi` CLI on `$PATH` *(since 0.6.8)* — [install from kimi.com](https://kimi.com/code) (then `kimi login`)
-- An Anthropic / OpenAI / Google AI Studio API key for the HTTP backends
+- `qwen` CLI on `$PATH` *(since 0.9.8)* — `npm i -g @qwen-code/qwen-code` (then export `DASHSCOPE_API_KEY` — OAuth EOL'd 2026-04-15)
+- An Anthropic / OpenAI / Google AI Studio / DashScope API key for the HTTP backends
 
 Don't want to remember package names? Run `./vendor/bin/superaicore cli:status` to see what's missing and `./vendor/bin/superaicore cli:install --all-missing` to bootstrap everything (confirmation prompt by default).
 
@@ -526,6 +629,25 @@ composer require forgeomni/superaicore
 php artisan vendor:publish --tag=super-ai-core-config
 php artisan vendor:publish --tag=super-ai-core-migrations
 php artisan migrate
+```
+
+Upgrading from 0.9.7? Just `composer update forgeomni/superaicore` and
+`php artisan migrate` — five additive migrations land in 0.9.8 (`kind`
+column on `ai_user_questions`, plus four new tables:
+`ai_session_branches`, `ai_routing_combos`, `ai_provider_accounts`,
+`ai_pr_watchers`). Re-publish the config to pick up the new
+`tracing.*`, `agent_catalog.*`, and `backends.qwen_cli.*` blocks:
+
+```bash
+php artisan vendor:publish --tag=super-ai-core-config --force
+```
+
+Optional cron entries (host's `app/Console/Kernel.php`):
+
+```php
+$schedule->command('super-ai-core:snapshot-prune')->dailyAt('02:00');   // 0.9.7
+$schedule->command('super-ai-core:oauth-refresh')->everyTenMinutes();   // 0.9.8
+$schedule->command('super-ai-core:gh-watch')->everyFiveMinutes();       // 0.9.8
 ```
 
 Full step-by-step guide: [INSTALL.md](INSTALL.md).
@@ -543,6 +665,7 @@ Full step-by-step guide: [INSTALL.md](INSTALL.md).
 ./vendor/bin/superaicore call "Hello" --backend=copilot_cli                             # GitHub Copilot CLI (subscription)
 ./vendor/bin/superaicore call "Hello" --backend=kiro_cli                                # AWS Kiro CLI (subscription)
 ./vendor/bin/superaicore call "Hello" --backend=kimi_cli                                # Moonshot Kimi Code CLI (OAuth subscription)
+./vendor/bin/superaicore call "Hello" --backend=qwen_cli --api-key=sk-...                # Alibaba Qwen Code CLI (0.9.8+)
 ./vendor/bin/superaicore call "Hello" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # Skip the CLI wrapper and hit the HTTP APIs directly
@@ -705,14 +828,17 @@ Advanced options (idempotency, tracing, SDK features, classified errors): see [d
   Copilot CLI     ────────▶ builtin                  ────▶ copilot_cli
   Kiro CLI        ────────▶ builtin / kiro-api       ────▶ kiro_cli
   Kimi Code CLI   ────────▶ builtin                  ────▶ kimi_cli
+  Qwen Code CLI   ────────▶ dashscope-api            ────▶ qwen_cli      (0.9.8+)
   SuperAgent SDK  ────────▶ anthropic(-proxy) /      ────▶ superagent
                             openai(-compatible) /
                             openai-responses /       (0.7.0+)
                             lmstudio                 (0.7.0+)
 
-  Dispatcher ← BackendRegistry   (owns the 10 adapters above)
+  Dispatcher ← BackendRegistry   (owns the 11 adapters above)
              ← ProviderResolver  (active provider from ProviderRepository)
              ← RoutingRepository (task_type + capability → service)
+             ← AccountRoundRobin (multi-account picker with cooldowns, 0.9.8+)
+             ← TraceCollector    (magic-trace ring; auto-dumps on error/rotate, 0.9.8+)
              ← UsageTracker      (writes to UsageRepository)
              ← CostCalculator    (model pricing → USD)
 ```
@@ -721,7 +847,10 @@ All repositories are interfaces. The service provider auto-binds Eloquent implem
 
 ## Advanced usage
 
-- **[Advanced usage guide](docs/advanced-usage.md)** — idempotency round-trip, W3C trace context, classified provider exceptions, `openai-responses` + Azure OpenAI + ChatGPT OAuth, LM Studio, `http_headers` / `env_http_headers` overrides, SDK features (`extra_body` / `features` / `loop_detection`), `ScriptedSpawnBackend` host migration, skill engine telemetry / BM25 ranker / FIX-mode evolution (0.8.6+), the **0.9.0 jcode wave**, the **0.9.1 DeepSeek-TUI parity wave**, the **0.9.2 TaskRunner reliability wave**, and the **0.9.6 Squad multi-agent + SDK 1.0.0 wave**.
+- **[Advanced usage guide](docs/advanced-usage.md)** — idempotency round-trip, W3C trace context, classified provider exceptions, `openai-responses` + Azure OpenAI + ChatGPT OAuth, LM Studio, `http_headers` / `env_http_headers` overrides, SDK features (`extra_body` / `features` / `loop_detection`), `ScriptedSpawnBackend` host migration, skill engine telemetry / BM25 ranker / FIX-mode evolution (0.8.6+), the **0.9.0 jcode wave**, the **0.9.1 DeepSeek-TUI parity wave**, the **0.9.2 TaskRunner reliability wave**, the **0.9.6 Squad multi-agent + SDK 1.0.0 wave**, the **0.9.7 opencode-borrowed wave**, and the **0.9.8 Qwen + tracing + 9Router wave**.
+- **[Cookbook](examples/cookbook/README.md)** *(0.9.8+)* — five gs-quant-style narrative examples: dispatcher basics, prompt caching, provider rotation, cross-harness resume, tracing quickstart.
+- **[Commercialization tiers](docs/commercialization-tiers.md)** *(0.9.8+)* — reference doc for how a tiered offering (Cloud Dashboard / Managed Dispatcher / Enterprise overlays) could look on top of the MIT core. Nothing in this doc is implemented today.
+- **[Supply chain policy](SUPPLY_CHAIN.md)** *(0.9.8+)* — no Composer lifecycle scripts, `composer install --no-scripts` default, weekly `composer audit`.
 - **[Task runner quickstart](docs/task-runner-quickstart.md)** — full `TaskRunner` option reference.
 - **[Streaming backends](docs/streaming-backends.md)** — `mcp_mode`, per-backend stream formats, `onChunk`.
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** — codex/gemini agent emulation.

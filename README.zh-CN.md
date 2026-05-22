@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-用于统一调度七种 AI 执行引擎的 Laravel 包 —— **Claude Code CLI**、**Codex CLI**、**Gemini CLI**、**GitHub Copilot CLI**、**AWS Kiro CLI**、**Moonshot Kimi Code CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析，以及一套完整的后台管理 UI。
+用于统一调度八种 AI 执行引擎的 Laravel 包 —— **Claude Code CLI**、**Codex CLI**、**Gemini CLI**、**GitHub Copilot CLI**、**AWS Kiro CLI**、**Moonshot Kimi Code CLI**、**Alibaba Qwen Code CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析、OpenAI 兼容代理、magic-trace 风格的环形追踪缓冲，以及一套完整的后台管理 UI。
 
 在干净的 Laravel 项目中可独立运行。UI 可选、可完全替换 —— 既能嵌入宿主应用（例如 SuperTeam），也可以在仅使用服务层时关掉。
 
@@ -23,6 +23,7 @@
   - [TaskRunner 可靠性波次（0.9.2）](#taskrunner-可靠性波次092)
   - [Squad 多智能体 + SDK 1.0.0 波次（0.9.6）](#squad-多智能体--sdk-100-波次096)
   - [opencode 借鉴特性波次（0.9.7 / SDK 1.0.5）](#opencode-借鉴特性波次097--sdk-105)
+  - [Qwen + 追踪 + 9Router 波次（0.9.8）](#qwen--追踪--9router-波次098)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -60,17 +61,18 @@
 
 ### 执行引擎 + provider 类型
 
-- **七个执行引擎**，统一实现同一套 `Dispatcher` 契约：
+- **八个执行引擎**，统一实现同一套 `Dispatcher` 契约：
   - **Claude Code CLI** —— provider 类型：`builtin`（本地登录）、`anthropic`、`anthropic-proxy`、`bedrock`、`vertex`。
   - **Codex CLI** —— `builtin`（ChatGPT 登录）、`openai`、`openai-compatible`。
   - **Gemini CLI** —— `builtin`（Google OAuth）、`google-ai`、`vertex`。
   - **GitHub Copilot CLI** —— 仅 `builtin`（`copilot` 二进制自行处理 OAuth / keychain / 刷新）。原生读取 `.claude/skills/`（零翻译直通）。**订阅计费** —— 仪表盘独立统计。
   - **AWS Kiro CLI**（0.6.1+）—— `builtin`（本机 `kiro-cli login` 登录态）、`kiro-api`（DB 存的 key 注入成 `KIRO_API_KEY` 走 headless 模式）。CLI 后端里自带能力最全的一家 —— 原生 agents、skills、MCP，以及**原生 subagent DAG 编排**（不走 `SpawnPlan` 模拟）。Skill 直接复用 Claude 的 `SKILL.md` 格式。**按 credits 订阅计费**（Pro / Pro+ / Power 套餐）。
   - **Moonshot Kimi Code CLI**（0.6.8+）—— `builtin`（`kimi login` 走 `auth.kimi.com` OAuth）。与 SDK 内置的直连 HTTP `KimiProvider` 互补，专门覆盖 OAuth 订阅的 agentic-loop 路径，和 `anthropic_api` ↔ `claude_cli` 是同样的分工。默认走 Kimi 原生 `Agent` fanout；需要切到 AICore 三阶段 Pipeline 时设 `use_native_agents=false`。**订阅计费** —— Moonshot Pro / Power。
+  - **Alibaba Qwen Code CLI**（0.9.8+）—— gemini-cli 的分支（`QwenLM/qwen-code` v0.16.0），适配 Qwen 模型家族。仅支持 API key（`DASHSCOPE_API_KEY` / `QWEN_API_KEY`），OAuth 免费层已于 2026-04-15 EOL。默认模型 `qwen3.7-max`：1M 上下文、$2.50/$7.50 per 1M、原生支持 Anthropic `/v1/messages` 协议（在 fallback 链里可作为 Claude 的无缝替代）。**用量计费。**
   - **SuperAgent SDK** —— provider 类型：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`，加上 `openai-responses`（0.7.0+）和 `lmstudio`（0.7.0+）。
 - **`openai-responses` provider 类型**（0.7.0+）—— 通过 SDK 的 `OpenAIResponsesProvider` 走 `/v1/responses`。依据 `base_url` 形状自动识别 Azure OpenAI 部署（自动追加 `api-version=2025-04-01-preview`；可通过 `extra_config.azure_api_version` 覆盖）。若此行没存 API key 而是 `extra_config.access_token`（来自宿主 ChatGPT-OAuth 流程），SDK 会自动把 base URL 切到 `chatgpt.com/backend-api/codex`，让 Plus / Pro / Business 订阅用户走自家订阅配额。
 - **`lmstudio` provider 类型**（0.7.0+）—— 本地 LM Studio 服务（默认 `http://localhost:1234`）。走 OpenAI-compat 接线，无需真 API key —— SDK 自动合成占位 `Authorization` 头。
-- **十个 dispatcher 适配器**对应七个引擎（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`kiro_cli`、`kimi_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— `builtin` / `kiro-api` 走 CLI 适配器，API Key 走 HTTP 适配器。CLI 也可以直接指定这些适配器名。
+- **十一个 dispatcher 适配器**对应八个引擎（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`kiro_cli`、`kimi_cli`、`qwen_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— `builtin` / `kiro-api` 走 CLI 适配器，API Key 走 HTTP 适配器。CLI 也可以直接指定这些适配器名。
 - **`EngineCatalog` 单一数据源** —— 引擎的标签、图标、Dispatcher 后端、支持的 provider 类型、可用模型、声明式的 `ProcessSpec`（二进制名、版本/登录状态参数、prompt/output/model flag、默认 flag）都集中在一个 PHP 服务里。新增 CLI 引擎只需改 `EngineCatalog::seed()`，UI/扫描/开关矩阵全部自动跟进。宿主通过 `super-ai-core.engines` 配置覆盖。`modelOptions($key)` / `modelAliases($key)`（0.5.9+）驱动宿主应用模型下拉。
 
 ### Skill 与 sub-agent 运行器
@@ -383,6 +385,95 @@ parts 的 Gemini 3.5 / 3.x 系列。在 SDK bump 之上，又从
 会话提醒、按 agent 权限、PTY 会话、会话分享）见
 [docs/advanced-usage.zh-CN.md §29](docs/advanced-usage.zh-CN.md)。
 
+### Qwen + 追踪 + 9Router 波次（0.9.8）
+
+第八个执行引擎、始终运行的 Dispatcher 追踪环（`chrome://tracing`
+可直接打开，在配额/空结果/自动轮换时自动落盘）、`/super-ai-core/v1/chat/completions`
+处的 OpenAI 兼容代理、带冷却的多账号轮询、三个 HTTP 后端的真流式
+SSE、Claude / Codex / Copilot / Kiro 的预先 OAuth 刷新、Pi 风格的
+会话树分支、为非 skill 原生 CLI 设计的渐进披露 skill 索引、pi v3
+JSONL 导出器，以及 `gh-watch` GitHub PR / CI 反应引擎。**本波次不
+升级 SDK** —— 全部为宿主侧改动，SuperAgent 约束保持 `^1.0.5`。
+
+- **第 8 个引擎 Qwen Code CLI（`qwen_cli`）**（0.9.8）—— gemini-cli
+  的分支，适配阿里 Qwen 家族。实现 `Backend`、`StreamingBackend`、
+  `ScriptedSpawnBackend` 三个契约，自动接入所有既有 dispatch 路径。
+  仅 API key 认证（`DASHSCOPE_API_KEY` / `QWEN_API_KEY`）；OAuth 已
+  于 2026-04-15 EOL。默认模型 `qwen3.7-max`（1M 上下文、$2.50/$7.50
+  per 1M、原生 Anthropic `/v1/messages` 协议 —— fallback 链里可以直
+  接当 Claude 用）。`AI_CORE_QWEN_CLI_ENABLED` 控制开关。
+- **Dispatcher 追踪环（`Tracing\TraceCollector`）**（0.9.8）—— 始
+  终运行的 lock-free 事件环（`llm` / `cache` / `provider` / `tool` /
+  `error` 类别）。1024 条事件约 150 KB；关闭时零文件系统开销。在
+  `error` / `rotate` / `timeout` 触发时自动落盘成 Chrome Trace Event
+  JSON（`chrome://tracing`、`https://ui.perfetto.dev`、自带的
+  `trace-viewer.html` 都能打开）。`SuperAgentBackend` 在
+  `quota_exceeded` / `usage_not_included` / `server_overloaded` /
+  `cyber_policy` 异常时自动以 `trigger=rotate` 落盘，post-mortem 就
+  能看到出问题的整条 envelope。手动落盘:`php artisan
+  dispatcher:dump-trace`。UI:`/super-ai-core/traces`。
+- **OpenAI 兼容代理**（0.9.8）——
+  `Http\Controllers\OpenAiCompatibleController` 暴露 `GET /v1/models`
+  与 `POST /v1/chat/completions`（流式 + 非流式）。`model` 字段既
+  可填字面 id，也可填 `ai_routing_combos.name`，所以 Cursor / Cline /
+  Roo / Kiro / continue.dev / OpenAI SDK 都能零改动接入。流式 chunk
+  形状与 OpenAI 完全一致。
+- **三个 HTTP 后端的真 SSE 流式**（0.9.8）——
+  `AnthropicApiBackend`、`OpenAiApiBackend`、`GeminiApiBackend` 实
+  现新契约 `Contracts\StreamableTextBackend`，yield 出统一格式的
+  envelope（`{type:'text'|'thinking'|'tool_use_delta'|'usage'|'stop'}`）。
+  OpenAI 兼容代理直接消费。
+- **命名路由 combo（`ai_routing_combos`）**（0.9.8）—— combo 是
+  调度时解析的有序 `[{provider, model}, ...]` 列表，位于静态
+  `tier_map` 之上。CRUD 端点:`/super-ai-core/routing/combos[/{name}]`。
+  按调用覆盖:`smart` / `squad` / `auto` 的 `--combo=NAME` 标志。
+- **多账号轮询（`AccountRoundRobin`）**（0.9.8）—— 以原子 CAS
+  挑出 `(priority, last_used_at)` 最小且未冷却的激活账号；
+  `QuotaExceededException` / 空结果时调 `cooldown()` 给账号冷却 10
+  分钟。新增 `ai_provider_accounts` 表支撑。
+- **OAuth 刷新器注册表**（0.9.8）—— 为四个把 OAuth 状态写到本地
+  JSON 的 CLI（Claude / Codex / Copilot / Kiro）做预先 token 刷新。
+  通过 `php artisan super-ai-core:oauth-refresh` 驱动；从
+  `app/Console/Kernel.php` 用 `->everyTenMinutes()` 排程。
+- **Pi 风格会话树分支**（0.9.8）—— `Services\SessionBranchManager`
+  + `ai_session_branches` 表。从老消息 fork 创建新分支；切走时自动
+  对被抛弃分支生成 summary，避免丢失上下文。端点:
+  `/sessions/{session}/tree`、`/sessions/{session}/fork`、
+  `/sessions/{session}/switch`。
+- **渐进披露 skill 索引**（0.9.8）—— `Services\SkillIndexBuilder`
+  把每个 `SKILL.md` 的 name + description（不含正文）压成紧凑 XML
+  索引，`CodexCliBackend` / `GeminiCliBackend` 在每次 prompt 前注入。
+  模型只在真要用某个 skill 时才通过既有的 file-read 工具读 body。
+  让非 skill 原生的 CLI 也能用 SuperAICore 的 skill 目录，成本与
+  Claude 原生 skill 协议相当。按调用关闭:
+  `options['skills_disabled']=true` 或 `--no-skills`。
+- **`ask_user` 的 Pi `kind` 鉴别字段**（0.9.8）—— `select` /
+  `confirm` / `input` / `editor`，让 `/processes/questions` UI 按
+  调用渲染正确的控件。默认 `select` 保持 0.9.7 行为。
+- **Caveman 模式（`--caveman`）**（0.9.8）—— 从 9Router 借来的
+  输出 token 压缩提示词。对于推理快但输出冗长的任务，实测能省
+  30-65% 的输出 token（不适合长篇写作）。
+- **GitHub PR / CI 监控（`super-ai-core:gh-watch`）**（0.9.8）——
+  借鉴自 claude-octopus。按 ETag 缓存 GitHub API 调用，对每个激活
+  的 `ai_pr_watchers` 行按配置触发动作（`ask_user` / `spawn_squad`
+  / `webhook` / `log`）。可通过 `->everyFiveMinutes()` 排程，也可
+  `--loop=30` 守护进程化。
+- **Pi v3 会话 JSONL 导出器**（0.9.8）—— `php artisan
+  task-results:export-jsonl` 按 `metadata.session_id` 一文件输出。
+  需要 `--i-understand`（格式是有损的）；支持 `--anonymize`、`--since`。
+- **Apache Arrow 表格往返（`Arrow\ArrowSerializer`）**（0.9.8）——
+  最小化 Arrow IPC 流写入器（不依赖 `apache/arrow` PECL 扩展）。
+  按调用启用:`output_format: 'arrow'`，envelope 会带 base64 编码
+  的 Arrow 流。对于宽表格 agent 负载，比 JSON 快 10–100 倍。
+- **SuperTeam agents 浏览器（`/super-ai-core/agents`）**（0.9.8）
+  —— 读取可配置根目录下的 `.claude/agents/*.md`，按类别（Strategy /
+  Product / Engineering / Business / Security / …）分组展示。
+  配置:`super-ai-core.agent_catalog.paths`。
+
+完整菜谱（Qwen CLI 安装、追踪查看器配置、OpenAI 代理客户端接入、
+路由 combo CRUD、多账号上线流程、OAuth 刷新排程、会话分支 fork、
+gh-watch 表结构）见 [docs/advanced-usage.zh-CN.md §30](docs/advanced-usage.zh-CN.md)。
+
 ### CLI 安装器与健康检查
 
 - **`cli:status`** —— 每家 CLI 的安装/登录状态与安装提示。
@@ -479,7 +570,8 @@ parts 的 Gemini 3.5 / 3.x 系列。在 SDK bump 之上，又从
 - `copilot` CLI 在 `$PATH` —— `npm i -g @github/copilot`（然后 `copilot login`）
 - `kiro-cli` 在 `$PATH` —— 按 [kiro.dev](https://kiro.dev/cli/) 安装后 `kiro-cli login`；或设置 `KIRO_API_KEY` 走 headless（需 Pro / Pro+ / Power 订阅）
 - `kimi` CLI 在 `$PATH`（0.6.8+）—— 按 [kimi.com](https://kimi.com/code) 安装后 `kimi login`
-- Anthropic / OpenAI / Google AI Studio API Key（HTTP 后端）
+- `qwen` CLI 在 `$PATH`（0.9.8+）—— `npm i -g @qwen-code/qwen-code`，然后导出 `DASHSCOPE_API_KEY`（OAuth 已于 2026-04-15 EOL）
+- Anthropic / OpenAI / Google AI Studio / DashScope API Key（HTTP 后端）
 
 不想记包名？跑 `./vendor/bin/superaicore cli:status` 看缺什么，再 `./vendor/bin/superaicore cli:install --all-missing` 一键装齐（默认带确认提示）。
 
@@ -492,6 +584,25 @@ php artisan vendor:publish --tag=super-ai-core-migrations
 php artisan migrate
 ```
 
+从 0.9.7 升级？只需 `composer update forgeomni/superaicore` 后跑
+`php artisan migrate` —— 0.9.8 新增 5 条迁移（`ai_user_questions`
+新增 `kind` 列，加上 4 张新表:`ai_session_branches`、`ai_routing_combos`、
+`ai_provider_accounts`、`ai_pr_watchers`），均为加性变更。重新发布
+配置文件以拾取 `tracing.*`、`agent_catalog.*`、`backends.qwen_cli.*`
+新块:
+
+```bash
+php artisan vendor:publish --tag=super-ai-core-config --force
+```
+
+宿主 `app/Console/Kernel.php` 推荐排程:
+
+```php
+$schedule->command('super-ai-core:snapshot-prune')->dailyAt('02:00');   // 0.9.7
+$schedule->command('super-ai-core:oauth-refresh')->everyTenMinutes();   // 0.9.8
+$schedule->command('super-ai-core:gh-watch')->everyFiveMinutes();       // 0.9.8
+```
+
 完整步骤见 [INSTALL.zh-CN.md](INSTALL.zh-CN.md)。
 
 ## CLI 快速上手
@@ -500,13 +611,14 @@ php artisan migrate
 # 查看 Dispatcher 适配器及其可用状态
 ./vendor/bin/superaicore list-backends
 
-# 从 CLI 驱动七个引擎
+# 从 CLI 驱动八个引擎
 ./vendor/bin/superaicore call "你好" --backend=claude_cli                              # Claude Code CLI（本地登录）
 ./vendor/bin/superaicore call "你好" --backend=codex_cli                               # Codex CLI（ChatGPT 登录）
 ./vendor/bin/superaicore call "你好" --backend=gemini_cli                              # Gemini CLI（Google OAuth）
 ./vendor/bin/superaicore call "你好" --backend=copilot_cli                             # GitHub Copilot CLI（订阅）
 ./vendor/bin/superaicore call "你好" --backend=kiro_cli                                # AWS Kiro CLI（订阅）
 ./vendor/bin/superaicore call "你好" --backend=kimi_cli                                # Moonshot Kimi Code CLI（OAuth 订阅）
+./vendor/bin/superaicore call "你好" --backend=qwen_cli --api-key=sk-...                # Alibaba Qwen Code CLI（0.9.8+）
 ./vendor/bin/superaicore call "你好" --backend=superagent --api-key=sk-ant-...         # SuperAgent SDK
 
 # 跳过 CLI 包装，直接打 HTTP API
@@ -668,14 +780,17 @@ echo $result['text'];
   Copilot CLI     ────────▶ builtin                    ────▶ copilot_cli
   Kiro CLI        ────────▶ builtin / kiro-api         ────▶ kiro_cli
   Kimi Code CLI   ────────▶ builtin                    ────▶ kimi_cli
+  Qwen Code CLI   ────────▶ dashscope-api              ────▶ qwen_cli       (0.9.8+)
   SuperAgent SDK  ────────▶ anthropic(-proxy) /        ────▶ superagent
                             openai(-compatible) /
                             openai-responses /          (0.7.0+)
                             lmstudio                    (0.7.0+)
 
-  Dispatcher ← BackendRegistry   （管理上述 10 个适配器）
+  Dispatcher ← BackendRegistry   （管理上述 11 个适配器）
              ← ProviderResolver  （从 ProviderRepository 读取当前 provider）
              ← RoutingRepository （task_type + capability → service）
+             ← AccountRoundRobin （多账号轮询 + 冷却，0.9.8+）
+             ← TraceCollector    （magic-trace 环；error/rotate 时自动落盘，0.9.8+）
              ← UsageTracker      （写入 UsageRepository）
              ← CostCalculator    （模型价格表 → USD）
 ```
@@ -684,7 +799,10 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**、**0.9.2 TaskRunner 可靠性波次**，以及 **0.9.6 Squad 多智能体 + SDK 1.0.0 波次**。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**、**0.9.2 TaskRunner 可靠性波次**、**0.9.6 Squad 多智能体 + SDK 1.0.0 波次**、**0.9.7 opencode 借鉴波次**，以及 **0.9.8 Qwen + 追踪 + 9Router 波次**。
+- **[Cookbook](examples/cookbook/README.md)**（0.9.8+）—— gs-quant 风格的五个叙事型示例:dispatcher 基础、prompt 缓存、provider 轮换、跨 harness 恢复、追踪快速入门。
+- **[商业化分层](docs/commercialization-tiers.md)**（0.9.8+）—— 关于在 MIT 内核之上如何分层（Cloud Dashboard / Managed Dispatcher / Enterprise overlays）的参考文档。该文档描述的内容今日尚未实现。
+- **[供应链策略](SUPPLY_CHAIN.md)**（0.9.8+）—— Composer lifecycle scripts 全部禁止、`composer install --no-scripts` 默认启用、每周跑 `composer audit`。
 - **[Task runner 快速入门](docs/task-runner-quickstart.md)** —— 完整 `TaskRunner` 选项参考。
 - **[Streaming backends](docs/streaming-backends.md)** —— `mcp_mode`、每后端流格式、`onChunk`。
 - **[Spawn plan protocol](docs/spawn-plan-protocol.md)** —— codex/gemini agent 模拟。

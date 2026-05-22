@@ -4,6 +4,301 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.8] — 2026-05-22
+
+**Eighth execution engine + magic-trace observability + 9Router /
+Pi / claude-octopus borrowings.** Adds **Qwen Code CLI** as the eighth
+unified execution engine (1M-context `qwen3.7-max` at $2.50/$7.50 per
+1M, native Anthropic protocol). Adds an always-on Dispatcher trace
+ring (Chrome Trace Event JSON, viewable in `chrome://tracing` /
+`ui.perfetto.dev`) that auto-dumps on `QuotaExceeded` / null result /
+auto-rotate / soft-timeout. Adds an OpenAI-compatible proxy at
+`/super-ai-core/v1/chat/completions` + `/v1/models` so Cursor / Cline /
+Roo / Kiro / continue.dev / the OpenAI SDK can target SuperAICore as a
+drop-in backend. Adds multi-account round-robin with cooldowns, named
+routing combos, real SSE streaming on the three HTTP backends,
+pre-emptive OAuth refreshers for Claude / Codex / Copilot / Kiro,
+Pi-style session tree branching, progressive-disclosure skill index
+for non-skill-native CLIs (codex / gemini), a `task-results:export-jsonl`
+pi v3 exporter, and a `gh-watch` GitHub PR / CI reaction engine.
+
+Every binding is additive and opt-in — pre-0.9.8 behaviour is preserved
+unless you set an env flag, pass a new option, or resolve a new service
+from the container. No SDK bump in this release — `forgeomni/superagent`
+constraint stays at `^1.0.5`.
+
+```bash
+composer update forgeomni/superaicore
+php artisan migrate                                              # five new tables / columns
+php artisan vendor:publish --tag=super-ai-core-config --force   # picks up tracing + agent_catalog + qwen_cli blocks
+```
+
+Five migrations land: `kind` column on `ai_user_questions`
+(Pi dialog discriminator: `select` / `confirm` / `input` / `editor`)
+plus four new tables — `ai_session_branches`, `ai_routing_combos`,
+`ai_provider_accounts`, `ai_pr_watchers`. Five new artisan commands:
+`dispatcher:dump-trace`, `super-ai-core:gh-watch`,
+`super-ai-core:oauth-refresh`, `task-results:export-jsonl`,
+`super-ai-core:tasks-export-jsonl`. Three new singleton bindings:
+`Tracing\TraceCollector`, `Services\AccountRoundRobin`,
+`Services\AgentCatalog` (via `fromConfig()`).
+
+### Added — Qwen Code CLI engine (8th execution engine)
+
+- **`QwenCliBackend` (`qwen_cli`)** — QwenLM/qwen-code v0.16.0
+  (2026-05-21), a gemini-cli fork adapted for the Qwen model family.
+  Implements `Backend`, `StreamingBackend`, and `ScriptedSpawnBackend`
+  so it slots into every existing dispatch path (one-shot, streaming,
+  detached/host-spawn). Argv surface mirrors gemini-cli (`--prompt`,
+  `--model`, `--output-format=json|stream-json`, `--yolo`) so the
+  stream-json parser is shared.
+  - **Auth — API key only**. Qwen OAuth free tier was EOL'd on
+    2026-04-15; the backend reads `DASHSCOPE_API_KEY` or
+    `QWEN_API_KEY` from env / `provider_config`. Custom region via
+    `DASHSCOPE_BASE_URL` / `DASHSCOPE_REGION`. `isAvailable()` returns
+    `false` cleanly when no key is present so routing misses surface
+    as a clean "not configured" instead of a 401 mid-dispatch.
+  - **Default model `qwen3.7-max`** — 1M context, $2.50/$7.50 per 1M,
+    speaks Anthropic's `/v1/messages` natively (drop-in for Claude in
+    fallback chains). Other catalogued models: `qwen3.7-plus`,
+    `qwen3.6-max-preview`, `qwen3-max`, `qwen3.5-plus`,
+    `qwen3.5-flash`, `qwen3-coder-plus`, `qwen3-coder-next`,
+    `qwen3-vl-plus`. Eight pricing rows added to
+    `super-ai-core.pricing.*`, verified against DashScope's public
+    sheet 2026-05-22.
+  - **Toggle** — `AI_CORE_QWEN_CLI_ENABLED=false` (default `true`)
+    disables registration. Binary path via `QWEN_CLI_BIN` (default
+    `qwen`).
+  - `EngineCatalog::seed()` lists `qwen` as the eighth engine —
+    label "Qwen Code", icon `translate`, dispatcher backend
+    `qwen_cli`, `process_spec` mirroring gemini's flag shape.
+
+### Added — Dispatcher trace ring (magic-trace style)
+
+A black-box flight recorder that's always running and only writes to
+disk when something interesting happens. Output is Chrome Trace Event
+JSON, viewable in `chrome://tracing`, `https://ui.perfetto.dev`, or
+the bundled `.claude/design-system/templates/trace-viewer.html`.
+
+- **`Tracing\TraceCollector` (singleton)** — process-wide ring of
+  `TraceEvent` records (`llm` / `cache` / `provider` / `tool` /
+  `error` categories). `emitDuration()` / `emitInstant()` are
+  hot-path-safe (lock-free reservoir; constant memory ~150 KB at
+  1024 events). `dump($trigger, $reason, $extraMetadata)` flushes
+  the ring to `storage_path('app/superaicore/traces')` and returns
+  the path. No-op when `super-ai-core.tracing.enabled=false`.
+- **Auto-dump triggers** wired into `Dispatcher::dispatch()`:
+  - `error` — `null` result, no backend resolved
+  - `rotate` — `QuotaExceededException` (also pivots tag for
+    auto-rotate dashboards)
+  - `timeout` — soft-timeout breach (deferred to host-side hook)
+  Each trigger is independently toggleable via
+  `super-ai-core.tracing.dump_on.{error,rotate,timeout}` (default `true`).
+- **`SuperAgentBackend::logProviderError()`** now emits a
+  `provider.error` instant and auto-dumps with `trigger=rotate` for
+  `quota_exceeded` / `usage_not_included` / `server_overloaded` /
+  `cyber_policy` so the post-mortem captures the dispatch envelope
+  that caused the throw. Cheaper provider errors (bad prompt, context
+  window) record an event but don't dump.
+- **`dispatcher:dump-trace` artisan command** — manual flush for ops
+  workflows. `--reason` / `--trigger` / `--clear` / `--json`.
+  Resolves to the same file-naming scheme as the auto-dump.
+- **`/super-ai-core/traces` controller** — list view + per-file viewer
+  + raw JSON download (`/traces/raw/{filename}`). Filename pattern
+  hard-validated to `^trace_[A-Za-z0-9._-]+\.json$` so traversal
+  escapes are rejected at the routing layer.
+
+### Added — 9Router-borrowed features
+
+Eight patterns ported from the 9Router / claude-relay-service /
+codex-cli playbook. Each opts in via env flag or per-call option and
+degrades to no-op when the surrounding wiring isn't present.
+
+- **OpenAI-compatible proxy** — `Http\Controllers\OpenAiCompatibleController`
+  surfaces SuperAICore behind the standard Chat Completions API:
+  - `GET /super-ai-core/v1/models` — lists configured models + active
+    routing combos (objects shaped `{id, object, owned_by}`).
+  - `POST /super-ai-core/v1/chat/completions` — accepts the standard
+    `{model, messages[], stream, temperature, max_tokens, ...}`
+    envelope; `model` resolves as a literal id OR an
+    `ai_routing_combos.name`. Streaming uses SSE chunks shaped exactly
+    like OpenAI's so any compliant client (Cursor / Cline / Roo /
+    Kiro / continue.dev / openai-python SDK) drops in unchanged.
+  - Honours the same `super-ai-core.route` middleware stack as the
+    rest of the package; review your guard before exposing publicly.
+- **Real streaming on the three HTTP backends** — `AnthropicApiBackend`,
+  `OpenAiApiBackend`, `GeminiApiBackend` now implement the new
+  `Contracts\StreamableTextBackend` interface. Each backend opens
+  `stream=true` against its native SSE endpoint and yields canonical
+  envelopes (`{type:'text'|'thinking'|'tool_use_delta'|'usage'|'stop', ...}`).
+  The OpenAI-compat proxy consumes these directly; host code that wants
+  raw token-level streaming from the HTTP path now has a contract it
+  can rely on.
+- **Named routing combos (`ai_routing_combos`)** — a combo is an
+  ordered `[{provider, model}, ...]` list resolved at dispatch time.
+  Sits above the static `tier_map`. CRUD endpoints
+  (`/super-ai-core/routing/combos[/{name}]`) + per-call override via
+  `--combo=NAME` on `smart` / `squad` / `auto`. CLI flag drops
+  `combo_entries` into dispatch options so the runner builds a
+  fallback chain from the combo without re-querying the DB mid-run.
+- **Multi-account round-robin (`Services\AccountRoundRobin`)** — picks
+  the active, non-cooled-down account with the lowest
+  `(priority, last_used_at)` tuple via an atomic compare-and-update,
+  so two concurrent workers can't claim the same row. `cooldown()`
+  marks accounts after a `QuotaExceededException` / null result
+  (default 10 min, matching Claude Code / Codex rate-limit windows).
+  Hosts add account rows to `ai_provider_accounts`; the Dispatcher
+  picks them up automatically before falling back to the provider's
+  built-in single-account credentials.
+- **OAuth refresher registry (`Services\OAuth\*`)** — pre-emptive
+  token refresh for the four CLIs that own OAuth state in
+  on-disk JSON (Claude / Codex / Copilot / Kiro). Each refresher
+  implements `OAuthRefresherInterface::refresh(?providerConfig): RefreshResult`;
+  the registry picks one by provider key. Drive from cron via the
+  new `super-ai-core:oauth-refresh` artisan command:
+  ```php
+  $schedule->command('super-ai-core:oauth-refresh')->everyTenMinutes();
+  ```
+- **Caveman mode (`--caveman`)** — output token compression reminder
+  ported from 9Router. Default `super-ai-core.reminders.rules`
+  entry — fires when `options['caveman']=='1'` and prepends a terse
+  "respond in minimal tokens" system block. Empirically saves
+  30-65% on output tokens for reasoning-quick tasks (not recommended
+  for long-form writing). `--caveman` flag added to `smart` / `squad`.
+- **`--no-skills` / `--no-session`** — Pi-style clean-mode toggles on
+  `smart` / `squad`. `--no-skills` propagates `skills_disabled=true`
+  down the chain so the codex / gemini progressive-disclosure skill
+  index is suppressed; `--no-session` skips harness session
+  persistence for ephemeral runs.
+
+### Added — Pi-borrowed features
+
+- **Session tree branching (`Services\SessionBranchManager`)** — Pi's
+  `/tree` model where a session is a tree, not a line. Each branch
+  has an 8-hex id, a `parent_branch_id` (null = trunk), and a
+  `fork_from_entry_id` (the message you clicked `/tree` on). Exactly
+  one branch is active per session at any time; switching auto-summarises
+  the abandoned path as a `BranchSummaryEntry` so context isn't lost.
+  Endpoints: `GET /sessions/{session}/tree`,
+  `POST /sessions/{session}/fork`, `POST /sessions/{session}/switch`.
+  Backed by the new `ai_session_branches` table.
+- **Pi-style `kind` discriminator on `ask_user`** — `select` /
+  `confirm` / `input` / `editor` (matches Pi's four dialog methods
+  in `pi.dev/docs/latest/extensions §Extension UI`). The
+  `/processes/questions` UI renders the right widget per call.
+  Default `select` preserves 0.9.7 behaviour.
+- **Progressive-disclosure skill index** — `Services\SkillIndexBuilder`
+  emits a compact XML index of every `.claude/skills/*/SKILL.md`
+  (name + description, NOT full body) and `CodexCliBackend` /
+  `GeminiCliBackend` now prepend it to every prompt. The model reads
+  the body via its existing file-read tool only when it picks a skill.
+  Lets non-skill-native CLIs use the SuperAICore skill catalog at the
+  same cost as Claude's native skill protocol. Suppress per-call with
+  `options['skills_disabled']=true` or globally via `--no-skills`.
+- **`task-results:export-jsonl`** — pi v3-compatible session JSONL
+  exporter (one file per `metadata.session_id`). Opt-in via
+  `--i-understand` (the format is lossy and not a backup); supports
+  `--anonymize` for PII strip, `--since` filtering.
+
+### Added — claude-octopus-borrowed
+
+- **`super-ai-core:gh-watch`** — GitHub PR / CI reaction engine
+  modelled on claude-octopus. Polls every active `ai_pr_watchers` row
+  (uses ETags for conditional GETs to avoid burning rate limit) and
+  fires per-row actions on new events:
+  - `ask_user` → insert `ai_user_questions` row so the founder can
+    decide via the `/processes` UI.
+  - `spawn_squad` → invoke `php artisan squad "fix ${event}"` with
+    the team listed in `action_payload.team`.
+  - `webhook` → POST event JSON to `action_payload.url` with bearer.
+  - `log` → append to `storage/logs/gh-watch.log`.
+  Auth: `GITHUB_TOKEN` / `GH_TOKEN` env. Schedule via
+  `$schedule->command('super-ai-core:gh-watch')->everyFiveMinutes()`
+  or run as a daemon with `--loop=30`. Backed by the new
+  `ai_pr_watchers` table.
+
+### Added — Other
+
+- **`Arrow\ArrowSerializer`** — minimal Apache Arrow IPC stream writer
+  (schema header + record batch, primitive columns) so cross-agent /
+  cross-process tabular payloads can round-trip 10–100× faster than
+  JSON. Activated per-dispatch via `output_format: 'arrow'` plus a
+  `tabular` / `rows` field on the result; the envelope gains a
+  base64-encoded Arrow IPC stream. No `apache/arrow` PECL dependency —
+  the 95% case (rows of strings + ints + floats + bools) is covered
+  by hand. Hosts that need dictionaries / nested structs / compression
+  swap in their own implementation via Dispatcher config.
+- **`Services\RtkCompressorService`** — thin Laravel-host facade over
+  SuperAgent SDK's `RtkPipeline` for structured-tool-output compression
+  (git diff, search results, file listings). Per-process singleton so
+  cumulative byte-savings stats are aggregatable. Falls back to
+  passthrough when the SDK isn't installed.
+- **`Services\AgentCatalog`** — reads `.claude/agents/*.md` from
+  configurable roots, parses YAML frontmatter, classifies each agent
+  into a layer (Strategy / Product / Engineering / Business / Security /
+  Logistics / Financial / Career / Data / Real Estate / Content) via
+  longest-prefix match on the filename. Drives the new
+  `/super-ai-core/agents` browser UI. Config:
+  `super-ai-core.agent_catalog.paths`. Falls back to
+  `base_path('.claude/agents')` then `base_path('../.claude/agents')`.
+- **`/super-ai-core/costs/savings`** — new dashboard view that
+  surfaces RTK compression byte savings + Arrow vs JSON payload
+  deltas. Driven by `RtkCompressorService::stats()`.
+- **Cookbook (`examples/cookbook/`)** — five gs-quant-style narrative
+  examples: `01-dispatcher-basics`, `02-prompt-caching`,
+  `03-provider-rotation`, `04-resume-from-jsonl`,
+  `05-tracing-quickstart`. Each one self-contained, with prerequisites,
+  copy-pasteable code, expected output, and a `## See also` block.
+- **`docs/commercialization-tiers.md`** — reference / future-state doc
+  describing how a tiered offering (Cloud Dashboard / Managed Dispatcher /
+  Enterprise overlays) could look on top of the MIT core. Nothing in
+  this doc is implemented; it's borrowed in spirit from gs-quant
+  (open SDK + gated backend) and JPMorgan Perspective (open engine +
+  FINOS governance + commercial overlays).
+- **`SUPPLY_CHAIN.md` + `.github/workflows/supply-chain.yml`** — Pi's
+  `AGENTS.md` discipline applied to this package's `composer.json`:
+  no lifecycle scripts allowed, `composer install --no-scripts` is the
+  default, `composer audit` runs weekly + on every PR.
+- **Translated advanced-usage docs §29 (the 0.9.7 wave)** —
+  `docs/advanced-usage.zh-CN.md` and `docs/advanced-usage.fr.md` now
+  carry the full opencode-borrowing section (per-file diff dashboard,
+  AskUserTool integration, plan mode workflow, session reminders,
+  per-agent permissions, PTY sessions, session sharing).
+
+### Changed
+
+- **`Dispatcher` constructor** gained an optional
+  `Tracing\TraceCollector $tracer = null` argument. When omitted (host
+  apps that don't boot the service provider), the dispatcher falls
+  back to `TraceCollector::getInstance()` so tracing remains a no-op
+  rather than a NullPointer.
+- **`SuperAICoreServiceProvider::register()`** wires
+  `TraceCollector::class → TraceCollector::getInstance()` and injects
+  it into `Dispatcher`. Hosts that override the binding still work.
+- **`smart` / `squad` commands** gain four flags
+  (`--no-skills`, `--no-session`, `--combo`, `--caveman`). Defaults
+  preserve 0.9.7 behaviour.
+- **`BackendRegistry`** registers `QwenCliBackend` when
+  `super-ai-core.backends.qwen_cli.enabled=true` (the default).
+- **`super-ai-core.pricing.*`** gains eight Qwen rows
+  (qwen3.7-max / -plus / qwen3.6-max-preview / qwen3-max /
+  qwen3.5-plus / -flash / qwen3-coder-plus / qwen3-vl-plus).
+- **`super-ai-core.reminders.rules`** ships one default entry
+  (`caveman-mode`), commented examples for the rest.
+
+### Notes
+
+- **No SDK bump.** `forgeomni/superagent` constraint stays at
+  `^1.0.5`. Every feature in this release is host-side; the SDK
+  surface is unchanged.
+- **Migrations are additive.** Pre-0.9.8 rows are not touched.
+- **Tracing has zero runtime cost when disabled.** Setting
+  `AI_CORE_TRACE_ENABLED=false` turns every emit into a no-op; the
+  file system is never touched.
+- The OpenAI-compatible proxy honours the same auth middleware as the
+  rest of `/super-ai-core/*`. Review your `super-ai-core.route.middleware`
+  stack before exposing it to external clients.
+
 ## [0.9.7] — 2026-05-20
 
 **SDK 1.0.5 bump + opencode-borrowed feature wave.** SDK constraint
