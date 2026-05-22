@@ -3,7 +3,9 @@
 namespace SuperAICore\Backends;
 
 use SuperAICore\Contracts\Backend;
+use SuperAICore\Contracts\StreamableTextBackend;
 use SuperAICore\Services\GeminiModelResolver;
+use Generator;
 use GuzzleHttp\Client;
 use Psr\Log\LoggerInterface;
 
@@ -15,7 +17,7 @@ use Psr\Log\LoggerInterface;
  * Google AI Studio). Vertex AI Gemini access goes through the CLI backend
  * today to reuse its ADC token plumbing.
  */
-class GeminiApiBackend implements Backend
+class GeminiApiBackend implements Backend, StreamableTextBackend
 {
     public function __construct(
         protected ?LoggerInterface $logger = null,
@@ -108,6 +110,119 @@ class GeminiApiBackend implements Backend
         } catch (\Throwable $e) {
             $this->log('warning', "GeminiApiBackend error: {$e->getMessage()}");
             return null;
+        }
+    }
+
+    /**
+     * 9Router-borrowed real streaming. Calls Gemini's streamGenerateContent
+     * endpoint (SSE variant) and yields canonical envelopes:
+     *
+     *   ['type' => 'text', 'delta' => '...']
+     *   ['type' => 'usage', 'input_tokens' => N, 'output_tokens' => M]
+     *   ['type' => 'stop',  'reason' => 'STOP' | 'MAX_TOKENS' | ...]
+     *
+     * Gemini's SSE-style endpoint is /v1beta/models/{m}:streamGenerateContent?alt=sse
+     * — must explicitly request alt=sse, otherwise the response is a single
+     * JSON array (no streaming benefit).
+     */
+    public function generateStream(array $options): Generator
+    {
+        $providerConfig = $options['provider_config'] ?? [];
+        $apiKey = $providerConfig['api_key']
+            ?? getenv('GEMINI_API_KEY')
+            ?: getenv('GOOGLE_API_KEY');
+        if (!$apiKey) {
+            $this->log('warning', 'GeminiApiBackend stream: no api_key');
+            yield ['type' => 'stop', 'reason' => 'error'];
+            return;
+        }
+
+        $baseUrl = rtrim($providerConfig['base_url'] ?? 'https://generativelanguage.googleapis.com', '/');
+        $model = GeminiModelResolver::resolve($options['model'] ?? $providerConfig['model'] ?? null)
+            ?? GeminiModelResolver::defaultFor('pro');
+        $maxTokens = $options['max_tokens'] ?? 4096;
+
+        $contents = [];
+        if (!empty($options['messages'])) {
+            foreach ($options['messages'] as $m) {
+                $role = ($m['role'] ?? 'user') === 'assistant' ? 'model' : 'user';
+                $contents[] = ['role' => $role, 'parts' => [['text' => $m['content'] ?? '']]];
+            }
+        } else {
+            $contents[] = ['role' => 'user', 'parts' => [['text' => $options['prompt'] ?? '']]];
+        }
+        $body = [
+            'contents' => $contents,
+            'generationConfig' => ['maxOutputTokens' => $maxTokens],
+        ];
+        if (!empty($options['system'])) {
+            $body['systemInstruction'] = ['parts' => [['text' => $options['system']]]];
+        }
+
+        $response = $this->http->post(
+            "{$baseUrl}/v1beta/models/{$model}:streamGenerateContent",
+            [
+                'query'  => ['alt' => 'sse', 'key' => $apiKey],
+                'headers'=> ['content-type' => 'application/json', 'accept' => 'text/event-stream'],
+                'json'   => $body,
+                'stream' => true,
+            ]
+        );
+
+        $stream = $response->getBody();
+        $buffer = '';
+        while (!$stream->eof()) {
+            $chunk = $stream->read(2048);
+            if ($chunk === '' || $chunk === false) { usleep(10_000); continue; }
+            $buffer .= $chunk;
+            while (($nlPos = strpos($buffer, "\n")) !== false) {
+                $line = rtrim(substr($buffer, 0, $nlPos), "\r");
+                $buffer = substr($buffer, $nlPos + 1);
+                if ($line === '' || !str_starts_with($line, 'data:')) continue;
+                $data = trim(substr($line, 5));
+                if ($data === '' || $data === '[DONE]') continue;
+                $parsed = json_decode($data, true);
+                if (!is_array($parsed)) continue;
+                yield from $this->translateGeminiEvent($parsed);
+            }
+        }
+        // No explicit DONE sentinel — emit terminal stop if upstream didn't.
+        yield ['type' => 'stop', 'reason' => 'end_turn'];
+    }
+
+    /** @return Generator<int, array<string,mixed>> */
+    private function translateGeminiEvent(array $data): Generator
+    {
+        $candidate = $data['candidates'][0] ?? null;
+        if ($candidate !== null) {
+            $parts = $candidate['content']['parts'] ?? [];
+            foreach ($parts as $part) {
+                if (isset($part['text']) && $part['text'] !== '') {
+                    $isThought = !empty($part['thought']);
+                    yield [
+                        'type'  => $isThought ? 'thinking' : 'text',
+                        'delta' => (string) $part['text'],
+                    ];
+                } elseif (isset($part['functionCall'])) {
+                    $fc = $part['functionCall'];
+                    yield [
+                        'type'      => 'tool_use_delta',
+                        'name'      => (string) ($fc['name'] ?? ''),
+                        'arguments' => $fc['args'] ?? [],
+                    ];
+                }
+            }
+            if (!empty($candidate['finishReason'])) {
+                yield ['type' => 'stop', 'reason' => (string) $candidate['finishReason']];
+            }
+        }
+        if (isset($data['usageMetadata'])) {
+            $u = $data['usageMetadata'];
+            yield [
+                'type'          => 'usage',
+                'input_tokens'  => (int) ($u['promptTokenCount']     ?? 0),
+                'output_tokens' => (int) ($u['candidatesTokenCount'] ?? 0),
+            ];
         }
     }
 

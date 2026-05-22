@@ -44,6 +44,10 @@ final class SmartCommand extends Command
             ->addOption('merge', null, InputOption::VALUE_REQUIRED, 'Provider tag for the merge step (default: same as expert tier)')
             ->addOption('max-cost', null, InputOption::VALUE_REQUIRED, 'Abort when running cost exceeds this USD cap')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Emit JSON envelope instead of plain text')
+            ->addOption('no-skills', null, InputOption::VALUE_NONE, 'Disable Skill auto-discovery for this run (Pi-style clean-mode)')
+            ->addOption('no-session', null, InputOption::VALUE_NONE, 'Skip session persistence / harness session for this run')
+            ->addOption('combo', null, InputOption::VALUE_REQUIRED, '9Router-borrowed: named routing combo (resolved via ai_routing_combos). Overrides --routing.')
+            ->addOption('caveman', null, InputOption::VALUE_NONE, '9Router-borrowed: inject terse-prose system prompt to reduce output tokens 30-65%.')
             ->addOption('binary', null, InputOption::VALUE_REQUIRED, 'Path to vendor superagent binary (only with --sdk)');
     }
 
@@ -66,6 +70,31 @@ final class SmartCommand extends Command
         }
         if ($c = $input->getOption('max-cost')) {
             $options['max_cost_usd'] = (float) $c;
+        }
+        if ($comboName = $input->getOption('combo')) {
+            // Resolve combo at dispatch time so DB edits don't require
+            // re-running the CLI. Fall back to a clean error if unknown.
+            $entries = class_exists(\SuperAICore\Models\AiRoutingCombo::class)
+                ? \SuperAICore\Models\AiRoutingCombo::resolveEntries((string) $comboName)
+                : [];
+            if ($entries === []) {
+                $output->writeln("<error>Combo '{$comboName}' not found or has no entries.</error>");
+                return self::FAILURE;
+            }
+            $options['combo'] = (string) $comboName;
+            $options['combo_entries'] = $entries;
+        }
+        if ($input->getOption('caveman')) {
+            $options['caveman'] = true;
+            $options['per_call_options']['caveman'] = true;
+        }
+        if ($input->getOption('no-skills')) {
+            $options['skills_disabled'] = true;
+            $options['per_call_options']['skills_disabled'] = true;
+        }
+        if ($input->getOption('no-session')) {
+            $options['session_disabled'] = true;
+            $options['per_call_options']['session_disabled'] = true;
         }
 
         $result = $orchestrator->run($task, $options);
@@ -114,6 +143,8 @@ final class SmartCommand extends Command
         $args = [(new PhpExecutableFinder())->find() ?: 'php', $binary, 'smart', $task];
         if ($c = $input->getOption('max-cost')) { $args[] = '--max-cost'; $args[] = (string) $c; }
         if ($input->getOption('json'))           { $args[] = '--json'; }
+        if ($input->getOption('no-skills'))      { $args[] = '--no-skills'; }
+        if ($input->getOption('no-session'))     { $args[] = '--no-session'; }
 
         $proc = new Process($args);
         $proc->setTimeout(null);

@@ -10,6 +10,7 @@ use SuperAICore\Backends\GeminiApiBackend;
 use SuperAICore\Backends\GeminiCliBackend;
 use SuperAICore\Backends\KimiCliBackend;
 use SuperAICore\Backends\KiroCliBackend;
+use SuperAICore\Backends\QwenCliBackend;
 use SuperAICore\Backends\OpenAiApiBackend;
 use SuperAICore\Backends\SquadBackend;
 use SuperAICore\Backends\SuperAgentBackend;
@@ -103,6 +104,15 @@ class BackendRegistry
                 $config['kimi_cli']['binary'] ?? 'kimi',
                 $config['kimi_cli']['timeout'] ?? 300,
                 $config['kimi_cli']['max_steps_per_turn'] ?? 500,
+                $logger,
+            ));
+        }
+        // QwenLM/qwen-code v0.16.0 (2026-05-21). Default model qwen3.7-max
+        // (1M context, $2.50/$7.50 per 1M, native Anthropic protocol).
+        if ($config['qwen_cli']['enabled'] ?? true) {
+            $this->register(new QwenCliBackend(
+                $config['qwen_cli']['binary'] ?? 'qwen',
+                $config['qwen_cli']['timeout'] ?? 300,
                 $logger,
             ));
         }

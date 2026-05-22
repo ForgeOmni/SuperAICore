@@ -54,6 +54,17 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $prompt = $options['prompt'] ?? '';
         $model = GeminiModelResolver::resolve($options['model'] ?? $providerConfig['model'] ?? null);
 
+        // Pi-style progressive-disclosure skill index — Gemini CLI has no
+        // native Skill protocol, so we prepend the XML index ourselves so
+        // the model can decide when to read a SKILL.md in full. Honors
+        // --no-skills via $options['skills_disabled'].
+        if (empty($options['skills_disabled'])) {
+            $skillXml = (new \SuperAICore\Services\SkillIndexBuilder())->buildFromConfig();
+            if ($skillXml !== '') {
+                $prompt = $skillXml . "\n\n" . $prompt;
+            }
+        }
+
         // `gemini --prompt ""` (empty value) tells gemini-cli to read the
         // actual prompt from stdin — same idiom GeminiSkillRunner uses.
         // Avoids Windows cmd-line escaping / 8K length issues for large

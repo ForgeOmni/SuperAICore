@@ -505,6 +505,22 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 // app/Console/Kernel.php in the host app:
                 //   $schedule->command('super-ai-core:snapshot-prune')->daily();
                 \SuperAICore\Console\Commands\SnapshotPruneCommand::class,
+
+                // Pi v3 session JSONL exporter (one file per metadata.session_id).
+                // Opt-in via --i-understand; supports --anonymize for PII strip.
+                // See pi.dev/docs/latest/session-format.
+                \SuperAICore\Console\Commands\TaskResultsExportJsonlCommand::class,
+
+                // 9Router-borrowed: pre-emptive OAuth token refresh.
+                // Schedule via app/Console/Kernel.php in the host:
+                //   $schedule->command('super-ai-core:oauth-refresh')->everyTenMinutes();
+                \SuperAICore\Console\Commands\OAuthRefreshCommand::class,
+
+                // claude-octopus-borrowed: GitHub PR/CI reaction engine.
+                // Schedule:
+                //   $schedule->command('super-ai-core:gh-watch')->everyFiveMinutes();
+                // Or run as a daemon: `php artisan super-ai-core:gh-watch --loop=30`.
+                \SuperAICore\Console\Commands\GhWatchCommand::class,
             ]);
         }
 

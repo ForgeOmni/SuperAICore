@@ -93,13 +93,18 @@ TXT;
         return [
             'type' => 'object',
             'properties' => [
+                'kind' => [
+                    'type' => 'string',
+                    'enum' => AiUserQuestion::KINDS,
+                    'description' => 'Dialog kind (Pi Extension UI protocol). `select` = button row from `options`. `confirm` = yes/no. `input` = single-line text. `editor` = multi-line text. Defaults to `select` when `options` is set, else `input`.',
+                ],
                 'question' => [
                     'type' => 'string',
                     'description' => 'The clarifying question to put in front of the user.',
                 ],
                 'options' => [
                     'type' => 'array',
-                    'description' => 'Optional list of predefined answer choices. When set, the UI renders buttons and the returned answer will match one of the labels. Omit for free-form text answers.',
+                    'description' => 'For kind=select: list of predefined answer choices. Ignored for confirm/input/editor.',
                     'items' => [
                         'type' => 'object',
                         'properties' => [
@@ -120,6 +125,13 @@ TXT;
         ];
     }
 
+    private function resolveKind(array $input, array $options): string
+    {
+        $kind = (string) ($input['kind'] ?? '');
+        if (in_array($kind, AiUserQuestion::KINDS, true)) return $kind;
+        return !empty($options) ? AiUserQuestion::KIND_SELECT : AiUserQuestion::KIND_INPUT;
+    }
+
     public function execute(array $input): ToolResult
     {
         $question = (string) ($input['question'] ?? '');
@@ -133,11 +145,24 @@ TXT;
         if ($timeout < 1) $timeout = self::DEFAULT_TIMEOUT_SECONDS;
         if ($timeout > self::MAX_TIMEOUT_SECONDS) $timeout = self::MAX_TIMEOUT_SECONDS;
 
+        $kind = $this->resolveKind($input, $options);
+        if ($kind === AiUserQuestion::KIND_CONFIRM) {
+            // confirm is two fixed buttons; honor any model-supplied labels
+            // but default to Yes/No for renderer simplicity.
+            if ($options === []) {
+                $options = [
+                    ['label' => 'Yes'],
+                    ['label' => 'No'],
+                ];
+            }
+        }
+
         try {
             $row = AiUserQuestion::create([
                 'session_id'  => $this->sessionId,
                 'process_id'  => $this->processId,
                 'agent_label' => $this->agentLabel,
+                'kind'        => $kind,
                 'question'    => $question,
                 'options'     => $options,
                 'status'      => AiUserQuestion::STATUS_PENDING,

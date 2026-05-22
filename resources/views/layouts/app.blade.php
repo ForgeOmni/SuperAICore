@@ -46,6 +46,7 @@
                 <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.usage.*') ? 'active' : '' }}" href="{{ route('super-ai-core.usage.index') }}">{{ __('super-ai-core::messages.usage') }}</a></li>
                 <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.costs.*') ? 'active' : '' }}" href="{{ route('super-ai-core.costs.index') }}">{{ __('super-ai-core::messages.costs') }}</a></li>
                 <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.processes.*') ? 'active' : '' }}" href="{{ route('super-ai-core.processes.index') }}">{{ __('super-ai-core::messages.processes') }}</a></li>
+                <li class="nav-item"><a class="nav-link {{ request()->routeIs('super-ai-core.agents.*') ? 'active' : '' }}" href="{{ route('super-ai-core.agents.index') }}">Agents</a></li>
             </ul>
             @php
                 $locales = config('super-ai-core.locales', []);

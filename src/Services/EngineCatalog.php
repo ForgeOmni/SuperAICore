@@ -517,6 +517,44 @@ class EngineCatalog
                     modelFlag:        '--model',
                 ),
             ],
+            'qwen' => [
+                'label'               => 'Qwen Code',
+                'icon'                => 'translate',
+                'dispatcher_backends' => ['qwen_cli'],
+                'is_cli'              => true,
+                'cli_binary'          => 'qwen',
+                // QwenLM/qwen-code v0.16.0 (2026-05-21) — fork of gemini-cli.
+                // OAuth EOL'd 2026-04-15: API key only via DASHSCOPE_API_KEY /
+                // QWEN_API_KEY. Default model qwen3.7-max — 1M context,
+                // $2.50/$7.50 per 1M, native Anthropic protocol on /v1/messages.
+                'default_model'       => 'qwen3.7-max',
+                'billing_model'       => 'usage',
+                'available_models'    => [
+                    'qwen3.7-max',
+                    'qwen3.7-plus',
+                    'qwen3.6-max-preview',
+                    'qwen3-max',
+                    'qwen3.5-plus',
+                    'qwen3.5-flash',
+                    'qwen3-coder-plus',
+                    'qwen3-coder-next',
+                    'qwen3-vl-plus',
+                ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'qwen',
+                    versionArgs:      ['--version'],
+                    // No `qwen auth status` subcommand published yet; auth
+                    // is env-driven so the CliStatusDetector can't probe
+                    // it cleanly. Leaving null falls back to "binary present
+                    // = available" which QwenCliBackend::isAvailable()
+                    // tightens with an env check.
+                    authStatusArgs:   null,
+                    promptFlag:       '--prompt',
+                    outputFormatFlag: '--output-format=json',
+                    modelFlag:        '--model',
+                    defaultFlags:     ['--yolo'],
+                ),
+            ],
             'superagent' => [
                 'label'               => 'SuperAgent SDK',
                 'icon'                => 'cpu',

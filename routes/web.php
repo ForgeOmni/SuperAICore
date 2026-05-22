@@ -8,15 +8,19 @@
  * All route names are prefixed with 'super-ai-core.' via the ServiceProvider group.
  */
 
+use SuperAICore\Http\Controllers\AgentsController;
 use SuperAICore\Http\Controllers\AiServiceController;
 use SuperAICore\Http\Controllers\CostDashboardController;
 use SuperAICore\Http\Controllers\HarnessResumeController;
 use SuperAICore\Http\Controllers\IntegrationController;
 use SuperAICore\Http\Controllers\LocaleController;
+use SuperAICore\Http\Controllers\OpenAiCompatibleController;
 use SuperAICore\Http\Controllers\ProcessController;
 use SuperAICore\Http\Controllers\ProviderController;
 use SuperAICore\Http\Controllers\PtyController;
 use SuperAICore\Http\Controllers\QuestionController;
+use SuperAICore\Http\Controllers\RoutingComboController;
+use SuperAICore\Http\Controllers\SessionBranchController;
 use SuperAICore\Http\Controllers\RevertController;
 use SuperAICore\Http\Controllers\ShareController;
 use SuperAICore\Http\Controllers\TraceController;
@@ -26,6 +30,13 @@ use Illuminate\Support\Facades\Route;
 
 // ─── Locale switcher ───
 Route::get('locale/{code}', [LocaleController::class, 'switch'])->name('locale.switch');
+
+// ─── SuperTeam Agents browser ───
+// Reads .claude/agents/*.md (Claude Code SubagentRegistry format), groups
+// by category derived from filename prefix, and renders cards. Configure
+// the scan paths via super-ai-core.agent_catalog.paths.
+Route::get('agents',           [AgentsController::class, 'index'])->name('agents.index');
+Route::get('agents/{name}',    [AgentsController::class, 'show'])->where('name', '[a-z0-9][a-z0-9\-]*')->name('agents.show');
 
 // ─── Providers (Execution Engine) ───
 Route::get('providers', [ProviderController::class, 'index'])->name('providers.index');
@@ -88,6 +99,7 @@ Route::get('usage', [UsageController::class, 'index'])->name('usage.index');
 
 // ─── Cost Analytics ───
 Route::get('costs', [CostDashboardController::class, 'index'])->name('costs.index');
+Route::get('costs/savings', [CostDashboardController::class, 'savings'])->name('costs.savings');
 
 // ─── Task Model Settings ───
 
@@ -107,6 +119,30 @@ Route::get('processes/{process}/log', [ProcessController::class, 'log'])
 Route::get('processes/questions',                  [QuestionController::class, 'index'])->name('processes.questions.index');
 Route::post('processes/questions/{id}/answer',     [QuestionController::class, 'answer'])->where('id', '[0-9]+')->name('processes.questions.answer');
 Route::post('processes/questions/{id}/cancel',     [QuestionController::class, 'cancel'])->where('id', '[0-9]+')->name('processes.questions.cancel');
+
+// ─── 9Router-borrowed: OpenAI-compatible proxy ───
+// /v1/chat/completions + /v1/models so Cursor/Cline/Kiro/Roo/continue.dev
+// can use SuperAICore as a drop-in OpenAI backend. Model field accepts
+// either a literal model id or an ai_routing_combos name.
+Route::get('v1/models',           [OpenAiCompatibleController::class, 'listModels'])->name('openai.models');
+Route::post('v1/chat/completions',[OpenAiCompatibleController::class, 'chatCompletions'])->name('openai.chat');
+
+// ─── 9Router-borrowed: named routing combos ───
+// A combo = ordered [{provider, model}, ...] resolved at dispatch time.
+// Sits above tier_map (static band→provider). Use --combo=NAME on
+// smart/squad/auto to override per-call.
+Route::get('routing/combos',          [RoutingComboController::class, 'index'])->name('routing.combos.index');
+Route::post('routing/combos',         [RoutingComboController::class, 'store'])->name('routing.combos.store');
+Route::put('routing/combos/{name}',   [RoutingComboController::class, 'update'])->where('name', '[a-z][a-z0-9\-]*')->name('routing.combos.update');
+Route::delete('routing/combos/{name}',[RoutingComboController::class, 'destroy'])->where('name', '[a-z][a-z0-9\-]*')->name('routing.combos.destroy');
+
+// ─── Pi /tree session branches ───
+// Borrowed from pi.dev/docs/latest/sessions: a session is a tree, not a
+// line. Forking creates a new branch from an old entry; switching auto-
+// archives a summary of the abandoned branch (BranchSummaryEntry).
+Route::get('sessions/{session}/tree',     [SessionBranchController::class, 'tree'])->where('session', '[A-Za-z0-9_.\-]+')->name('sessions.tree');
+Route::post('sessions/{session}/fork',    [SessionBranchController::class, 'fork'])->where('session', '[A-Za-z0-9_.\-]+')->name('sessions.fork');
+Route::post('sessions/{session}/switch',  [SessionBranchController::class, 'switchActive'])->where('session', '[A-Za-z0-9_.\-]+')->name('sessions.switch');
 
 // ─── Revert worktree to pre-dispatch snapshot (P1-5) ───
 // Reads `pre_snapshot` off the UsageLog row and calls

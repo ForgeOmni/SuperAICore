@@ -67,6 +67,45 @@ class CostDashboardController extends Controller
             'subscription_tokens'      => (int) ($subscriptionRows->sum('input_tokens') + $subscriptionRows->sum('output_tokens')),
         ];
 
+        // 9Router-borrowed savings tracker. "Shadow cost" is the price
+        // we WOULD have paid had every call gone through pay-as-you-go
+        // pricing (currently populated for subscription/free-tier runs).
+        // Savings = shadow - actual. We frame this as "money the routing
+        // strategy is saving you" rather than ambiguous "free tier"
+        // claims — see 9Router's dashboard philosophy.
+        $allShadow = (float) ($rows->sum('shadow_cost_usd') + $subscriptionRows->sum('shadow_cost_usd'));
+        $allActual = (float) ($rows->sum('cost_usd') + $subscriptionRows->sum('cost_usd'));
+        $savings = [
+            'shadow_cost_total'  => $allShadow,
+            'actual_cost_total'  => $allActual,
+            'saved_total'        => max(0.0, $allShadow - $allActual),
+            'savings_ratio'      => $allShadow > 0 ? max(0.0, ($allShadow - $allActual) / $allShadow) : 0.0,
+        ];
+
+        // Per-backend savings (only includes rows where shadow_cost was
+        // populated — i.e. subscription / free-tier wins).
+        $savingsByBackend = $allRows
+            ->filter(fn ($r) => $r->shadow_cost_usd > 0)
+            ->groupBy('backend')
+            ->map(function ($g) {
+                $shadow = (float) $g->sum('shadow_cost_usd');
+                $actual = (float) $g->sum('cost_usd');
+                return [
+                    'count'       => $g->count(),
+                    'shadow_cost' => $shadow,
+                    'actual_cost' => $actual,
+                    'saved'       => max(0.0, $shadow - $actual),
+                    'ratio'       => $shadow > 0 ? max(0.0, ($shadow - $actual) / $shadow) : 0.0,
+                ];
+            })
+            ->sortByDesc('saved');
+
+        // 30-day rolling savings — feeds the headline "you saved $X
+        // this month" widget.
+        $recentSavings = $allRows
+            ->filter(fn ($r) => $r->created_at && $r->created_at->gte($thirtyDaysAgo) && $r->shadow_cost_usd > 0);
+        $savings['saved_30d'] = (float) max(0.0, $recentSavings->sum('shadow_cost_usd') - $recentSavings->sum('cost_usd'));
+
         $thirtyDaysAgo = Carbon::now()->subDays(30)->startOfDay();
         $recent = $rows->filter(fn ($r) => $r->created_at && $r->created_at->gte($thirtyDaysAgo));
 
@@ -85,8 +124,48 @@ class CostDashboardController extends Controller
 
         return view('super-ai-core::costs.index', compact(
             'summary', 'byDay', 'byModel', 'byTaskType', 'byBackend', 'byProvider',
-            'subscriptionByBackend', 'subscriptionByModel'
+            'subscriptionByBackend', 'subscriptionByModel',
+            'savings', 'savingsByBackend'
         ));
+    }
+
+    /**
+     * GET /super-ai-core/costs/savings — JSON endpoint for the savings
+     * widget (and external dashboards). Headless mirror of the savings
+     * computation in index().
+     */
+    public function savings(UsageRepository $usage, CostCalculator $costs)
+    {
+        $rows = collect($usage->all())->map(fn ($r) => (object) [
+            'cost_usd'        => (float) ($r['cost_usd'] ?? 0),
+            'shadow_cost_usd' => (float) ($r['shadow_cost_usd'] ?? 0),
+            'backend'         => $r['backend'] ?? 'unknown',
+            'created_at'      => isset($r['created_at']) ? (Carbon::make($r['created_at']) ?: null) : null,
+        ]);
+
+        $shadow = (float) $rows->sum('shadow_cost_usd');
+        $actual = (float) $rows->sum('cost_usd');
+        $thirtyDaysAgo = Carbon::now()->subDays(30)->startOfDay();
+        $recent = $rows->filter(fn ($r) => $r->created_at && $r->created_at->gte($thirtyDaysAgo));
+
+        return response()->json([
+            'shadow_cost_total' => $shadow,
+            'actual_cost_total' => $actual,
+            'saved_total'       => max(0.0, $shadow - $actual),
+            'savings_ratio'     => $shadow > 0 ? max(0.0, ($shadow - $actual) / $shadow) : 0.0,
+            'saved_30d'         => max(0.0, (float) $recent->sum('shadow_cost_usd') - (float) $recent->sum('cost_usd')),
+            'by_backend'        => $rows
+                ->filter(fn ($r) => $r->shadow_cost_usd > 0)
+                ->groupBy('backend')
+                ->map(fn ($g) => [
+                    'shadow' => (float) $g->sum('shadow_cost_usd'),
+                    'actual' => (float) $g->sum('cost_usd'),
+                    'saved'  => max(0.0, (float) $g->sum('shadow_cost_usd') - (float) $g->sum('cost_usd')),
+                    'count'  => $g->count(),
+                ])
+                ->sortByDesc('saved')
+                ->values(),
+        ]);
     }
 
     protected function aggregate($group): array

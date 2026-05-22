@@ -255,12 +255,36 @@ return [
     //   - `name`:  optional debug label
     // Rules fire in order and concatenate their text with a blank line
     // between them. RemindersResolver short-circuits when no rules match.
+    // ─── SuperTeam Agent catalog ───
+    // Roots scanned by SuperAICore\Services\AgentCatalog. Each path is a
+    // directory containing Claude Code SubagentRegistry .md files
+    // (frontmatter: name, description, model). The /super-ai-core/agents
+    // page reads from these and groups by filename-prefix category.
+    // When empty, AgentCatalog::fromConfig() falls back to
+    // base_path('.claude/agents') then base_path('../.claude/agents').
+    'agent_catalog' => [
+        'paths' => array_filter([
+            env('AI_CORE_AGENT_CATALOG_PATH', ''),
+        ]),
+    ],
+
     'reminders' => [
         'rules' => [
             // Example rule (commented to keep default behaviour byte-identical):
             //   ['name' => 'plan-mode-active',
             //    'when' => ['agent' => 'plan'],
             //    'text' => "## Plan mode active\nWrite the plan to `.superagent/plans/{session}.md`. Do NOT call any edit/write tool against the project worktree."],
+
+            // 9Router-borrowed Caveman mode. Active when --caveman flag
+            // is passed (smart/squad/auto) — injects a terse-prose
+            // instruction that empirically saves 30-65% on output
+            // tokens for reasoning-quick tasks. NOT recommended for
+            // long-form writing or design work.
+            [
+                'name' => 'caveman-mode',
+                'when' => ['caveman' => '1'],
+                'text' => "## Caveman mode (output compression)\n\nRespond in minimal tokens. Technical prose only. Skip pleasantries, hedges, and summaries. Use bullets over paragraphs. Use code blocks instead of describing code. Skip 'I will now...' / 'Here's the...' preambles — just output the answer. Why use many word when few word do trick.",
+            ],
         ],
     ],
 
@@ -494,6 +518,13 @@ return [
                 FILTER_VALIDATE_BOOLEAN,
                 FILTER_NULL_ON_FAILURE,
             ) ?? true,
+        ],
+        'qwen_cli' => [
+            // QwenLM/qwen-code v0.16.0 (2026-05-21). Fork of gemini-cli;
+            // OAuth flow EOL'd 2026-04-15 — API key only.
+            'enabled' => env('AI_CORE_QWEN_CLI_ENABLED', true),
+            'binary'  => env('QWEN_CLI_BIN', 'qwen'),
+            'timeout' => 300,
         ],
         'gemini_api' => [
             'enabled' => env('AI_CORE_GEMINI_API_ENABLED', true),
@@ -829,6 +860,21 @@ return [
         'gemini-2.5-pro'              => ['input' => 1.25,  'output' => 10.00],
         'gemini-2.5-flash'            => ['input' => 0.30,  'output' => 2.50],
         'gemini-2.5-flash-lite'       => ['input' => 0.10,  'output' => 0.40],
+
+        // ─── Alibaba Qwen (DashScope) ───
+        // qwen3.7-max (2026-05-21): 1M context, native Anthropic API
+        // protocol, $2.50/$7.50 per 1M. Verified against DashScope's
+        // public pricing sheet 2026-05-22.
+        // Earlier Qwen3 entries kept so cost dashboards still bucket
+        // calls against legacy aliases correctly.
+        'qwen3.7-max'                 => ['input' => 2.50,  'output' => 7.50],
+        'qwen3.7-plus'                => ['input' => 0.80,  'output' => 2.40],
+        'qwen3.6-max-preview'         => ['input' => 0.78,  'output' => 3.90],
+        'qwen3-max'                   => ['input' => 0.78,  'output' => 3.90],
+        'qwen3.5-plus'                => ['input' => 0.40,  'output' => 1.20],
+        'qwen3.5-flash'               => ['input' => 0.15,  'output' => 0.60],
+        'qwen3-coder-plus'            => ['input' => 0.40,  'output' => 1.20],
+        'qwen3-vl-plus'               => ['input' => 0.78,  'output' => 3.90],
 
         // ─── GitHub Copilot CLI (subscription billed; per-token cost is $0) ───
         // The dashboard reports these under a separate "Subscription engines"

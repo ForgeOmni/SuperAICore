@@ -193,6 +193,15 @@ class Dispatcher
                     'status'  => 'null_result',
                 ],
             );
+            // 9Router-borrowed: when round-robin picked an account but
+            // the backend failed, cool down THIS account so the next
+            // dispatch picks a different one. Backend-level errors that
+            // look like quota / rate-limit fall into this bucket — even
+            // without a specific exception type we get fast rotation.
+            $this->cooldownActiveAccount(
+                $callOptions['provider_config'] ?? [],
+                reason: 'backend_returned_null',
+            );
             if ($this->shouldDumpOn('error')) {
                 $tracer->dump('error', 'backend returned null', [
                     'backend' => $backend->name(),
@@ -551,7 +560,20 @@ class Dispatcher
      *
      * @return array{0: ?Backend, 1: array, 2: ?int, 3: ?int}
      */
-    protected function resolve(array $options): array
+    /**
+     * Resolve a dispatch options array to the concrete backend + provider
+     * config + provider/service ids. Public so the OpenAI-compat proxy
+     * and any other host that needs to make routing decisions without
+     * actually executing a dispatch can re-use the same precedence chain.
+     *
+     * Returns [Backend|null, providerConfig, providerId|null, serviceId|null].
+     */
+    public function resolve(array $options): array
+    {
+        return $this->resolveInternal($options);
+    }
+
+    protected function resolveInternal(array $options): array
     {
         // 1. Explicit backend override
         if (!empty($options['backend'])) {
@@ -563,9 +585,10 @@ class Dispatcher
         if (!empty($options['provider_id']) && $this->providers) {
             $provider = $this->providers->findById($options['provider_id']);
             if ($provider) {
+                $providerConfig = $this->applyAccountRoundRobin($provider);
                 return [
                     $this->backends->get($this->backendForProvider($provider)),
-                    $provider,
+                    $providerConfig,
                     $provider['id'],
                     null,
                 ];
@@ -592,9 +615,10 @@ class Dispatcher
             $scopeId = $options['scope_id'] ?? null;
             $provider = $this->providers->findActive($scope, $scopeId);
             if ($provider) {
+                $providerConfig = $this->applyAccountRoundRobin($provider);
                 return [
                     $this->backends->get($this->backendForProvider($provider)),
-                    $provider,
+                    $providerConfig,
                     $provider['id'],
                     null,
                 ];
@@ -606,6 +630,61 @@ class Dispatcher
             ? config('super-ai-core.default_backend', 'anthropic_api')
             : 'anthropic_api';
         return [$this->backends->get($defaultBackend), [], null, null];
+    }
+
+    /**
+     * 9Router-borrowed multi-account round-robin. When the provider has
+     * one or more rows in ai_provider_accounts, pick the next eligible
+     * account via AccountRoundRobin and merge its credentials onto the
+     * provider config so the backend sees the right keys.
+     *
+     * Falls back silently to the provider's own credentials when:
+     *   - the migration hasn't been run yet
+     *   - no active accounts exist
+     *   - all accounts are in cooldown
+     *
+     * @param array<string,mixed> $provider The provider row from ProviderRepository
+     * @return array<string,mixed>          Provider config with auth merged
+     */
+    protected function applyAccountRoundRobin(array $provider): array
+    {
+        if (empty($provider['id']) || !class_exists(\SuperAICore\Models\AiProviderAccount::class)) {
+            return $provider;
+        }
+        try {
+            $picker = function_exists('app')
+                ? app(\SuperAICore\Services\AccountRoundRobin::class)
+                : new \SuperAICore\Services\AccountRoundRobin();
+            $account = $picker->pick((int) $provider['id']);
+            if ($account === null) return $provider;
+            return $picker->applyToConfig($account, $provider);
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->debug('Account round-robin skipped: ' . $e->getMessage());
+            }
+            return $provider;
+        }
+    }
+
+    /**
+     * Cooldown the in-use account when the backend reports a quota / rate
+     * limit error. Called from dispatch() error-handling paths. Wrapped
+     * in try/catch so a missing migration doesn't cascade into a dispatch
+     * failure on top of the original error.
+     */
+    protected function cooldownActiveAccount(array $providerConfig, string $reason = 'quota_exceeded'): void
+    {
+        $accountId = $providerConfig['_account_id'] ?? null;
+        if (!$accountId || !class_exists(\SuperAICore\Models\AiProviderAccount::class)) return;
+
+        try {
+            $picker = function_exists('app')
+                ? app(\SuperAICore\Services\AccountRoundRobin::class)
+                : new \SuperAICore\Services\AccountRoundRobin();
+            $picker->cooldown((int) $accountId, $reason);
+        } catch (\Throwable) {
+            // Cooldown is best-effort; never fail dispatch on it.
+        }
     }
 
     protected function backendForProvider(array $provider): string

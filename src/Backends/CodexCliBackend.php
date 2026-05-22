@@ -54,6 +54,16 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         // fail the run — we substitute the closest compatible model.
         $model = CodexModelResolver::resolve($model, $this->binary);
 
+        // Pi-style progressive-disclosure skill index. Codex CLI has no
+        // native Skill protocol, so we prepend the XML index so the model
+        // can decide when to read a SKILL.md in full. Honors --no-skills.
+        if (empty($options['skills_disabled'])) {
+            $skillXml = (new \SuperAICore\Services\SkillIndexBuilder())->buildFromConfig();
+            if ($skillXml !== '') {
+                $prompt = $skillXml . "\n\n" . $prompt;
+            }
+        }
+
         // `codex exec -` reads the prompt from stdin instead of the
         // trailing argv. Avoids cmd-line escaping / 8K length limits on
         // Windows for large or markdown-heavy prompts.

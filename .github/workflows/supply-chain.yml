@@ -1,0 +1,41 @@
+name: supply-chain
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 6 * * 1'
+
+jobs:
+  composer-audit:
+    name: composer validate + audit (no-scripts policy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
+
+      - name: composer validate --strict
+        run: composer validate --strict --no-check-publish
+
+      - name: Install with --no-scripts
+        run: composer install --no-interaction --no-progress --no-scripts --prefer-dist
+
+      - name: composer audit (security advisories)
+        run: composer audit --no-dev
+
+      - name: Verify no post-install scripts declared
+        run: |
+          set -e
+          if grep -E '"(post-install-cmd|post-update-cmd|pre-install-cmd|pre-update-cmd|post-autoload-dump|post-package-install|post-package-update)"' composer.json; then
+            echo "ERROR: composer.json declares lifecycle scripts. Supply-chain policy forbids them in this library." >&2
+            exit 1
+          fi
+          echo "OK: no composer lifecycle scripts declared."
