@@ -392,8 +392,13 @@ parts 的 Gemini 3.5 / 3.x 系列。在 SDK bump 之上，又从
 处的 OpenAI 兼容代理、带冷却的多账号轮询、三个 HTTP 后端的真流式
 SSE、Claude / Codex / Copilot / Kiro 的预先 OAuth 刷新、Pi 风格的
 会话树分支、为非 skill 原生 CLI 设计的渐进披露 skill 索引、pi v3
-JSONL 导出器，以及 `gh-watch` GitHub PR / CI 反应引擎。**本波次不
-升级 SDK** —— 全部为宿主侧改动，SuperAgent 约束保持 `^1.0.5`。
+JSONL 导出器，以及 `gh-watch` GitHub PR / CI 反应引擎。**SDK 约束升至
+`^1.0.6`** —— 引入真实的 `RtkPipeline`（6 个内置压缩器）、
+`Hooks\HookEvent::PR_EVENT` 钩子（`gh-watch` 自动触发）、
+`Agent::steer()` / `followUp()` 运行中转向（经 `SuperAgentBackend`
+options 暴露），以及 `qwen-anthropic` SDK provider（新的
+`AiProvider::TYPE_QWEN_ANTHROPIC` 类型，DashScope 的 Anthropic
+协议端点 —— Claude 的无缝替代）。
 
 - **第 8 个引擎 Qwen Code CLI（`qwen_cli`）**（0.9.8）—— gemini-cli
   的分支，适配阿里 Qwen 家族。实现 `Backend`、`StreamingBackend`、
@@ -469,10 +474,25 @@ JSONL 导出器，以及 `gh-watch` GitHub PR / CI 反应引擎。**本波次不
   —— 读取可配置根目录下的 `.claude/agents/*.md`，按类别（Strategy /
   Product / Engineering / Business / Security / …）分组展示。
   配置:`super-ai-core.agent_catalog.paths`。
+- **SDK 1.0.6 接线**（0.9.8）—— 四处针对性接线: (1)
+  `RtkCompressorService` 开箱即返回真实的字节节省（SDK 内置 6 个
+  压缩器:git diff / grep / find / ls / tree / Bash）；(2)
+  `GhWatchCommand` 每个事件都额外触发 `Hooks\HookEvent::PR_EVENT`
+  钩子，挂载 `PrWatchHookData` 负载，注册了 SDK 侧 listener 的 host
+  与本地 action handler 看到同一份事件流；(3) `SuperAgentBackend`
+  新接受两个 dispatch options:`follow_up_queue`（预填 agent 的
+  follow-up 队列，主 `run()` 返回后按 FIFO 自动续跑）和
+  `on_agent_built: fn(Agent)`（构造完成后回调，让 sibling 进程把
+  Agent 注册进 session-keyed broker，HTTP/ACP `session/steer` 即可
+  在运行中调用 `Agent::steer()` 注入修正）；(4) 新 provider 类型
+  `AiProvider::TYPE_QWEN_ANTHROPIC`，由 SDK 1.0.6 的
+  `QwenAnthropicProvider` 驱动 —— Qwen 3.7 Max 经 DashScope
+  Anthropic-protocol 端点，Claude 的无缝替代。
 
 完整菜谱（Qwen CLI 安装、追踪查看器配置、OpenAI 代理客户端接入、
 路由 combo CRUD、多账号上线流程、OAuth 刷新排程、会话分支 fork、
-gh-watch 表结构）见 [docs/advanced-usage.zh-CN.md §30](docs/advanced-usage.zh-CN.md)。
+gh-watch 表结构、SDK 1.0.6 接线）见
+[docs/advanced-usage.zh-CN.md §30](docs/advanced-usage.zh-CN.md)。
 
 ### CLI 安装器与健康检查
 

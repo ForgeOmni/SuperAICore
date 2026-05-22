@@ -11,6 +11,11 @@ namespace SuperAICore\Services;
  * output without having to construct the pipeline each time. Backed by
  * a per-process singleton so cumulative stats are aggregatable.
  *
+ * SDK 1.0.6 ships six built-in compressors (git diff / grep / find /
+ * ls / tree / Bash) registered automatically on pipeline construction,
+ * so `compress('git_diff', $raw)` returns real byte savings out of the
+ * box — typical 30-65% on diff/grep payloads.
+ *
  * Usage:
  *
  *     $compressed = app(RtkCompressorService::class)->compress('git_diff', $raw);
@@ -32,6 +37,27 @@ final class RtkCompressorService
             $this->pipeline = new \SuperAgent\Tools\Compression\RtkPipeline();
         }
         return $this->pipeline->compress($toolName, $output);
+    }
+
+    /**
+     * Register a custom CompressorInterface for a tool name. No-op when
+     * the SDK isn't installed. Useful for host apps that own a tool
+     * whose output isn't covered by the SDK's built-in compressors.
+     */
+    public function register(string $toolName, object $compressor): void
+    {
+        if (!class_exists(\SuperAgent\Tools\Compression\RtkPipeline::class)) {
+            return;
+        }
+        if ($this->pipeline === null) {
+            $this->pipeline = new \SuperAgent\Tools\Compression\RtkPipeline();
+        }
+        if (!$compressor instanceof \SuperAgent\Tools\Compression\CompressorInterface) {
+            throw new \InvalidArgumentException(
+                'compressor must implement SuperAgent\\Tools\\Compression\\CompressorInterface'
+            );
+        }
+        $this->pipeline->register($toolName, $compressor);
     }
 
     /**

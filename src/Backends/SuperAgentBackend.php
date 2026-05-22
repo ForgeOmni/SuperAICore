@@ -215,6 +215,21 @@ class SuperAgentBackend implements Backend
             $agent = $this->buildAgent($options, $providerConfig);
             $mcpManager = $this->attachMcpTools($agent, $options);
 
+            // SDK 1.0.6 — pi-style mid-turn control. Two seams:
+            //   - `follow_up_queue: ['next prompt', 'and another']` pre-seeds
+            //     the agent's follow-up queue. After the main run() returns,
+            //     the agent drains the queue FIFO (up to 8 by default) and
+            //     runs each as a continuation against the same conversation.
+            //   - `on_agent_built: fn(Agent $a) => …` hands the constructed
+            //     agent to the caller before run(). Lets a host register the
+            //     agent against a session-keyed broker so a sibling process
+            //     (HTTP question-answer endpoint, ACP `session/steer` RPC)
+            //     can call `Agent::steer($msg)` mid-run to prepend a
+            //     correction at the next iteration boundary.
+            // Both seams degrade to no-op against pre-1.0.6 SDKs.
+            $this->primeFollowUpQueue($agent, $options);
+            $this->fireAgentBuiltHook($agent, $options);
+
             // Compose system prompt: caller-supplied → RemindersResolver
             // synthetic block (opencode session/reminders.ts pattern). The
             // reminders prepend in front of any caller system so an agent
@@ -1338,5 +1353,49 @@ class SuperAgentBackend implements Backend
             }
         }
         return $out;
+    }
+
+    /**
+     * SDK 1.0.6 — pre-seed the agent's follow-up queue from
+     * `options['follow_up_queue']`. The agent drains this FIFO after the
+     * main run() returns. Silent no-op when the SDK is older or the
+     * caller passed nothing. Non-string entries are skipped.
+     */
+    protected function primeFollowUpQueue(Agent $agent, array $options): void
+    {
+        if (!method_exists($agent, 'followUp')) return;
+        $queue = $options['follow_up_queue'] ?? null;
+        if (!is_array($queue)) return;
+        foreach ($queue as $entry) {
+            if (!is_string($entry) || $entry === '') continue;
+            try {
+                $agent->followUp($entry);
+            } catch (\Throwable $e) {
+                if ($this->logger) {
+                    $this->logger->debug('followUp() rejected entry: ' . $e->getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * Hand the constructed Agent to a caller-supplied callback so a sibling
+     * process can register it against a session-keyed broker. The callback
+     * fires AFTER tools are attached / permissions resolved, so by the time
+     * the host receives the Agent it's already wired up. Used by hosts that
+     * want to call `Agent::steer($msg)` mid-run from an HTTP endpoint or
+     * ACP `session/steer` RPC.
+     */
+    protected function fireAgentBuiltHook(Agent $agent, array $options): void
+    {
+        $cb = $options['on_agent_built'] ?? null;
+        if (!is_callable($cb)) return;
+        try {
+            $cb($agent);
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->debug('on_agent_built callback threw: ' . $e->getMessage());
+            }
+        }
     }
 }

@@ -68,6 +68,12 @@ class AiProvider extends Model
     // base_url=https://api.deepseek.com/anthropic — both wire shapes are
     // first-class and supported by upstream.
     const TYPE_DEEPSEEK          = 'deepseek';
+    // DashScope's Anthropic-protocol endpoint (SDK 1.0.6+, qwen3.7-max default).
+    // Routes through SDK's `QwenAnthropicProvider` — a subclass of
+    // AnthropicProvider that speaks the same `/v1/messages` wire as Claude
+    // but against Qwen's serverless. Drop-in substitute for Claude in
+    // fallback chains. API key only (Qwen OAuth was EOL'd 2026-04-15).
+    const TYPE_QWEN_ANTHROPIC    = 'qwen-anthropic';
 
     const TYPES = [
         self::TYPE_BUILTIN           => 'builtin',
@@ -80,6 +86,7 @@ class AiProvider extends Model
         self::TYPE_OPENAI_RESPONSES  => 'openai-responses',
         self::TYPE_LMSTUDIO          => 'lmstudio',
         self::TYPE_DEEPSEEK          => 'deepseek',
+        self::TYPE_QWEN_ANTHROPIC    => 'qwen-anthropic',
         self::TYPE_GOOGLE_AI         => 'google-ai',
         self::TYPE_KIRO_API          => 'kiro-api',
         self::TYPE_MOONSHOT_BUILTIN  => 'moonshot-builtin',
@@ -117,6 +124,7 @@ class AiProvider extends Model
             self::TYPE_OPENAI_RESPONSES,
             self::TYPE_LMSTUDIO,
             self::TYPE_DEEPSEEK,
+            self::TYPE_QWEN_ANTHROPIC,
         ],
         self::BACKEND_GEMINI => [
             self::TYPE_BUILTIN,

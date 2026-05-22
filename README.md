@@ -431,8 +431,13 @@ cooldowns, real SSE streaming on the three HTTP backends, pre-emptive
 OAuth refreshers for Claude / Codex / Copilot / Kiro, Pi-style
 session tree branching, a progressive-disclosure skill index for the
 non-skill-native CLIs, a pi v3 JSONL exporter, and a `gh-watch`
-GitHub PR / CI reaction engine. No SDK bump — every feature in this
-wave is host-side; the SuperAgent constraint stays at `^1.0.5`.
+GitHub PR / CI reaction engine. **SDK constraint bumped to `^1.0.6`** —
+picks up the real `RtkPipeline` (6 built-in compressors), the
+`Hooks\HookEvent::PR_EVENT` hook (fired automatically from
+`gh-watch`), `Agent::steer()` / `followUp()` mid-turn control
+(exposed via `SuperAgentBackend` options), and the `qwen-anthropic`
+SDK provider (new `AiProvider::TYPE_QWEN_ANTHROPIC` for DashScope's
+Anthropic-protocol endpoint — drop-in Claude substitute).
 
 - **Qwen Code CLI as the 8th engine (`qwen_cli`)** *(0.9.8)* — fork of
   `gemini-cli` adapted for Alibaba's Qwen family. Implements
@@ -515,11 +520,25 @@ wave is host-side; the SuperAgent constraint stays at `^1.0.5`.
   reads `.claude/agents/*.md` from configurable roots and groups by
   category (Strategy / Product / Engineering / Business / Security / …).
   Config: `super-ai-core.agent_catalog.paths`.
+- **SDK 1.0.6 wirings** *(0.9.8)* — four targeted wirings on top of
+  the SDK bump: (1) `RtkCompressorService` now returns real byte
+  savings out of the box (SDK ships six built-in compressors —
+  git diff / grep / find / ls / tree / Bash); (2) `GhWatchCommand`
+  fires `Hooks\HookEvent::PR_EVENT` with a `PrWatchHookData` payload
+  on every event, so SDK hook listeners observe the same stream as
+  the local action handler; (3) `SuperAgentBackend` accepts a
+  `follow_up_queue` array option (pre-seeds the agent's follow-up
+  queue) and an `on_agent_built: fn(Agent)` callback (lets a sibling
+  process register the running agent against a session-keyed broker
+  so HTTP / ACP `session/steer` can call `Agent::steer()` mid-run);
+  (4) new `AiProvider::TYPE_QWEN_ANTHROPIC` provider type backed by
+  SDK 1.0.6's `QwenAnthropicProvider` — Qwen 3.7 Max via DashScope's
+  Anthropic-protocol endpoint, drop-in Claude substitute.
 
 Full recipes (Qwen CLI install, tracing viewer setup, OpenAI proxy
 client setup, routing combo CRUD, multi-account onboarding, OAuth
-refresher schedule, session branch forking, gh-watch row schema):
-[docs/advanced-usage.md §30](docs/advanced-usage.md).
+refresher schedule, session branch forking, gh-watch row schema,
+SDK 1.0.6 wirings): [docs/advanced-usage.md §30](docs/advanced-usage.md).
 
 ### CLI installer & health
 

@@ -24,8 +24,19 @@ pi v3 exporter, and a `gh-watch` GitHub PR / CI reaction engine.
 
 Every binding is additive and opt-in — pre-0.9.8 behaviour is preserved
 unless you set an env flag, pass a new option, or resolve a new service
-from the container. No SDK bump in this release — `forgeomni/superagent`
-constraint stays at `^1.0.5`.
+from the container. **SDK 1.0.6 bump** moves `^1.0.5` → `^1.0.6`,
+picking up `Tools\Compression\RtkPipeline` with six real compressors
+(git diff / grep / find / ls / tree / Bash), `Hooks\HookEvent::PR_EVENT`
++ `PrWatchHookData`, `Agent::steer()` / `Agent::followUp()` mid-turn
+control, the `qwen-anthropic` SDK provider for DashScope's
+Anthropic-protocol endpoint, the canonical 13-event streaming taxonomy
+(`Providers\StreamEventTranslator` + `StreamEventTypes`), pi `/tree`
+session forking (`Conversation\BranchManager`,
+`SessionManager::fork()`), and the `Tools\Schema` cross-provider
+schema normaliser. Several of these overlap with patterns SuperAICore
+0.9.8 ships natively (TraceCollector, ArrowSerializer,
+SessionBranchManager) — the local implementations are kept; SDK
+counterparts are documented as alternatives for hosts that want them.
 
 ```bash
 composer update forgeomni/superaicore
@@ -286,11 +297,61 @@ degrades to no-op when the surrounding wiring isn't present.
 - **`super-ai-core.reminders.rules`** ships one default entry
   (`caveman-mode`), commented examples for the rest.
 
+### Added — SDK 1.0.6 plumbing
+
+The composer constraint moves to `^1.0.6`. Four targeted wirings land
+on top of the bump:
+
+- **`Services\RtkCompressorService::register()`** *(0.9.8)* — host
+  facade gains a `register(string $toolName, CompressorInterface)`
+  passthrough so hosts can register custom compressors against the
+  shared pipeline. SDK 1.0.6 now ships six real compressors out of
+  the box, so `compress('git_diff', $raw)` returns real byte savings
+  immediately (no more passthrough fallback) — typical 30-65% on
+  diff / grep payloads.
+- **`Hooks\HookEvent::PR_EVENT` from `GhWatchCommand`** *(0.9.8)* —
+  every event the watcher dispatches now also fires the SDK
+  `PR_EVENT` hook with a `PrWatchHookData` payload, so any host
+  registering SDK-side listeners (claude-octopus-style auto-spawn,
+  Slack notifier, audit logger) observes the same stream as
+  SuperAICore's local action handler. Best-effort wrapped — a missing
+  `HookRegistry` / pre-1.0.6 SDK skips silently.
+- **`Agent::steer()` / `followUp()` exposed via `SuperAgentBackend`**
+  *(0.9.8)* — two new dispatch options:
+  - `follow_up_queue: ['next prompt', 'and another']` pre-seeds the
+    agent's follow-up queue. After the main `run()` returns, the
+    agent drains the queue FIFO (up to 8 by default) and runs each
+    as a continuation against the same conversation.
+  - `on_agent_built: fn(Agent $a) => …` hands the constructed Agent
+    to the caller before `run()`, so a host can register the agent
+    against a session-keyed broker. A sibling process (HTTP
+    question-answer endpoint, ACP `session/steer` RPC) can then
+    call `Agent::steer($msg)` mid-run to prepend a correction at the
+    next iteration boundary.
+- **`qwen-anthropic` provider type** *(0.9.8)* — new
+  `AiProvider::TYPE_QWEN_ANTHROPIC` registered against the
+  superagent backend. Routes through SDK 1.0.6's
+  `QwenAnthropicProvider` (subclass of `AnthropicProvider`) — Qwen
+  3.7 Max via DashScope's Anthropic-protocol endpoint, drop-in
+  substitute for Claude in fallback chains. Env: `DASHSCOPE_API_KEY`
+  (canonical) + `QWEN_API_KEY` (alias).
+
 ### Notes
 
-- **No SDK bump.** `forgeomni/superagent` constraint stays at
-  `^1.0.5`. Every feature in this release is host-side; the SDK
-  surface is unchanged.
+- **SDK constraint bumped to `^1.0.6`.** Pre-existing features in
+  this release remain host-side; the SDK bump unlocks the four
+  wirings above and makes RtkCompressorService's six built-in
+  compressors usable without code changes in host apps.
+- **SDK pieces NOT wired yet (intentional):** `Tracing\TraceCollector`
+  (SDK ships its own — SuperAICore keeps the local one because it's
+  already tied to Laravel storage paths and the `/traces` UI),
+  `Arrow\ArrowSerializer` (same shape both sides; both available),
+  `Conversation\BranchManager` (SDK ships pure tree algebra; our
+  `Services\SessionBranchManager` already wraps the DB persistence
+  side), `Providers\StreamEventTranslator` (canonical 13-event
+  envelope; our HTTP backends emit a 5-event legacy envelope that
+  the OpenAI-compat proxy already consumes — hosts that want canonical
+  events call the SDK translator directly).
 - **Migrations are additive.** Pre-0.9.8 rows are not touched.
 - **Tracing has zero runtime cost when disabled.** Setting
   `AI_CORE_TRACE_ENABLED=false` turns every emit into a no-op; the
@@ -298,6 +359,15 @@ degrades to no-op when the surrounding wiring isn't present.
 - The OpenAI-compatible proxy honours the same auth middleware as the
   rest of `/super-ai-core/*`. Review your `super-ai-core.route.middleware`
   stack before exposing it to external clients.
+- **Local vs SDK duplicates kept on purpose.** SDK 1.0.6 ships its
+  own `Tracing\TraceCollector` / `Arrow\ArrowSerializer` /
+  `Conversation\BranchManager` on the same day SuperAICore 0.9.8
+  shipped local versions. The local ones stay because they're tied
+  to Laravel storage paths, the `/traces` UI, the
+  `ai_session_branches` table, and the `/super-ai-core/agents`
+  browser respectively. Both implementations follow the same
+  conceptual shapes (Chrome Trace Event JSON, Arrow IPC,
+  parent_branch_id tree), so swapping later is cheap.
 
 ## [0.9.7] — 2026-05-20
 

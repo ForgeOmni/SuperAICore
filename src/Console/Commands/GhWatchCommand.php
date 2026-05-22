@@ -179,6 +179,12 @@ final class GhWatchCommand extends Command
 
     private function fireAction(AiPrWatcher $w, array $event): void
     {
+        // SDK 1.0.6: emit a Hooks\HookEvent::PR_EVENT so any host-registered
+        // SuperAgent hook listener fires on the same payload. Independent of
+        // the per-watcher action — the hook is observation-only. Best-effort:
+        // a missing HookRegistry / SDK class skips silently.
+        $this->emitSdkPrEventHook($w, $event);
+
         switch ($w->action) {
             case AiPrWatcher::ACTION_ASK_USER:
                 AiUserQuestion::create([
@@ -264,6 +270,50 @@ final class GhWatchCommand extends Command
                     );
                 }
                 break;
+        }
+    }
+
+    /**
+     * Fire SDK 1.0.6's `Hooks\HookEvent::PR_EVENT` with a `PrWatchHookData`
+     * payload so any registered SDK hook listener observes the same event
+     * stream we use locally. Wrapped in class_exists() so SuperAICore still
+     * works against pre-1.0.6 SDKs (the hook just doesn't fire there).
+     */
+    private function emitSdkPrEventHook(AiPrWatcher $w, array $event): void
+    {
+        if (!class_exists(\SuperAgent\Hooks\HookEvent::class)
+            || !class_exists(\SuperAgent\Hooks\PrWatchHookData::class)
+            || !class_exists(\SuperAgent\Hooks\HookRegistry::class)) {
+            return;
+        }
+        if (!defined(\SuperAgent\Hooks\HookEvent::class . '::PR_EVENT')
+            && !in_array('PR_EVENT', array_map(fn ($c) => $c->name, \SuperAgent\Hooks\HookEvent::cases()), true)) {
+            return;
+        }
+        try {
+            $registry = function_exists('app')
+                ? app(\SuperAgent\Hooks\HookRegistry::class)
+                : new \SuperAgent\Hooks\HookRegistry();
+            $data = new \SuperAgent\Hooks\PrWatchHookData(
+                kind:     (string) ($event['kind'] ?? 'pr_event'),
+                owner:    (string) $w->owner,
+                repo:     (string) $w->repo,
+                prNumber: (int) ($event['pr_number'] ?? 0),
+                title:    (string) ($event['title'] ?? ''),
+                body:     (string) ($event['body'] ?? ''),
+                url:      (string) ($event['url'] ?? ''),
+                context:  ['watcher_id' => $w->id, 'action' => $w->action],
+            );
+            $input = new \SuperAgent\Hooks\HookInput(
+                hookEvent:      \SuperAgent\Hooks\HookEvent::PR_EVENT,
+                sessionId:      'gh-watch:' . $w->id,
+                cwd:            getcwd() ?: '/',
+                gitRepoRoot:    null,
+                additionalData: ['pr_event' => $data->toArray()],
+            );
+            $registry->executeHooks(\SuperAgent\Hooks\HookEvent::PR_EVENT, $input);
+        } catch (\Throwable) {
+            // Hook failures never kill the daemon.
         }
     }
 }

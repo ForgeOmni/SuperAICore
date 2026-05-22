@@ -461,8 +461,13 @@ les trois backends HTTP, des rafraîchisseurs OAuth pré-emptifs pour
 Claude / Codex / Copilot / Kiro, le branchement d'arbre de session
 style Pi, un index de skills à divulgation progressive pour les CLI
 non-skill-native, un exporteur JSONL pi v3, et un moteur de réaction
-GitHub PR / CI `gh-watch`. **Pas de bump SDK** — chaque fonctionnalité
-de cette vague est côté hôte ; la contrainte SuperAgent reste à `^1.0.5`.
+GitHub PR / CI `gh-watch`. **La contrainte SDK passe à `^1.0.6`** —
+intègre le vrai `RtkPipeline` (6 compresseurs intégrés), le hook
+`Hooks\HookEvent::PR_EVENT` (déclenché automatiquement par
+`gh-watch`), le contrôle mid-turn `Agent::steer()` / `followUp()`
+(exposé via les options de `SuperAgentBackend`), et le provider SDK
+`qwen-anthropic` (nouveau `AiProvider::TYPE_QWEN_ANTHROPIC` pour
+l'endpoint Anthropic-protocol de DashScope — substitut direct de Claude).
 
 - **Qwen Code CLI comme 8ème moteur (`qwen_cli`)** *(0.9.8)* — fork
   de `gemini-cli` adapté à la famille Qwen d'Alibaba. Implémente
@@ -556,11 +561,28 @@ de cette vague est côté hôte ; la contrainte SuperAgent reste à `^1.0.5`.
   configurables et groupe par catégorie (Strategy / Product /
   Engineering / Business / Security / …). Config :
   `super-ai-core.agent_catalog.paths`.
+- **Câblages SDK 1.0.6** *(0.9.8)* — quatre câblages ciblés sur le
+  bump SDK : (1) `RtkCompressorService` retourne maintenant de
+  vraies économies d'octets dès la sortie de la boîte (le SDK livre
+  six compresseurs intégrés — git diff / grep / find / ls / tree /
+  Bash) ; (2) `GhWatchCommand` déclenche
+  `Hooks\HookEvent::PR_EVENT` avec un payload `PrWatchHookData` sur
+  chaque événement, donc les écouteurs hooks SDK observent le même
+  flux que le handler d'action local ; (3) `SuperAgentBackend`
+  accepte deux nouvelles options de dispatch :
+  `follow_up_queue: ['prompt suivant', 'et encore un']` pré-amorce
+  la queue de follow-up de l'agent, et `on_agent_built: fn(Agent)`
+  passe l'Agent construit au caller avant `run()` pour qu'un processus
+  voisin (endpoint HTTP question-answer, RPC ACP `session/steer`)
+  puisse appeler `Agent::steer()` mid-run ; (4) nouveau type de
+  provider `AiProvider::TYPE_QWEN_ANTHROPIC` adossé à
+  `QwenAnthropicProvider` du SDK 1.0.6 — Qwen 3.7 Max via l'endpoint
+  Anthropic-protocol de DashScope, substitut direct de Claude.
 
 Recettes complètes (installation Qwen CLI, configuration du viewer de
 trace, intégration de client OpenAI proxy, CRUD combo de routing,
 onboarding multi-comptes, planning OAuth refresher, forking de
-session branch, schéma de table gh-watch) :
+session branch, schéma de table gh-watch, câblages SDK 1.0.6) :
 [docs/advanced-usage.fr.md §30](docs/advanced-usage.fr.md).
 
 ### Installateur CLI & santé

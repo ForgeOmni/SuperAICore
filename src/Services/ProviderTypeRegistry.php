@@ -263,6 +263,27 @@ class ProviderTypeRegistry
                 'sdk_provider'     => 'deepseek',
             ],
 
+            // 0.9.8 — DashScope Anthropic-protocol endpoint (SDK 1.0.6+).
+            // qwen3.7-max default (1M ctx, $2.50/$7.50 per 1M). The
+            // `qwen-anthropic` SDK provider is a subclass of AnthropicProvider
+            // with Qwen-specific defaults; base_url defaults to DashScope's
+            // anthropic-mode endpoint but operators MUST verify (Alibaba
+            // hadn't published the canonical English URL as of 2026-05-22).
+            AiProvider::TYPE_QWEN_ANTHROPIC => [
+                'icon'             => 'bi-translate',
+                'fields'           => ['api_key', 'base_url'],
+                'default_backend'  => AiProvider::BACKEND_SUPERAGENT,
+                'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT],
+                // SDK reads both DASHSCOPE_API_KEY and QWEN_API_KEY; the env
+                // builder sets the canonical one and aliases the other so
+                // hosts that already use either env name work unchanged.
+                'env_key'          => 'DASHSCOPE_API_KEY',
+                'env_extras'       => ['QWEN_API_KEY' => 'api_key'],
+                'base_url_env'     => 'DASHSCOPE_BASE_URL',
+                'needs_base_url'   => false,
+                'sdk_provider'     => 'qwen-anthropic',
+            ],
+
             AiProvider::TYPE_KIRO_API => [
                 'icon'             => 'bi-magic',
                 'fields'           => ['api_key'],
