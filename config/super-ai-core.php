@@ -539,6 +539,41 @@ return [
         'min_failures'     => (int) env('AI_CORE_AUTO_ROTATE_THRESHOLD', 2),
     ],
 
+    // ─── Tracing ring buffer (magic-trace inspired) ───
+    // Always-on, lock-free, in-process ring of trace events covering every
+    // Dispatcher LLM/tool call plus the operator-relevant moments (cache
+    // miss warning, auto-rotate, provider disabled, soft timeout). The ring
+    // is dumped to disk only on triggers:
+    //   - QuotaExceededException / null-result error
+    //   - auto_rotate fires (covers the silent-rotation observability gap)
+    //   - `php artisan dispatcher:dump-trace` manual flush
+    //
+    // Output: Chrome Trace Event JSON, viewable in chrome://tracing,
+    // https://ui.perfetto.dev, or the bundled SuperTeam template at
+    // .claude/design-system/templates/trace-viewer.html. The wire contract
+    // is shared across SuperAgent / SuperAICore / SuperTeam — see SuperTeam
+    // .claude/refs/ref-trace-format.md.
+    //
+    // Disabling tracing turns every emit into a no-op; the file system is
+    // never touched. Ring size is per-process and constant memory — 1024
+    // events ≈ ~150 KB of structured records.
+    'tracing' => [
+        'enabled'      => filter_var(
+            env('AI_CORE_TRACE_ENABLED', true),
+            FILTER_VALIDATE_BOOLEAN,
+            FILTER_NULL_ON_FAILURE,
+        ) ?? true,
+        'ring_size'    => (int) env('AI_CORE_TRACE_RING_SIZE', 1024),
+        // When null, resolves to storage_path('app/superaicore/traces').
+        'storage_path' => env('AI_CORE_TRACE_STORAGE_PATH', null),
+        // Auto-dump triggers; each can be toggled independently.
+        'dump_on' => [
+            'error'    => (bool) env('AI_CORE_TRACE_DUMP_ON_ERROR', true),
+            'rotate'   => (bool) env('AI_CORE_TRACE_DUMP_ON_ROTATE', true),
+            'timeout'  => (bool) env('AI_CORE_TRACE_DUMP_ON_TIMEOUT', true),
+        ],
+    ],
+
     // ─── Cache cold warning (0.9.0) ───
     // Anthropic prompt cache TTL is 5 minutes. When a follow-up call to
     // the same session arrives after the window has closed, the user

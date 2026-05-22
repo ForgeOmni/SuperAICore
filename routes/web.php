@@ -19,6 +19,7 @@ use SuperAICore\Http\Controllers\PtyController;
 use SuperAICore\Http\Controllers\QuestionController;
 use SuperAICore\Http\Controllers\RevertController;
 use SuperAICore\Http\Controllers\ShareController;
+use SuperAICore\Http\Controllers\TraceController;
 use SuperAICore\Http\Controllers\UsageApiController;
 use SuperAICore\Http\Controllers\UsageController;
 use Illuminate\Support\Facades\Route;
@@ -136,6 +137,21 @@ Route::get('share/sessions/{sessionId}',          [ShareController::class, 'show
 // automation. Auth is the host's responsibility — wrap the surrounding
 // route group's middleware with whatever your app uses.
 Route::get('v1/usage', [UsageApiController::class, 'aggregate'])->name('v1.usage');
+
+// ─── Dispatcher trace dumps (magic-trace style ring buffer) ───
+// List + view + raw-download endpoint for trace files written by
+// `TraceCollector::dump()` on QuotaExceededException, auto-rotate,
+// soft-timeout, manual `dispatcher:dump-trace`, etc. Filenames are
+// validated against `^trace_[A-Za-z0-9._-]+\.json$` so traversal escapes
+// are rejected. See SuperTeam .claude/refs/ref-trace-format.md for the
+// wire format and viewer compatibility notes.
+Route::get('traces',                 [TraceController::class, 'index'])->name('traces.index');
+Route::get('traces/raw/{filename}',  [TraceController::class, 'raw'])
+    ->where('filename', '^trace_[A-Za-z0-9._-]+\.json$')
+    ->name('traces.raw');
+Route::get('traces/{filename}',      [TraceController::class, 'show'])
+    ->where('filename', '^trace_[A-Za-z0-9._-]+\.json$')
+    ->name('traces.show');
 
 // ─── Cross-harness session resume (0.9.7) ───
 // Backed by SuperAgent SDK 0.9.7's HarnessImporter SPI. Gated by

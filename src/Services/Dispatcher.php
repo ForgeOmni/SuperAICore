@@ -7,6 +7,8 @@ use SuperAICore\Contracts\ProviderRepository;
 use SuperAICore\Contracts\RoutingRepository;
 use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Support\BackendState;
+use SuperAICore\Arrow\ArrowSerializer;
+use SuperAICore\Tracing\TraceCollector;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -28,7 +30,55 @@ class Dispatcher
         protected ?ProviderResolver $providers = null,
         protected ?RoutingRepository $routing = null,
         protected ?LoggerInterface $logger = null,
+        protected ?TraceCollector $tracer = null,
     ) {}
+
+    /**
+     * Lazy resolver for the dispatcher-wide trace collector.
+     *
+     * Hosts that wire a TraceCollector via constructor get exactly that
+     * instance; hosts that don't (the common case) fall back to the
+     * process-global singleton bootstrapped by SuperAICoreServiceProvider.
+     */
+    protected function tracer(): TraceCollector
+    {
+        if ($this->tracer === null) {
+            $this->tracer = TraceCollector::getInstance();
+        }
+        return $this->tracer;
+    }
+
+    /**
+     * Pull a stable trace `tid` (lane label) off the dispatch options.
+     * Prefers explicit session_id; falls back to external_label or 'default'.
+     */
+    protected function traceTid(array $options): string
+    {
+        $sessionId = $options['metadata']['session_id']
+            ?? $options['session_id']
+            ?? $options['external_label']
+            ?? null;
+        if (is_string($sessionId) && $sessionId !== '') {
+            return 'session:' . $sessionId;
+        }
+        return 'session:default';
+    }
+
+    /**
+     * Check whether an auto-dump for the given trigger is enabled. The
+     * trigger-level config keys live under `super-ai-core.tracing.dump_on.*`;
+     * absent / non-Laravel hosts default to "on" so the operator still gets
+     * a crash dump even when nobody published the config.
+     */
+    protected function shouldDumpOn(string $trigger): bool
+    {
+        if (!function_exists('config')) {
+            return true;
+        }
+        $val = config('super-ai-core.tracing.dump_on.' . $trigger);
+        if ($val === null) return true;
+        return (bool) $val;
+    }
 
     /**
      * Dispatch a prompt to the appropriate backend.
@@ -63,12 +113,27 @@ class Dispatcher
     public function dispatch(array $options): ?array
     {
         $start = microtime(true);
+        $startMicros = (int) ($start * 1_000_000);
+        $tracer = $this->tracer();
+        $tid = $this->traceTid($options);
 
         // Resolve backend + provider_config
         [$backend, $providerConfig, $providerId, $serviceId] = $this->resolve($options);
 
         if (!$backend) {
             if ($this->logger) $this->logger->warning('Dispatcher: no backend resolved');
+            $tracer->emitInstant(
+                name: 'dispatcher.no_backend',
+                category: 'error',
+                tid: $tid,
+                args: [
+                    'task_type'  => $options['task_type']  ?? null,
+                    'capability' => $options['capability'] ?? null,
+                ],
+            );
+            if ($this->shouldDumpOn('error')) {
+                $tracer->dump('error', 'no backend resolved');
+            }
             return null;
         }
 
@@ -76,6 +141,12 @@ class Dispatcher
         // off; every provider that routes through that engine goes dark.
         if (!BackendState::isDispatcherBackendAllowed($backend->name())) {
             if ($this->logger) $this->logger->warning('Dispatcher: backend "' . $backend->name() . '" is disabled by operator');
+            $tracer->emitInstant(
+                name: 'provider.disabled',
+                category: 'provider',
+                tid: $tid,
+                args: ['backend' => $backend->name()],
+            );
             return null;
         }
 
@@ -109,7 +180,27 @@ class Dispatcher
         }
         $durationMs = (int) round((microtime(true) - $start) * 1000);
 
-        if (!$result) return null;
+        if (!$result) {
+            $tracer->emitDuration(
+                name: 'llm.dispatch',
+                category: 'llm',
+                tid: $tid,
+                startMicros: $startMicros,
+                durationMicros: $durationMs * 1000,
+                args: [
+                    'backend' => $backend->name(),
+                    'model'   => $options['model'] ?? null,
+                    'status'  => 'null_result',
+                ],
+            );
+            if ($this->shouldDumpOn('error')) {
+                $tracer->dump('error', 'backend returned null', [
+                    'backend' => $backend->name(),
+                    'model'   => $options['model'] ?? null,
+                ]);
+            }
+            return null;
+        }
 
         // Compute cost. Backend name lets the calculator pick subscription
         // pricing entries (e.g. copilot:claude-sonnet-4-5) and emit $0 for
@@ -176,6 +267,68 @@ class Dispatcher
         $coldWarning = $this->detectCacheCold($options, $backend->name(), $cacheReadTokens);
         if ($coldWarning !== null) {
             $result['cache_warning'] = $coldWarning;
+            $tracer->emitInstant(
+                name: 'llm.cache_cold',
+                category: 'llm',
+                tid: $tid,
+                args: [
+                    'backend' => $backend->name(),
+                    'model'   => $modelId,
+                    'warning' => $coldWarning,
+                ],
+            );
+        }
+
+        // Successful LLM call — emit a duration event covering the whole
+        // dispatch envelope (backend call + cost calc + cache heuristic).
+        $tracer->emitDuration(
+            name: 'llm.dispatch',
+            category: 'llm',
+            tid: $tid,
+            startMicros: $startMicros,
+            durationMicros: $durationMs * 1000,
+            args: [
+                'backend'             => $backend->name(),
+                'model'               => $modelId,
+                'input_tokens'        => $inputTokens,
+                'output_tokens'       => $outputTokens,
+                'cache_read_tokens'   => $cacheReadTokens,
+                'cache_write_tokens'  => $cacheWriteTokens,
+                'cost_usd'            => $cost,
+                'shadow_cost_usd'     => $shadowCost,
+                'billing_model'       => $billingModel,
+                'provider_id'         => $providerId,
+                'service_id'          => $serviceId,
+            ],
+        );
+
+        // Optional Arrow payload conversion — Wave 3 / AC-5.
+        // When the caller passes `output_format: 'arrow'` AND `tabular`
+        // (or the result happens to carry a `rows` field already), the
+        // result envelope gets a base64-encoded Arrow IPC stream the next
+        // consumer can hand directly to Perspective / pyarrow.
+        //
+        // Off by default. Adds zero overhead when not requested.
+        if (($options['output_format'] ?? null) === 'arrow') {
+            $rows = $options['tabular'] ?? $result['rows'] ?? null;
+            if (is_array($rows)) {
+                try {
+                    $cli = ArrowSerializer::detectExternalCli();
+                    $bytes = $cli !== null
+                        ? ArrowSerializer::fromRowsViaCli($rows, $cli)
+                        : ArrowSerializer::fromRows($rows);
+                    $result['arrow'] = base64_encode($bytes);
+                    $result['arrow_row_count'] = count($rows);
+                    $result['arrow_via'] = $cli !== null ? 'cli' : 'inline';
+                } catch (\Throwable $arrowErr) {
+                    // Never block dispatch on Arrow serialization failure —
+                    // log and continue with the standard envelope. Caller
+                    // can detect absence of `result['arrow']` to fall back.
+                    if ($this->logger) {
+                        $this->logger->warning('Dispatcher: arrow serialization failed: ' . $arrowErr->getMessage());
+                    }
+                }
+            }
         }
 
         if ($this->usage) {

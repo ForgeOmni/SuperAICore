@@ -76,6 +76,52 @@
 @endpush
 
 @section('content')
+@push('styles')
+<link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/@finos/perspective-viewer@3.4.0/dist/css/themes.css" />
+<style>
+    /* Analytics panel — Perspective viewer host */
+    .analytics-panel { margin: 1rem 0; }
+    .analytics-panel > details > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 8px 12px;
+        background: var(--tf-bg-elev, #f8f9fa);
+        border: 1px solid var(--tf-border, #dee2e6);
+        border-radius: var(--tf-radius-sm, 4px);
+        font-weight: 600;
+        font-size: 0.9rem;
+        user-select: none;
+    }
+    .analytics-panel > details > summary::-webkit-details-marker { display: none; }
+    .analytics-panel > details > summary::before {
+        content: "▶";
+        display: inline-block;
+        margin-right: 8px;
+        transition: transform 0.15s;
+        font-size: 0.7em;
+    }
+    .analytics-panel > details[open] > summary::before { transform: rotate(90deg); }
+    .analytics-panel > details[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    .analytics-host {
+        height: 60vh;
+        min-height: 420px;
+        border: 1px solid var(--tf-border, #dee2e6);
+        border-top: 0;
+        border-radius: 0 0 var(--tf-radius-sm, 4px) var(--tf-radius-sm, 4px);
+        overflow: hidden;
+    }
+    .analytics-host perspective-viewer { width: 100%; height: 100%; }
+    .analytics-toolbar { display: flex; gap: 8px; padding: 6px 10px; background: var(--tf-bg-elev, #f8f9fa); border-bottom: 1px solid var(--tf-border, #dee2e6); align-items: center; font-size: 0.85rem; }
+    .analytics-toolbar label { color: var(--tf-text-muted, #6c757d); margin: 0; }
+    .analytics-toolbar select, .analytics-toolbar input {
+        font-size: 0.85rem;
+        padding: 2px 8px;
+        border: 1px solid var(--tf-border, #dee2e6);
+        border-radius: 3px;
+    }
+</style>
+@endpush
+
 <div class="tf-page-header d-flex justify-content-between align-items-center">
     <h1><i class="bi bi-activity"></i> {{ __('processes.title') }}</h1>
     <div class="d-flex gap-2">
@@ -84,6 +130,89 @@
         </button>
     </div>
 </div>
+
+{{-- Perspective-powered usage analytics. Loads recent ai_usage_logs rows via
+     the existing /v1/usage JSON API, hands them to a WASM columnar engine,
+     and lets the operator pivot/filter/chart without leaving the page.
+     Borrowed from FINOS Perspective — applies the same idea everywhere we
+     have tabular data the operator wants to slice (Wave 2 / AC-3). --}}
+<div class="analytics-panel">
+    <details>
+        <summary>
+            <i class="bi bi-graph-up"></i> Interactive Usage Analytics
+            <span class="text-muted ms-2" style="font-weight: 400; font-size: 0.85em;">(pivot · filter · chart — last 7 days)</span>
+        </summary>
+        <div class="analytics-toolbar">
+            <label for="analytics-group-by">Group by:</label>
+            <select id="analytics-group-by">
+                <option value="day">day</option>
+                <option value="model">model</option>
+                <option value="backend">backend</option>
+                <option value="provider">provider</option>
+                <option value="task_type">task_type</option>
+                <option value="thread">thread (session)</option>
+            </select>
+            <label for="analytics-days">Days:</label>
+            <input type="number" id="analytics-days" value="7" min="1" max="90" style="width: 60px;" />
+            <button class="btn btn-outline-secondary btn-sm" onclick="loadAnalytics()">Reload</button>
+            <span class="text-muted ms-auto" id="analytics-meta">—</span>
+        </div>
+        <div class="analytics-host">
+            <perspective-viewer id="usage-viewer"></perspective-viewer>
+        </div>
+    </details>
+</div>
+
+@push('scripts')
+<script type="module">
+import perspective from "https://cdn.jsdelivr.net/npm/@finos/perspective@3.4.0/dist/cdn/perspective.js";
+import "https://cdn.jsdelivr.net/npm/@finos/perspective-viewer@3.4.0/dist/cdn/perspective-viewer.js";
+import "https://cdn.jsdelivr.net/npm/@finos/perspective-viewer-datagrid@3.4.0/dist/cdn/perspective-viewer-datagrid.js";
+import "https://cdn.jsdelivr.net/npm/@finos/perspective-viewer-d3fc@3.4.0/dist/cdn/perspective-viewer-d3fc.js";
+
+const worker = perspective.worker();
+const viewer = document.getElementById('usage-viewer');
+let currentTable = null;
+
+// SuperTeam-aligned color tokens for the Perspective theme. Mirrors the
+// "consulting" flavor (whites + slate) since /processes is a dashboard.
+viewer.style.setProperty('--d3fc-series--color-0', '#003F6C');
+viewer.style.setProperty('--d3fc-series--color-1', '#2E7D32');
+viewer.style.setProperty('--d3fc-series--color-2', '#C62828');
+viewer.style.setProperty('--d3fc-series--color-3', '#475569');
+viewer.style.setProperty('--rt-pos-cell--color', '#2E7D32');
+viewer.style.setProperty('--rt-neg-cell--color', '#C62828');
+
+window.loadAnalytics = async function () {
+    const groupBy = document.getElementById('analytics-group-by').value;
+    const days    = parseInt(document.getElementById('analytics-days').value, 10) || 7;
+    const meta    = document.getElementById('analytics-meta');
+    meta.textContent = 'Loading…';
+    try {
+        const url = `{{ route('super-ai-core.v1.usage') }}?group_by=${encodeURIComponent(groupBy)}&days=${days}`;
+        const r = await fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const payload = await r.json();
+        const rows = Array.isArray(payload) ? payload : (payload.data ?? []);
+        if (currentTable) {
+            await currentTable.delete();
+        }
+        currentTable = await worker.table(rows);
+        await viewer.load(currentTable);
+        meta.textContent = `${rows.length} rows · group_by=${groupBy} · ${days}d`;
+    } catch (e) {
+        meta.textContent = 'Failed: ' + e.message;
+        console.error('Analytics load failed', e);
+    }
+};
+
+// Lazy-load on first <details> open so the WASM bundle only fetches when the
+// operator actually wants the analytics.
+document.querySelector('.analytics-panel > details')?.addEventListener('toggle', function () {
+    if (this.open && !currentTable) loadAnalytics();
+}, { once: false });
+</script>
+@endpush
 
 {{-- P0-2: pending HITL questions emitted by AskUserTool. Poll every 4s,
      render as warning cards above the stats bar, post answers back via

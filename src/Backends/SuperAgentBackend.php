@@ -24,6 +24,7 @@ use SuperAICore\Services\RateLimiterRegistry;
 use SuperAICore\Services\RemindersResolver;
 use SuperAICore\Services\SnapshotDiffService;
 use SuperAICore\Services\SubagentPermissionDeriver;
+use SuperAICore\Tracing\TraceCollector;
 
 /**
  * In-process LLM + tool-use loop via forgeomni/superagent.
@@ -621,6 +622,47 @@ class SuperAgentBackend implements Backend
                 'error_class' => $code,
                 'retryable'   => method_exists($e, 'isRetryable') ? $e->isRetryable() : null,
             ]);
+        }
+
+        // magic-trace black box: every provider error is a candidate
+        // observability moment, but only quota / overloaded / cyber_policy
+        // are interesting enough to auto-dump (the others are routine — a
+        // bad prompt or a too-long context isn't the kind of thing you
+        // post-mortem). Always record the event so a later manual dump
+        // captures it; only dump now for the high-signal classes.
+        try {
+            $tracer = TraceCollector::getInstance();
+            $tracer->emitInstant(
+                name: 'provider.error',
+                category: 'error',
+                tid: 'session:default',
+                args: [
+                    'backend'     => $this->name(),
+                    'error_class' => $code,
+                    'message'     => mb_substr($e->getMessage(), 0, 500),
+                    'retryable'   => method_exists($e, 'isRetryable') ? $e->isRetryable() : null,
+                ],
+            );
+
+            $autoDumpClasses = ['quota_exceeded', 'usage_not_included', 'server_overloaded', 'cyber_policy'];
+            if (in_array($code, $autoDumpClasses, true)) {
+                // Tag the trigger so dashboards can group quota dumps from
+                // ordinary error dumps — auto-rotate watchers pivot on this.
+                $trigger = $code === 'quota_exceeded' ? 'rotate' : 'error';
+                $tracer->dump(
+                    trigger: $trigger,
+                    reason: $code . ': ' . mb_substr($e->getMessage(), 0, 200),
+                    extraMetadata: [
+                        'error_class' => $code,
+                        'backend'     => $this->name(),
+                    ],
+                );
+            }
+        } catch (\Throwable $traceErr) {
+            // Never mask the original error with a tracing failure.
+            if ($this->logger) {
+                $this->logger->debug('Trace dump failed: ' . $traceErr->getMessage());
+            }
         }
     }
 

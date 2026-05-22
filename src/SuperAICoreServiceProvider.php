@@ -169,6 +169,15 @@ class SuperAICoreServiceProvider extends ServiceProvider
             return new ProviderResolver($app->make(ProviderRepository::class));
         });
 
+        // Tracing singleton — magic-trace-style ring buffer + Chrome Trace
+        // Event JSON writer. Dispatcher emits llm/cache/provider events on
+        // every call; auto-dumps on null result, provider rotation, etc.
+        // See config('super-ai-core.tracing.*') for tuning and SuperTeam
+        // .claude/refs/ref-trace-format.md for the cross-repo wire spec.
+        $this->app->singleton(\SuperAICore\Tracing\TraceCollector::class, function () {
+            return \SuperAICore\Tracing\TraceCollector::getInstance();
+        });
+
         $this->app->singleton(Dispatcher::class, function ($app) {
             return new Dispatcher(
                 $app->make(BackendRegistry::class),
@@ -177,6 +186,7 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 $app->make(ProviderResolver::class),
                 $app->make(RoutingRepository::class),
                 $app->bound('log') ? $app->make('log') : null,
+                $app->make(\SuperAICore\Tracing\TraceCollector::class),
             );
         });
 
@@ -470,6 +480,14 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 // also auto-fired by SuperAgentBackend on QuotaExceeded when
                 // super-ai-core.auto_rotate is enabled.
                 \SuperAICore\Console\Commands\ProviderRotateCommand::class,
+
+                // 1.0+ — magic-trace-style Dispatcher trace ring dump.
+                // Writes the in-memory ring of llm/tool/cache/provider
+                // events to a Chrome Trace Event JSON file viewable in
+                // chrome://tracing, ui.perfetto.dev, or the bundled
+                // trace-viewer.html template. See SuperTeam
+                // .claude/refs/ref-trace-format.md.
+                \SuperAICore\Console\Commands\DispatcherDumpTraceCommand::class,
                 // 0.9.2 — inspect TaskRunner reliability fallback policy,
                 // workload profiles, limits, cooldowns, and chain resolution.
                 \SuperAICore\Console\Commands\FallbackPolicyCommand::class,
