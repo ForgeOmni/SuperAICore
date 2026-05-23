@@ -103,6 +103,24 @@ final class ApiHealthDetector
      */
     public static function check(string $provider): array
     {
+        // Host-side short-circuit when the provider has a known API-key
+        // env var and it isn't configured. Runs without the SDK so the
+        // reason stays informative even on no-SDK installs, and avoids
+        // pointless cURL attempts when the SDK is present.
+        $envName = self::ENV_KEY[$provider] ?? null;
+        if ($envName !== null) {
+            $val = $_ENV[$envName] ?? getenv($envName);
+            $hasKey = is_string($val) && $val !== '';
+            if (!$hasKey && !self::hasOauthCredential($provider)) {
+                return [
+                    'provider'   => $provider,
+                    'ok'         => false,
+                    'latency_ms' => null,
+                    'reason'     => "API key not set ({$envName})",
+                ];
+            }
+        }
+
         if (!class_exists(ProviderRegistry::class)) {
             return [
                 'provider'   => $provider,
