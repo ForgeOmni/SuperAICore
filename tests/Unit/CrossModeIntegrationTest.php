@@ -25,6 +25,10 @@ class CrossModeIntegrationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        if (!class_exists(\SuperAgent\Modes\ModeRouterRegistry::class)
+            || !class_exists(\SuperAgent\Squad\SquadDispatcherRegistry::class)) {
+            $this->markTestSkipped('forgeomni/superagent not installed');
+        }
         // Service provider boot may have already installed a router
         // — clear so each test sees a known state.
         \SuperAgent\Modes\ModeRouterRegistry::clear();
@@ -33,8 +37,12 @@ class CrossModeIntegrationTest extends TestCase
 
     protected function tearDown(): void
     {
-        \SuperAgent\Modes\ModeRouterRegistry::clear();
-        \SuperAgent\Squad\SquadDispatcherRegistry::clear();
+        if (class_exists(\SuperAgent\Modes\ModeRouterRegistry::class)) {
+            \SuperAgent\Modes\ModeRouterRegistry::clear();
+        }
+        if (class_exists(\SuperAgent\Squad\SquadDispatcherRegistry::class)) {
+            \SuperAgent\Squad\SquadDispatcherRegistry::clear();
+        }
         parent::tearDown();
     }
 

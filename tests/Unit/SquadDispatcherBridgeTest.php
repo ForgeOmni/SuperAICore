@@ -24,12 +24,17 @@ class SquadDispatcherBridgeTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        if (!class_exists(SquadDispatcherRegistry::class)) {
+            $this->markTestSkipped('forgeomni/superagent not installed');
+        }
         SquadDispatcherRegistry::clear();
     }
 
     protected function tearDown(): void
     {
-        SquadDispatcherRegistry::clear();
+        if (class_exists(SquadDispatcherRegistry::class)) {
+            SquadDispatcherRegistry::clear();
+        }
         parent::tearDown();
     }
 
