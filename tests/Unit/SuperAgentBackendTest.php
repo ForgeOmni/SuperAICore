@@ -10,6 +10,7 @@ use SuperAgent\Messages\ContentBlock;
 use SuperAgent\Messages\Usage;
 use SuperAgent\Providers\ProviderRegistry;
 use SuperAICore\Backends\SuperAgentBackend;
+use SuperAICore\Tests\Fixtures\TestSuperAgentProvider;
 
 final class SuperAgentBackendTest extends TestCase
 {
@@ -426,37 +427,6 @@ final class CapturingSuperAgentBackend extends SuperAgentBackend
     }
 }
 
-final class TestSuperAgentProvider implements LLMProvider
-{
-    public static ?AssistantMessage $nextResponse = null;
-    public static ?string $lastRegion = null;
-    public static ?\Throwable $throw = null;
-
-    public static function reset(): void
-    {
-        self::$nextResponse = null;
-        self::$lastRegion   = null;
-        self::$throw        = null;
-    }
-
-    public function __construct(array $config = [])
-    {
-        self::$lastRegion = $config['region'] ?? null;
-    }
-
-    public function chat(array $messages, array $tools = [], ?string $systemPrompt = null, array $options = []): \Generator
-    {
-        if (self::$throw !== null) {
-            $t = self::$throw;
-            self::$throw = null;
-            throw $t;
-        }
-        yield self::$nextResponse ?? new AssistantMessage();
-    }
-
-    public function formatMessages(array $messages): array { return $messages; }
-    public function formatTools(array $tools): array { return []; }
-    public function getModel(): string { return 'sa-test-model'; }
-    public function setModel(string $model): void {}
-    public function name(): string { return 'sa-test'; }
-}
+// TestSuperAgentProvider lives in tests/Fixtures/TestSuperAgentProvider.php
+// — extracted so this file parses cleanly when forgeomni/superagent is
+// uninstalled (phpunit-no-superagent CI job).
