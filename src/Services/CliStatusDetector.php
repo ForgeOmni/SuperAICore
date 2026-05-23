@@ -493,11 +493,25 @@ class CliStatusDetector
         if ($home) {
             foreach (['/.gemini/oauth_creds.json', '/.gemini/credentials.json'] as $rel) {
                 if (is_file($home . $rel)) {
+                    $expiresAt = null;
+                    $raw = @file_get_contents($home . $rel);
+                    if (is_string($raw)) {
+                        $data = json_decode($raw, true);
+                        if (is_array($data)) {
+                            $ea = $data['expires_at'] ?? $data['expiresAt'] ?? null;
+                            if (is_numeric($ea)) {
+                                $expiresAt = (int) $ea;
+                            } elseif (is_string($ea)) {
+                                $parsed = strtotime($ea);
+                                $expiresAt = $parsed !== false ? $parsed * 1000 : null;
+                            }
+                        }
+                    }
                     return [
                         'loggedIn'   => true,
                         'status'     => ltrim($rel, '/'),
                         'method'     => 'oauth',
-                        'expires_at' => null,
+                        'expires_at' => $expiresAt,
                     ];
                 }
             }
