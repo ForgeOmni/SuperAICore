@@ -4,6 +4,149 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9] — 2026-05-23
+
+**Maintenance release — SDK 1.0.7 uptake + `QwenCliBackend`
+interface-contract fix + 0.9.8 test-fixture catch-up.** A focused
+cleanup of issues exposed by booting the 0.9.8 test matrix on a
+Windows PHP 8.1 host. The `qwen_cli` backend introduced in 0.9.8
+declared three interfaces but only implemented two — `streamChat()`
+from `ScriptedSpawnBackend` was missing, so autoloading the class
+crashed PHPUnit before a single test ran (`Class … contains 1
+abstract method and must therefore be declared abstract`). Two
+unit-test fixtures still encoded the pre-qwen registry shape, so the
+provider-type and backend-registry assertions came up two short. SDK
+constraint moves `^1.0.6` → `^1.0.7` to pick up the upstream
+Windows-compatibility fix wave (cmd.exe `command -v` → `where.exe`,
+`tput cols` guarded behind `DIRECTORY_SEPARATOR`, CI worktree-test
+git identity injection). Zero behaviour change for callers that were
+already on 0.9.8 with the qwen_cli backend disabled; the `streamChat()`
+fix only matters for hosts that actually route one-shot chat through
+qwen.
+
+```bash
+composer update forgeomni/superaicore
+# no migrations, no config publish — pure code fixes
+```
+
+### Fixed — `QwenCliBackend::streamChat()` interface contract (`src/Backends/QwenCliBackend.php`)
+
+`QwenCliBackend` was added in 0.9.8 and declared `implements Backend,
+StreamingBackend, ScriptedSpawnBackend`, but only implemented
+`Backend::generate()`, `StreamingBackend::stream()`, and
+`ScriptedSpawnBackend::prepareScriptedProcess()`. The blocking
+one-shot-chat method `ScriptedSpawnBackend::streamChat(string,
+callable, array): string` was missing — autoloading the class on PHP
+8.1 raised:
+
+```
+PHP Fatal error: Class SuperAICore\Backends\QwenCliBackend contains
+1 abstract method and must therefore be declared abstract or
+implement the remaining methods (ScriptedSpawnBackend::streamChat)
+```
+
+Any host that resolved `BackendRegistry`'s qwen_cli row hit this at
+container-boot time; the test suite hit it at PHPUnit discovery so
+no test in the project could run.
+
+The added `streamChat()` mirrors `GeminiCliBackend::streamChat()`
+shape (argv = `[binary, --output-format=json, --yolo,
+--model=<model>, --prompt, <prompt>]`), parses the single JSON blob
+through the existing `parseJson()` helper instead of duplicating the
+parse logic, and calls `assertChatExit()` from
+`BuildsScriptedProcess` for the same non-zero-exit error envelope
+the other CLI backends use. The binary path comes from
+`$this->binary` (constructor-injected) rather than
+`CliBinaryLocator::find(AiProvider::BACKEND_QWEN)` because no
+`BACKEND_QWEN` constant exists on `AiProvider` yet — that registry
+expansion is deferred to the next release that touches `AiProvider`
+proper.
+
+### Fixed — 0.9.8 test fixtures: qwen-anthropic provider + qwen_cli backend
+
+The 0.9.8 release added `AiProvider::TYPE_QWEN_ANTHROPIC` to the
+provider-type registry and `qwen_cli` to the backend registry, but
+two unit tests still encoded the 13-entry / `[anthropic_api]`-only
+pre-qwen shapes and failed cleanly:
+
+- **`tests/Unit/ProviderTypeRegistryTest::test_bundles_all_bundled_provider_types`**
+  — expected list extended to include `AiProvider::TYPE_QWEN_ANTHROPIC`
+  in its sorted form (slot 12, between `openai-responses` and
+  `vertex`). The DashScope Anthropic-protocol endpoint registry
+  entry has been in `ProviderTypeRegistry` since 0.9.8; the assert
+  list just hadn't been updated.
+- **`tests/Unit/BackendRegistryTest::test_disabled_backend_is_skipped`**
+  — config block extended with `'qwen_cli' => ['enabled' => false]`
+  alongside the other explicit-disable entries. The test verifies
+  that with every backend off except `anthropic_api`, only
+  `anthropic_api` is registered; without the qwen_cli disable line,
+  `BackendRegistry`'s `?? true` default fell through and added
+  `qwen_cli` to the names list.
+
+No registry code changed — both fixes are test-only and bring the
+fixtures back in sync with the 0.9.8 production shape.
+
+### Changed — SuperAgent SDK constraint `^1.0.6` → `^1.0.7`
+
+SDK 1.0.7 is a pure fix release (no schema changes, no API moves,
+zero breaking) with three Windows-side fixes that materially improve
+the SuperAICore-on-Windows story for hosts that ship SuperAgent as
+the in-process engine:
+
+- **`SuperAgentApplication` CLI argument parser** — old behaviour
+  scanned every positional and treated any match against a known
+  subcommand name as the command, so `superagent "fix the login
+  bug"` mis-routed to the `login` subcommand. Now only the first
+  positional is checked; reserved words elsewhere flow through to
+  the chat prompt unchanged. Matters for hosts that proxy
+  user-supplied prompts through the SDK CLI.
+- **`McpCommand::resolveBinaryPath()`** — `mcp test <server>` used
+  the POSIX `command -v` builtin which prints `'command' is not
+  recognized` on cmd.exe. Now uses `where.exe <name> 2>nul` on
+  Windows + an 18-entry cmd-builtin whitelist (`echo` / `dir` /
+  `type` / `set` / `cd` / …) for stdio-server targets that pair with
+  `cmd /c`.
+- **`Renderer::detectTermWidth()`** — `tput cols 2>/dev/null` is
+  parsed by cmd as a literal `/dev/null` output path. Now guarded
+  behind `DIRECTORY_SEPARATOR !== '\\'`; Windows falls through to
+  the `$COLUMNS` env-var with 80-column final default.
+- **Bonus**: `AgentProgressTracker::toArray()` now exports `status`
+  and `turnCount` (the parallel-coordinator envelope expected them
+  but the tracker only sent token/tool counts), and the SDK's own
+  `WorktreeManagerTest` now passes `-c user.email=… -c user.name=…`
+  to `git commit` per-invocation so CI runners without global git
+  identity don't silently break the worktree tests.
+
+`composer.json` constraint moved to `^1.0.7`; `composer.lock` resolves
+to 1.0.7. Downgrading back to 1.0.6 still works for hosts that pinned
+that release, but they lose the Windows fixes.
+
+### Validation
+
+Full PHPUnit suite passes on PHP 8.1.34 / Windows 11:
+
+```
+Tests: 637, Assertions: 1745, Skipped: 4
+```
+
+(Unit: 593 / Feature: 44 — same totals as the post-fix 0.9.8 baseline
+once the QwenCliBackend autoload crash is unblocked.)
+
+### Compatibility
+
+Zero breaking changes. Every fix is additive at the source level
+(one new method on `QwenCliBackend`, two test fixtures extended, one
+constraint bump). Hosts that:
+
+- never enabled `qwen_cli` were unaffected by the autoload crash
+  (the class wasn't autoloaded), and remain unaffected.
+- enabled `qwen_cli` but never called `streamChat()` on it (i.e.
+  only used `generate()` or `stream()` or `prepareScriptedProcess()`)
+  were also unaffected at runtime — the missing method only fires
+  at class-instantiation time on PHP 8.1+'s abstract-method check.
+- proxied chat through qwen_cli get a working `streamChat()` for
+  the first time.
+
 ## [0.9.8] — 2026-05-22
 
 **Eighth execution engine + magic-trace observability + 9Router /
