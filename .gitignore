@@ -3,6 +3,7 @@
 /.idea/
 /.vscode/
 /.phpunit.result.cache
+/.claude/settings.local.json
 /composer.lock
 *.log
 *.db
