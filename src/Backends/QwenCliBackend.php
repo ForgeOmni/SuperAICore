@@ -195,6 +195,43 @@ class QwenCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         ];
     }
 
+    public function streamChat(string $prompt, callable $onChunk, array $options = []): string
+    {
+        $args = [$this->binary, '--output-format=json', '--yolo'];
+        $model = $options['model'] ?? null;
+        if ($model) {
+            $args[] = '--model';
+            $args[] = (string) $model;
+        }
+        $args[] = '--prompt';
+        $args[] = $prompt;
+
+        $env = (array) ($options['env'] ?? []);
+        $process = new Process($args, $options['cwd'] ?? null, $env);
+        $process->setTimeout((int) ($options['timeout'] ?? 0));
+        $process->setIdleTimeout((int) ($options['idle_timeout'] ?? 300));
+
+        $buffer = '';
+        $fullResponse = '';
+        $process->start();
+        $process->wait(function (string $type, string $data) use (&$buffer) {
+            if ($type === Process::OUT) $buffer .= $data;
+        });
+
+        $buffer = trim($buffer);
+        $startPos = strpos($buffer, '{');
+        if ($startPos !== false) {
+            $parsed = $this->parseJson(substr($buffer, $startPos));
+            if ($parsed && $parsed['text'] !== '') {
+                $fullResponse = $parsed['text'];
+                $onChunk($fullResponse);
+            }
+        }
+
+        $this->assertChatExit($process, $fullResponse, 'Qwen');
+        return $fullResponse;
+    }
+
     public function prepareScriptedProcess(array $options): Process
     {
         $promptFile  = $options['prompt_file']  ?? throw new \InvalidArgumentException('prompt_file required');

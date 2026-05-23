@@ -61,7 +61,13 @@
       "Bash(grep -n 'attachBrowserTool\\\\|attachAskUserTool\\\\|withAllowedTools\\\\|withDeniedTools\\\\|return $agent' /Users/xiyang/PhpstormProjects/SuperAICore/src/Backends/SuperAgentBackend.php)",
       "Bash(composer require *)",
       "Bash(grep -n 'buildAgent\\\\|->run\\\\|new Agent\\\\|$agent' /c/Users/mlizp/PhpstormProjects/SuperAICore/src/Backends/SuperAgentBackend.php)",
-      "Bash(composer validate *)"
+      "Bash(composer validate *)",
+      "Bash(dir *)",
+      "Bash(vendor/bin/phpunit --version)",
+      "PowerShell(composer *)",
+      "PowerShell(vendor\\\\bin\\\\phpunit --testsuite=Unit --no-coverage 2>&1 | Select-Object -Last 200)",
+      "PowerShell(vendor\\\\bin\\\\phpunit --testsuite=Unit --no-coverage 2>&1 | Select-Object -Last 250)",
+      "PowerShell(vendor\\\\bin\\\\phpunit --testsuite=Feature --no-coverage 2>&1 | Select-Object -Last 200)"
     ]
   }
 }

@@ -49,6 +49,7 @@ class BackendRegistryTest extends TestCase
             'copilot_cli' => ['enabled' => false],
             'kiro_cli' => ['enabled' => false],
             'kimi_cli' => ['enabled' => false],
+            'qwen_cli' => ['enabled' => false],
             'gemini_api' => ['enabled' => false],
             'superagent' => ['enabled' => false],
             'squad' => ['enabled' => false],

@@ -29,6 +29,8 @@ final class ProviderTypeRegistryTest extends TestCase
             AiProvider::TYPE_OPENAI,
             AiProvider::TYPE_OPENAI_COMPATIBLE,
             AiProvider::TYPE_OPENAI_RESPONSES,
+            // DashScope Anthropic-protocol endpoint (added 0.9.8 alongside SDK 1.0.6).
+            AiProvider::TYPE_QWEN_ANTHROPIC,
             AiProvider::TYPE_VERTEX,
         ];
         sort($expected);
