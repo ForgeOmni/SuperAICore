@@ -19,6 +19,19 @@ use SuperAICore\Tests\TestCase;
  */
 class CrossLayerDispatcherTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // `CliAutoMode` / `CliSmartOrchestrator` / `CliSquadOrchestrator`
+        // implement SDK's `ModeOrchestrator` interface — instantiating
+        // them without the SDK on the classpath fatals on the missing
+        // interface, leaving Orchestra Testbench's error handlers
+        // un-restored (risky-test warning).
+        if (!interface_exists(\SuperAgent\Modes\ModeOrchestrator::class)) {
+            $this->markTestSkipped('forgeomni/superagent not installed');
+        }
+    }
+
     public function test_cli_prefix_routes_to_named_backend(): void
     {
         $captured = null;

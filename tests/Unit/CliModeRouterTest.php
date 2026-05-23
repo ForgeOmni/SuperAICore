@@ -24,6 +24,15 @@ use SuperAICore\Tests\TestCase;
  */
 class CliModeRouterTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        if (!interface_exists(\SuperAgent\Modes\ModeOrchestrator::class)
+            || !class_exists(\SuperAgent\Modes\ModeContext::class)) {
+            $this->markTestSkipped('forgeomni/superagent not installed');
+        }
+    }
+
     public function test_cli_leaf_tag_routes_through_cross_layer_dispatcher(): void
     {
         $captured = null;

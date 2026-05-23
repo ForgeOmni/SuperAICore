@@ -69,6 +69,10 @@ final class ModelsCommandTest extends TestCase
 
     public function test_unknown_action_exits_non_zero(): void
     {
+        if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            $this->markTestSkipped('SuperAgent ModelCatalog not installed');
+        }
+
         $tester = $this->tester();
         $exit = $tester->execute(['action' => 'banana']);
         $this->assertNotSame(0, $exit);

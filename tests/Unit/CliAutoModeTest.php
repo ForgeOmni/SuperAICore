@@ -18,6 +18,14 @@ use SuperAICore\Tests\TestCase;
  */
 class CliAutoModeTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        if (!interface_exists(\SuperAgent\Modes\ModeOrchestrator::class)) {
+            $this->markTestSkipped('forgeomni/superagent not installed');
+        }
+    }
+
     public function test_forced_single_mode_routes_to_default_cli(): void
     {
         // The default decomposer may split even short prompts, so for a
