@@ -4,6 +4,67 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-05-29
+
+**Maintenance release — no-SDK fallback fidelity + `phpunit-no-superagent`
+matrix cleanup.** A focused follow-up to 1.0.0 that tightens the two
+host-side fallbacks the `/providers` dashboard relies on when
+`forgeomni/superagent` is absent, and silences the risky-test warnings those
+same no-SDK installs surfaced in CI. Pure code/test fixes — no schema, no
+config keys, no migration, and zero behaviour change for hosts that already
+have the SDK on the classpath.
+
+```bash
+composer update forgeomni/superaicore
+# no migrations, no config publish — pure host-side fixes
+```
+
+### Fixed — `ApiHealthDetector::check()` short-circuits a missing key before the SDK probe (`src/Services/ApiHealthDetector.php`)
+
+`check()` previously always fell through to `ProviderRegistry::healthCheck()`
+to discover that an API key was missing — informative when the SDK is on the
+classpath, useless when it isn't (the no-SDK matrix returned the generic
+"SuperAgent SDK not installed" reason for *every* provider, even ones the
+host never configured). The env-key probe now runs **before** the
+`class_exists(ProviderRegistry::class)` check: when a known provider's
+API-key env var is unset — and there's no SDK 0.9.0 OAuth credential file —
+`check()` returns `API key not set (<ENV>)` regardless of SDK presence, then
+falls through to the existing SDK cURL probe only when a key *is* configured.
+This also avoids a pointless cURL attempt when the SDK is present but the key
+isn't — a net win on the dashboard probe path.
+
+### Fixed — Gemini OAuth `expires_at` parsed in the no-SDK fallback (`src/Services/CliStatusDetector.php`)
+
+The SDK branch of `detectGeminiAuth()` uses
+`SuperAgent\Auth\GeminiCliCredentials` to read `oauth_creds.json` and
+normalize `expires_at`; the local fallback (used when the SDK isn't
+installed) only checked for file presence and always returned
+`expires_at = null`, so callers lost the token-expiry signal on no-SDK
+installs and `CliStatusDetectorGeminiAuthTest::test_oauth_creds_file_*`
+failed there. The fallback now mirrors the SDK helper — it reads
+`~/.gemini/oauth_creds.json` / `credentials.json`, pulls `expires_at` (or
+`expiresAt`), and normalizes it (numeric values cast to `int`; string values
+parsed via `strtotime()` into epoch-ms) — so the detector's output is
+functionally equivalent with or without the SDK.
+
+### Tests — skip SDK-dependent cases on the `phpunit-no-superagent` matrix
+
+In the no-superagent CI matrix, tests that instantiate host classes
+implementing an SDK interface (`ModeOrchestrator`) or reference an SDK class
+directly (`ModelCatalog`) fatal-error on the missing symbol. Because the
+fatal lands *after* Orchestra Testbench's `setUp()` installs its error
+handlers, `tearDown()`'s flush never runs and PHPUnit flags the test as
+risky. Each affected case now guards on the SDK symbol with
+`markTestSkipped()`, matching the pattern already used in
+`SuperAgentBackendTest`:
+
+- `Feature\Console\ModelsCommandTest::test_unknown_action_exits_non_zero` — skips when `SuperAgent\Providers\ModelCatalog` is absent.
+- `Unit\CliAutoModeTest` and `Unit\CrossLayerDispatcherTest` — `setUp()` skips when `SuperAgent\Modes\ModeOrchestrator` is absent.
+- `Unit\CliModeRouterTest` — `setUp()` skips when `ModeOrchestrator` or `SuperAgent\Modes\ModeContext` is absent.
+
+With the SDK installed (the default matrix) every case runs exactly as
+before.
+
 ## [1.0.0] — 2026-05-28
 
 **First stable release — SDK 1.0.9 uptake: Claude Opus 4.8 flagship, xAI Grok

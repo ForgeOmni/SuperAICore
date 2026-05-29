@@ -102,11 +102,11 @@ class CostDashboardController extends Controller
 
         // 30-day rolling savings — feeds the headline "you saved $X
         // this month" widget.
+        $thirtyDaysAgo = Carbon::now()->subDays(30)->startOfDay();
         $recentSavings = $allRows
             ->filter(fn ($r) => $r->created_at && $r->created_at->gte($thirtyDaysAgo) && $r->shadow_cost_usd > 0);
         $savings['saved_30d'] = (float) max(0.0, $recentSavings->sum('shadow_cost_usd') - $recentSavings->sum('cost_usd'));
 
-        $thirtyDaysAgo = Carbon::now()->subDays(30)->startOfDay();
         $recent = $rows->filter(fn ($r) => $r->created_at && $r->created_at->gte($thirtyDaysAgo));
 
         $byDay      = $recent->groupBy(fn ($r) => $r->created_at->format('Y-m-d'))
