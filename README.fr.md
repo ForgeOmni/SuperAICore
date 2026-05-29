@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-Package Laravel pour l'exécution unifiée d'IA sur huit moteurs d'exécution — **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, **GitHub Copilot CLI**, **AWS Kiro CLI**, **Moonshot Kimi Code CLI**, **Alibaba Qwen Code CLI** et **SuperAgent SDK**. Livré avec une CLI indépendante du framework, un dispatcher par capacité, la gestion des serveurs MCP, le suivi d'usage, l'analyse des coûts, un proxy OpenAI-compatible, un ring-buffer de traçage style magic-trace et une interface d'administration complète.
+Package Laravel pour l'exécution unifiée d'IA sur dix moteurs d'exécution — **Claude Code CLI**, **Codex CLI**, **Gemini CLI**, **GitHub Copilot CLI**, **AWS Kiro CLI**, **Moonshot Kimi Code CLI**, **Alibaba Qwen Code CLI**, **Cursor Composer CLI**, **xAI Grok Build CLI** et **SuperAgent SDK**. Livré avec une CLI indépendante du framework, un dispatcher par capacité, la gestion des serveurs MCP, le suivi d'usage, l'analyse des coûts, un proxy OpenAI-compatible, un ring-buffer de traçage style magic-trace et une interface d'administration complète.
 
 Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est optionnelle et entièrement remplaçable — elle peut être intégrée dans une application hôte (par ex. SuperTeam) ou désactivée si seuls les services sont nécessaires.
 
@@ -24,6 +24,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague Squad multi-agent + SDK 1.0.0 (0.9.6)](#vague-squad-multi-agent--sdk-100-096)
   - [Vague de fonctionnalités inspirées d'opencode (0.9.7 / SDK 1.0.5)](#vague-de-fonctionnalités-inspirées-dopencode-097--sdk-105)
   - [Vague Qwen + traçage + 9Router (0.9.8)](#vague-qwen--traçage--9router-098)
+  - [Vague Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#vague-opus-48--grok--cursor-100--sdk-109)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -61,7 +62,7 @@ Chaque fonctionnalité ci-dessous est marquée par la version où elle a été i
 
 ### Moteurs d'exécution + types de provider
 
-- **Huit moteurs d'exécution** unifiés derrière un même contrat `Dispatcher` :
+- **Dix moteurs d'exécution** unifiés derrière un même contrat `Dispatcher` :
   - **Claude Code CLI** — types de provider : `builtin` (connexion locale), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`.
   - **Codex CLI** — `builtin` (connexion ChatGPT), `openai`, `openai-compatible`.
   - **Gemini CLI** — `builtin` (OAuth Google), `google-ai`, `vertex`.
@@ -69,10 +70,12 @@ Chaque fonctionnalité ci-dessous est marquée par la version où elle a été i
   - **AWS Kiro CLI** (depuis 0.6.1) — `builtin` (connexion locale `kiro-cli login`), `kiro-api` (clé stockée injectée comme `KIRO_API_KEY` pour le headless). Offre l'ensemble de fonctionnalités CLI le plus riche — agents, skills, MCP et **orchestration DAG native de sous-agents** (aucune émulation `SpawnPlan`). Lit le format `SKILL.md` de Claude sans traduction. **Facturation par abonnement** — forfaits Pro / Pro+ / Power.
   - **Moonshot Kimi Code CLI** (depuis 0.6.8) — `builtin` (`kimi login` OAuth via `auth.kimi.com`). Complémentaire du `KimiProvider` HTTP direct du SDK pour couvrir le chemin agentic-loop sur abonnement OAuth, miroir du split `anthropic_api` ↔ `claude_cli`. Fanout `Agent` natif par défaut ; basculez vers la Pipeline à trois phases d'AICore via `use_native_agents=false`. **Facturation par abonnement** — forfaits Moonshot Pro / Power.
   - **Alibaba Qwen Code CLI** (depuis 0.9.8) — fork de gemini-cli (`QwenLM/qwen-code` v0.16.0) adapté à la famille Qwen. Clé API uniquement (`DASHSCOPE_API_KEY` / `QWEN_API_KEY`) ; l'OAuth a été EOL'd le 2026-04-15. Modèle par défaut `qwen3.7-max` — 1M de contexte, $2.50/$7.50 par 1M, parle nativement le protocole Anthropic `/v1/messages` (substitut direct de Claude dans les chaînes de fallback). **Facturation à l'usage.**
-  - **SuperAgent SDK** — types de provider : `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` (depuis 0.7.0) et `lmstudio` (depuis 0.7.0).
+  - **Cursor Composer CLI** (depuis 1.0.0) — `builtin` (`cursor-agent login` OAuth navigateur → `~/.cursor` ; les runners headless peuvent exporter `CURSOR_API_KEY`). L'agent Composer headless de Cursor (`cursor-agent`). Modèle par défaut `composer-2.5-fast` ; relaie aussi les SKU Anthropic (`claude-opus-4-8-thinking-high`) et OpenAI (`gpt-5.x-codex`) + un routeur `auto`. MCP via `.cursor/mcp.json`. **Facturation par abonnement** — forfait Cursor.
+  - **xAI Grok Build CLI** (depuis 1.0.0) — `builtin` (`grok login` OAuth grok.com → `~/.grok`). La CLI agentique « Grok Build » de xAI (`grok`). Modèle par défaut `grok-build` ; sous-agents natifs, contrôle d'effort (`--effort low…max`), MCP via `grok mcp add`. **Facturation par abonnement** — forfait grok.com. *(Distinct du type de provider **API** xAI mesuré ci-dessous.)*
+  - **SuperAgent SDK** — types de provider : `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` (depuis 0.7.0), `lmstudio` (depuis 0.7.0), `deepseek` (depuis 0.9.0), `qwen-anthropic` (depuis 0.9.8) et `grok` (depuis 1.0.0 — API xAI mesurée, `XAI_API_KEY`/`GROK_API_KEY`, défaut `grok-4.3`, 1M de contexte).
 - **Type de provider `openai-responses`** (depuis 0.7.0) — route via le `OpenAIResponsesProvider` du SDK contre `/v1/responses`. Auto-détecte les déploiements Azure OpenAI depuis le pattern `base_url` (ajoute la query `api-version=2025-04-01-preview` ; surchargez via `extra_config.azure_api_version`). Quand la ligne stocke un `access_token` issu d'un flux OAuth ChatGPT côté hôte au lieu d'une clé API, le SDK bascule la base URL sur `chatgpt.com/backend-api/codex`, donc les abonnés Plus / Pro / Business touchent leur quota d'abonnement.
 - **Type de provider `lmstudio`** (depuis 0.7.0) — serveur LM Studio local (défaut `http://localhost:1234`). Protocole OpenAI-compat ; pas de vraie clé API requise — le SDK synthétise un header `Authorization` de substitution.
-- **Onze adaptateurs dispatcher** derrière les huit moteurs (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `kimi_cli`, `qwen_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`). Adaptateur CLI quand le provider utilise `builtin` / `kiro-api` ; adaptateur HTTP quand il utilise une clé API. Directement adressable depuis la CLI si nécessaire.
+- **Treize adaptateurs dispatcher** derrière les dix moteurs (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `kimi_cli`, `qwen_cli`, `cursor_cli`, `grok_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`). Adaptateur CLI quand le provider utilise `builtin` / `kiro-api` ; adaptateur HTTP quand il utilise une clé API. Directement adressable depuis la CLI si nécessaire.
 - **`EngineCatalog` source unique de vérité** — labels, icônes, backends Dispatcher, types de provider, modèles disponibles et `ProcessSpec` déclaratif vivent dans un service PHP unique. Ajouter un nouveau moteur CLI revient à éditer `EngineCatalog::seed()` et chaque picker se met à jour automatiquement. Les hôtes surchargent via la config `super-ai-core.engines`. `modelOptions($key)` / `modelAliases($key)` (depuis 0.5.9) pilotent les dropdowns de modèles côté hôte.
 
 ### Exécuteur de skills & sous-agents
@@ -585,6 +588,51 @@ onboarding multi-comptes, planning OAuth refresher, forking de
 session branch, schéma de table gh-watch, câblages SDK 1.0.6) :
 [docs/advanced-usage.fr.md §30](docs/advanced-usage.fr.md).
 
+### Vague Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)
+
+La version stable 1.0.0 passe au SDK `^1.0.9` et fait atterrir la génération
+Opus 4.8, xAI Grok sur deux canaux, et deux nouveaux moteurs CLI sur
+abonnement. Additif — aucun changement de schéma, aucune migration, aucun
+config publish.
+
+- **Claude Opus 4.8 (flagship)** *(1.0.0)* — le SDK 1.0.9 promeut
+  `claude-opus-4-8` au rang de flagship Anthropic : il prend l'alias `opus`,
+  1M de contexte natif, thinking entrelacé, mode fast, contrôle d'effort et
+  l'orchestration workflow / multi-agents dynamique, au tarif Opus
+  ($15 / $75 par 1M). `ClaudeModelResolver` résout `opus → claude-opus-4-8` et
+  liste `claude-opus-4-8` / `claude-opus-4-8[1m]` en tête ; le catalog du
+  moteur `claude`, `model_pricing` et les paliers **expert** de `squad` /
+  `cli_squad` pointent tous vers 4.8.
+- **Provider API xAI Grok (type `grok`)** *(1.0.0)* — type de provider de
+  première classe routé via le backend `superagent` vers le `GrokProvider` du
+  SDK 1.0.9 (endpoint OpenAI-compatible `https://api.x.ai/v1` de xAI).
+  `XAI_API_KEY` (canonique) avec `GROK_API_KEY` en alias ; modèle par défaut
+  `grok-4.3` (1M de contexte). Exposé dans `ApiHealthDetector` (`api:status` +
+  sonde du tableau de bord) et le catalogue de coûts
+  (grok-4.3 / grok-4-fast / grok-code-fast-1 / grok-3-mini).
+- **Cursor Composer CLI (`cursor_cli`)** *(1.0.0)* — l'agent `cursor-agent`
+  headless de Cursor (Composer 2.5). Moteur sur abonnement ; connexion
+  `builtin` dans `~/.cursor`. Streaming + scripted-spawn + chat one-shot,
+  parsing JSON / stream-json façon Claude-Code avec suivi des tokens, MCP via
+  `.cursor/mcp.json`, approbation d'outils headless `--force`. Modèle par
+  défaut `composer-2.5-fast`.
+- **Grok Build CLI (`grok_cli`)** *(1.0.0)* — la CLI agentique `grok`
+  « Grok Build » de xAI. Moteur sur abonnement ; connexion `builtin` dans
+  `~/.grok`. Contrôle d'effort (`--effort low…max` / `--reasoning-effort`),
+  scripted spawn `--prompt-file`, sous-agents natifs. Modèle par défaut
+  `grok-build`. **Distinct du type de provider API Grok mesuré** — même
+  marque, canal différent.
+- **Surfaces pilotées par les données** — comme `EngineCatalog`,
+  `ProviderTypeRegistry` et les ModelResolver par moteur alimentent tout,
+  l'UI `/providers` (cartes moteur, lignes builtin, dropdowns d'ajout de
+  provider, badges version + connexion), les sélecteurs de modèle,
+  `cli:status`, le tableau de bord des coûts, le moniteur de processus et la
+  sync `McpManager` reprennent automatiquement les nouveaux moteurs.
+
+Recettes complètes (onboarding CLI Cursor / Grok, routing Opus 4.8,
+distinction canal API vs CLI Grok, contrôle d'effort) :
+[docs/advanced-usage.fr.md §30](docs/advanced-usage.fr.md).
+
 ### Installateur CLI & santé
 
 - **`cli:status`** — montre quels CLI sont installés / connectés, avec indice d'installation pour ce qui manque.
@@ -912,7 +960,7 @@ Tous les repositories sont des interfaces. Le service provider lie automatiqueme
 
 ## Usage avancé
 
-- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0**, la **vague d'alignement DeepSeek-TUI 0.9.1**, la **vague de fiabilité TaskRunner 0.9.2**, la **vague Squad multi-agent + SDK 1.0.0 0.9.6**, la **vague opencode 0.9.7** et la **vague Qwen + traçage + 9Router 0.9.8**.
+- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0**, la **vague d'alignement DeepSeek-TUI 0.9.1**, la **vague de fiabilité TaskRunner 0.9.2**, la **vague Squad multi-agent + SDK 1.0.0 0.9.6**, la **vague opencode 0.9.7**, la **vague Qwen + traçage + 9Router 0.9.8** et la **vague Opus 4.8 + Grok + Cursor 1.0.0**.
 - **[Cookbook](examples/cookbook/README.md)** *(0.9.8+)* — cinq exemples narratifs style gs-quant : bases dispatcher, prompt caching, rotation provider, reprise cross-harness, démarrage rapide du traçage.
 - **[Paliers de commercialisation](docs/commercialization-tiers.md)** *(0.9.8+)* — document de référence sur la façon dont une offre par paliers (Cloud Dashboard / Managed Dispatcher / Enterprise overlays) pourrait s'articuler au-dessus du noyau MIT. Rien dans ce document n'est implémenté à ce jour.
 - **[Politique de chaîne d'approvisionnement](SUPPLY_CHAIN.md)** *(0.9.8+)* — pas de scripts de cycle de vie Composer, `composer install --no-scripts` par défaut, `composer audit` hebdomadaire.

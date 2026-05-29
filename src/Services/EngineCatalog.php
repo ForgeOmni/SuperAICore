@@ -292,6 +292,30 @@ class EngineCatalog
                     $out[$m['slug']] = $m['display_name'];
                 }
                 return $out;
+
+            case 'cursor':
+                if (!class_exists(CursorModelResolver::class)) return null;
+                $out = [];
+                foreach (CursorModelResolver::families() as $family) {
+                    $full = CursorModelResolver::defaultFor($family);
+                    $out[$family] = ucfirst($family) . ($full ? " ({$full})" : '');
+                }
+                foreach (CursorModelResolver::catalog() as $m) {
+                    $out[$m['slug']] = $m['display_name'];
+                }
+                return $out;
+
+            case 'grok':
+                if (!class_exists(GrokModelResolver::class)) return null;
+                $out = [];
+                foreach (GrokModelResolver::families() as $family) {
+                    $full = GrokModelResolver::defaultFor($family);
+                    $out[$family] = ucfirst($family) . ($full ? " ({$full})" : '');
+                }
+                foreach (GrokModelResolver::catalog() as $m) {
+                    $out[$m['slug']] = $m['display_name'];
+                }
+                return $out;
         }
         return null;
     }
@@ -315,6 +339,8 @@ class EngineCatalog
                 'default_model'       => 'claude-sonnet-4-6',
                 'billing_model'       => 'usage',
                 'available_models'    => [
+                    'claude-opus-4-8',
+                    'claude-opus-4-7',
                     'claude-opus-4-6',
                     'claude-opus-4-20250514',
                     'claude-sonnet-4-6',
@@ -553,6 +579,74 @@ class EngineCatalog
                     outputFormatFlag: '--output-format=json',
                     modelFlag:        '--model',
                     defaultFlags:     ['--yolo'],
+                ),
+            ],
+            'cursor' => [
+                'label'               => 'Cursor Composer',
+                'icon'                => 'cursor',
+                'dispatcher_backends' => ['cursor_cli'],
+                'is_cli'              => true,
+                'cli_binary'          => 'cursor-agent',
+                // Cursor's headless Composer agent (cursor-agent 2026.05.28).
+                // Subscription-billed via the user's Cursor plan — usage rows
+                // emit $0 and the dashboard surfaces shadow cost. Default
+                // composer-2.5-fast (the account default); the CLI also proxies
+                // Anthropic/OpenAI SKUs (Opus 4.8 thinking, gpt-5.x-codex).
+                // The authoritative list is `cursor-agent models`; this seed is
+                // a curated projection (dot/word slugs, no catalog expansion).
+                'default_model'       => 'composer-2.5-fast',
+                'billing_model'       => 'subscription',
+                'available_models'    => [
+                    'auto',
+                    'composer-2.5-fast',
+                    'composer-2.5',
+                    'claude-opus-4-8-thinking-high',
+                    'claude-opus-4-7-thinking-high',
+                    'gpt-5.5-high',
+                    'gpt-5.3-codex',
+                    'gpt-5.2',
+                ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'cursor-agent',
+                    versionArgs:      ['--version'],
+                    // `cursor-agent status` reports login state; auth is probed
+                    // via a bespoke CliStatusDetector branch (the ~/.cursor
+                    // state file), so no default subcommand probe here.
+                    authStatusArgs:   null,
+                    // Prompt is a trailing positional arg, not a flag.
+                    promptFlag:       null,
+                    outputFormatFlag: '--output-format=json',
+                    modelFlag:        '--model',
+                    defaultFlags:     ['-p', '--force'],
+                ),
+            ],
+            'grok' => [
+                'label'               => 'Grok Build',
+                'icon'                => 'x-diamond',
+                'dispatcher_backends' => ['grok_cli'],
+                'is_cli'              => true,
+                'cli_binary'          => 'grok',
+                // xAI's Grok Build CLI (grok 0.2.8) in headless mode. grok.com
+                // subscription login (~/.grok); the metered xAI API is the
+                // separate `grok` provider type on the superagent backend.
+                // Subscription-billed → $0 usage rows. Default grok-build; the
+                // account-exposed list comes from `grok models`.
+                'default_model'       => 'grok-build',
+                'billing_model'       => 'subscription',
+                'available_models'    => [
+                    'grok-build',
+                ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'grok',
+                    versionArgs:      ['--version'],
+                    // `grok login` owns auth (~/.grok); bespoke status branch
+                    // probes the dir rather than a subcommand.
+                    authStatusArgs:   null,
+                    // `-p/--single <PROMPT>` takes the prompt as the flag value.
+                    promptFlag:       '-p',
+                    outputFormatFlag: '--output-format=json',
+                    modelFlag:        '--model',
+                    defaultFlags:     ['--always-approve'],
                 ),
             ],
             'superagent' => [

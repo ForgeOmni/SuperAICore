@@ -23,6 +23,8 @@ final class ProviderTypeRegistryTest extends TestCase
             // DeepSeek V4 provider type (added 0.9.0 alongside SDK 0.9.6).
             AiProvider::TYPE_DEEPSEEK,
             AiProvider::TYPE_GOOGLE_AI,
+            // xAI Grok provider type (added alongside SDK 1.0.8).
+            AiProvider::TYPE_GROK,
             AiProvider::TYPE_KIRO_API,
             AiProvider::TYPE_LMSTUDIO,
             AiProvider::TYPE_MOONSHOT_BUILTIN,
@@ -163,6 +165,29 @@ final class ProviderTypeRegistryTest extends TestCase
         $this->assertSame('lmstudio', $descriptor->sdkProvider);
         $this->assertFalse($descriptor->needsApiKey);
         $this->assertFalse($descriptor->needsBaseUrl);
+    }
+
+    public function test_grok_descriptor_maps_to_sdk_provider_and_xai_key(): void
+    {
+        $registry = new ProviderTypeRegistry();
+        $descriptor = $registry->get(AiProvider::TYPE_GROK);
+
+        $this->assertInstanceOf(ProviderTypeDescriptor::class, $descriptor);
+        // Routes through the SDK's `grok` ProviderRegistry key.
+        $this->assertSame('grok', $descriptor->sdkProvider);
+        // XAI_API_KEY is canonical; GROK_API_KEY is aliased off the same
+        // api_key field so either env name works downstream.
+        $this->assertSame('XAI_API_KEY', $descriptor->envKey);
+        $this->assertSame('api_key', $descriptor->envExtras['GROK_API_KEY'] ?? null);
+        $this->assertSame(['api_key'], $descriptor->fields);
+        $this->assertTrue($descriptor->needsApiKey);
+        $this->assertFalse($descriptor->needsBaseUrl);
+        // OpenAI-compatible BYO-key provider — superagent backend only.
+        $this->assertSame([AiProvider::BACKEND_SUPERAGENT], $descriptor->allowedBackends);
+        $this->assertContains(
+            AiProvider::TYPE_GROK,
+            array_keys($registry->forBackend(AiProvider::BACKEND_SUPERAGENT))
+        );
     }
 
     public function test_anthropic_proxy_sdk_provider_is_anthropic(): void

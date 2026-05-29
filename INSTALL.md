@@ -16,9 +16,12 @@ This guide walks through a full install of `forgeomni/superaicore` into an exist
   - `gemini` CLI on `$PATH` — for the Gemini CLI backend
   - `copilot` CLI on `$PATH` (then `copilot login`) — for the GitHub Copilot CLI backend
   - `kiro-cli` on `$PATH` (then `kiro-cli login`, or `KIRO_API_KEY` for headless Pro/Pro+/Power) — for the Kiro CLI backend (0.6.1+)
+  - `cursor-agent` on `$PATH` (then `cursor-agent login`, or `CURSOR_API_KEY` for headless) — for the Cursor Composer CLI backend (1.0.0+)
+  - `grok` on `$PATH` (then `grok login`) — for the xAI Grok Build CLI backend (1.0.0+)
   - Anthropic API key — for `anthropic_api`
   - OpenAI API key — for `openai_api`
   - Google AI Studio key — for `gemini_api`
+  - xAI API key (`XAI_API_KEY` / `GROK_API_KEY`) — for the metered `grok` provider type via `superagent` (1.0.0+)
 
 ## 2. Require the package
 
@@ -105,6 +108,8 @@ CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
 COPILOT_CLI_BIN=copilot
 KIRO_CLI_BIN=kiro-cli
+CURSOR_CLI_BIN=cursor-agent
+GROK_CLI_BIN=grok
 AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
 # Kiro's --no-interactive mode refuses to run tools without prior per-tool
 # approval unless this is on. Flip false only for workflows that
@@ -118,6 +123,17 @@ AI_CORE_KIRO_TRUST_ALL_TOOLS=true
 # Opt-in liveness probe for `cli:status` copilot row (0.5.8+). Off by
 # default — spawning `copilot --help` on every status poll is wasteful.
 SUPERAICORE_COPILOT_PROBE=false
+# Cursor Composer + Grok Build CLIs (1.0.0+). Subscription engines — own
+# their own login (~/.cursor, ~/.grok). `force`/`always_approve` auto-approve
+# tools in headless runs; flip false to opt back into per-tool confirmation.
+AI_CORE_CURSOR_CLI_ENABLED=true
+AI_CORE_CURSOR_FORCE=true
+AI_CORE_GROK_CLI_ENABLED=true
+AI_CORE_GROK_ALWAYS_APPROVE=true
+# CURSOR_API_KEY=...   # headless Cursor (otherwise `cursor-agent login`)
+# xAI API key for the metered `grok` provider type via superagent (1.0.0+).
+# Distinct from the grok.com-subscription `grok` CLI engine above.
+# XAI_API_KEY=xai-...  # GROK_API_KEY also accepted as a fallback name
 # Optional model-catalog auto-refresh at CLI startup (0.6.0+). Both must
 # be set for the refresh to fire; it only runs when the local override is
 # older than 7 days and network failures are swallowed.
@@ -174,7 +190,7 @@ If you have any Claude Code skills or sub-agents installed (under `./.claude/ski
 ./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
-No config needed. Running without `--dry-run` shells out to the backend CLIs (`claude`, `codex`, `gemini`, `copilot`, `kiro-cli`) — install whichever ones you intend to target:
+No config needed. Running without `--dry-run` shells out to the backend CLIs (`claude`, `codex`, `gemini`, `copilot`, `kiro-cli`, `cursor-agent`, `grok`) — install whichever ones you intend to target:
 
 ```bash
 npm i -g @anthropic-ai/claude-code
@@ -183,6 +199,8 @@ npm i -g @google/gemini-cli
 npm i -g @github/copilot   # then `copilot login` (OAuth device flow)
 # kiro-cli — download from https://kiro.dev/cli/ then `kiro-cli login`
 # (or export KIRO_API_KEY=ksk_... for headless Pro / Pro+ / Power subscribers)
+curl https://cursor.com/install -fsS | bash   # then `cursor-agent login` (1.0.0+)
+curl -fsSL https://grok.com/install.sh | bash  # then `grok login` (1.0.0+)
 ```
 
 One-shot alternative (recommended) — let superaicore detect and install:
@@ -267,7 +285,7 @@ $env = CliOutputParser::parseClaude($stdout);    // or parseCodex / parseCopilot
 
 ## 9. Extending provider types with `provider_types` config (0.6.2+)
 
-SuperAICore ships 9 bundled provider types (`anthropic`, `anthropic-proxy`, `bedrock`, `vertex`, `google-ai`, `openai`, `openai-compatible`, `kiro-api`, `builtin`) — each described in `Services\ProviderTypeRegistry::bundled()` with label, icon, form fields, env-var name, base-url env, allowed backends, and an `extra_config → env` map. Host apps can rebrand a bundled type (e.g. point `label_key` at a host-owned lang namespace) or add an entirely new type via a single config block — no fork required:
+SuperAICore ships 15 bundled provider types (`builtin`, `moonshot-builtin`, `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`, `google-ai`, `openai`, `openai-compatible`, `openai-responses`, `lmstudio`, `deepseek`, `qwen-anthropic`, `grok`, `kiro-api`) — each described in `Services\ProviderTypeRegistry::bundled()` with label, icon, form fields, env-var name, base-url env, allowed backends, and an `extra_config → env` map. Host apps can rebrand a bundled type (e.g. point `label_key` at a host-owned lang namespace) or add an entirely new type via a single config block — no fork required:
 
 ```php
 // config/super-ai-core.php
@@ -1119,6 +1137,35 @@ recipes — per-file diff dashboard, AskUserTool integration, revert
 button, plan mode workflow, per-agent permission rulesets, sub-agent
 permission inheritance, PTY long-poll integration, session-share host
 queue, snapshot retention scheduling.
+
+**1.0.0 — first stable release; no migration; SDK pin moves to `^1.0.9`.**
+Additive across the board — no schema changes, no config publish required.
+The public API is now stable per SemVer (see `docs/api-stability.md`). Four
+things worth knowing:
+
+1. **Claude Opus 4.8 is the new flagship.** SDK 1.0.9 promotes
+   `claude-opus-4-8` (takes the `opus` alias; native 1M context, interleaved
+   thinking, fast mode, effort control). `ClaudeModelResolver`, the `claude`
+   engine catalog, `model_pricing`, and the `squad` / `cli_squad` **expert**
+   tiers now point at 4.8. Hosts pinning an explicit older Opus id keep
+   working — the older ids stay in the catalog.
+2. **xAI Grok lands on two channels.** (a) The metered **API** provider type
+   `grok` routes through the `superagent` backend (`XAI_API_KEY` /
+   `GROK_API_KEY`, default `grok-4.3`). (b) The **subscription CLI** engine
+   `grok_cli` (binary `grok`, grok.com login) is a separate channel. They
+   share the brand, nothing else.
+3. **Two new subscription CLI engines.** `cursor_cli` (Cursor Composer,
+   `cursor-agent`) and `grok_cli` (Grok Build). Both `builtin`-login,
+   subscription-billed ($0 usage rows, shadow cost from the catalog). Enabled
+   by default; disable via `AI_CORE_CURSOR_CLI_ENABLED=false` /
+   `AI_CORE_GROK_CLI_ENABLED=false`. They auto-surface in `/providers`,
+   `cli:status`, model pickers, the cost dashboard, and the Process Monitor.
+4. **Nothing to undo.** Pre-1.0.0 callers see byte-identical behaviour;
+   downgrading the SDK to 1.0.7 still works for pinned hosts.
+
+See [docs/advanced-usage.md §30](docs/advanced-usage.md) for the Cursor /
+Grok CLI onboarding recipe, Opus 4.8 routing, and the Grok API-vs-CLI
+channel split.
 
 ## Troubleshooting
 

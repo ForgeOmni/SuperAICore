@@ -6,8 +6,10 @@ use SuperAICore\Backends\AnthropicApiBackend;
 use SuperAICore\Backends\ClaudeCliBackend;
 use SuperAICore\Backends\CodexCliBackend;
 use SuperAICore\Backends\CopilotCliBackend;
+use SuperAICore\Backends\CursorCliBackend;
 use SuperAICore\Backends\GeminiApiBackend;
 use SuperAICore\Backends\GeminiCliBackend;
+use SuperAICore\Backends\GrokCliBackend;
 use SuperAICore\Backends\KimiCliBackend;
 use SuperAICore\Backends\KiroCliBackend;
 use SuperAICore\Backends\QwenCliBackend;
@@ -113,6 +115,27 @@ class BackendRegistry
             $this->register(new QwenCliBackend(
                 $config['qwen_cli']['binary'] ?? 'qwen',
                 $config['qwen_cli']['timeout'] ?? 300,
+                $logger,
+            ));
+        }
+        // Cursor Composer CLI (`cursor-agent`). Subscription engine — owns its
+        // own login (~/.cursor). Default model composer-2.5-fast.
+        if ($config['cursor_cli']['enabled'] ?? true) {
+            $this->register(new CursorCliBackend(
+                $config['cursor_cli']['binary'] ?? 'cursor-agent',
+                $config['cursor_cli']['timeout'] ?? 300,
+                $config['cursor_cli']['force'] ?? true,
+                $logger,
+            ));
+        }
+        // Grok Build CLI (`grok`). Subscription engine — grok.com login
+        // (~/.grok). Default model grok-build. Distinct from the metered xAI
+        // API provider routed through the superagent backend.
+        if ($config['grok_cli']['enabled'] ?? true) {
+            $this->register(new GrokCliBackend(
+                $config['grok_cli']['binary'] ?? 'grok',
+                $config['grok_cli']['timeout'] ?? 300,
+                $config['grok_cli']['always_approve'] ?? true,
                 $logger,
             ));
         }

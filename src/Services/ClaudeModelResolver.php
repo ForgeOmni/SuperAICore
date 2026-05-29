@@ -22,7 +22,7 @@ class ClaudeModelResolver
      * lets the UI show the concrete id in badges.
      */
     const FAMILIES = [
-        'opus'   => 'claude-opus-4-7',
+        'opus'   => 'claude-opus-4-8',
         'sonnet' => 'claude-sonnet-4-6',
         'haiku'  => 'claude-haiku-4-5-20251001',
     ];
@@ -35,7 +35,11 @@ class ClaudeModelResolver
      * / dropdown helpers can iterate both resolvers uniformly.
      */
     const CATALOG = [
-        // Opus generations, newest first
+        // Opus generations, newest first. 4.8 is the flagship — native 1M
+        // context, interleaved thinking, fast mode, effort control, and
+        // dynamic workflow / agent-orchestration support (SDK 1.0.8).
+        ['slug' => 'claude-opus-4-8',        'display_name' => 'Opus 4.8',             'family' => 'opus'],
+        ['slug' => 'claude-opus-4-8[1m]',    'display_name' => 'Opus 4.8 — 1M context','family' => 'opus', 'extended_context' => '1m'],
         ['slug' => 'claude-opus-4-7',        'display_name' => 'Opus 4.7',             'family' => 'opus'],
         ['slug' => 'claude-opus-4-7[1m]',    'display_name' => 'Opus 4.7 — 1M context','family' => 'opus', 'extended_context' => '1m'],
         ['slug' => 'claude-opus-4-6',        'display_name' => 'Opus 4.6',             'family' => 'opus'],

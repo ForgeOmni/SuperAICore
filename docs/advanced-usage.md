@@ -35,6 +35,9 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 25. [Headless `/v1/usage` JSON endpoint (0.9.1)](#25-headless-v1usage-json-endpoint-091)
 26. [`cache_hit_rate` aggregation (0.9.1)](#26-cache_hit_rate-aggregation-091)
 27. [TaskRunner reliability wave (0.9.2)](#27-taskrunner-reliability-wave-092)
+28. [Squad multi-agent + SDK 1.0.0 companion bindings (0.9.6)](#28-squad-multi-agent--sdk-100-companion-bindings-096)
+29. [SDK 1.0.5 bump + opencode-borrowed feature wave (0.9.7)](#29-sdk-105-bump--opencode-borrowed-feature-wave-097)
+30. [Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#30-opus-48--grok--cursor-100--sdk-109)
 
 ---
 
@@ -3102,6 +3105,129 @@ surfacing the link.
 | "agent needs LSP diagnostics mid-loop" | LSP tool (§29.9) |
 | "smaller compactor summary for long sessions" | `summary_prompt: structured` (§29.9) |
 | "Gemini 3.5 thinking + grounding" | Gemini 3.5 per-call options (§29.9) |
+
+---
+
+## 30. Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)
+
+The 1.0.0 stable cut takes SDK `^1.0.9` and adds the Claude Opus 4.8
+generation, xAI Grok on two independent channels, and two new
+subscription CLI engines (Cursor Composer + Grok Build). Everything below
+is additive — no schema changes, no config publish.
+
+### 30.1 Claude Opus 4.8 routing
+
+`claude-opus-4-8` is the new Anthropic flagship: it owns the `opus` alias,
+native 1M context, interleaved thinking, fast mode, and effort control, at
+the Opus tier ($15 / $75 per 1M). The alias resolves automatically:
+
+```php
+use SuperAICore\Services\ClaudeModelResolver;
+
+ClaudeModelResolver::resolve('opus');            // 'claude-opus-4-8'
+ClaudeModelResolver::resolve('claude-opus-4-8'); // passthrough
+```
+
+The `claude` engine catalog, `model_pricing`, and the `squad` / `cli_squad`
+**expert** tiers all point at 4.8. Pin an older Opus explicitly when you
+need it — older ids stay in the catalog:
+
+```php
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'  => $task,
+    'backend' => 'anthropic_api',
+    'model'   => 'claude-opus-4-8',   // or 'claude-opus-4-7' to pin
+]);
+```
+
+### 30.2 Two Grok channels — API vs CLI (don't mix them up)
+
+"Grok" is reachable two ways, and they are deliberately separate:
+
+| | Provider type `grok` (API) | Engine `grok_cli` (CLI) |
+|---|---|---|
+| Backend | `superagent` → SDK `GrokProvider` | `grok_cli` (binary `grok`) |
+| Endpoint | `https://api.x.ai/v1` | grok.com (Grok Build) |
+| Auth | `XAI_API_KEY` / `GROK_API_KEY` | `grok login` (`~/.grok`) |
+| Default model | `grok-4.3` (1M ctx) | `grok-build` |
+| Billing | metered (usage) | subscription ($0 rows) |
+
+```php
+// (a) Metered xAI API — provider row, type=grok, routed via superagent:
+$provider = \SuperAICore\Models\AiProvider::create([
+    'backend' => 'superagent',
+    'type'    => 'grok',
+    'name'    => 'xAI Grok',
+    'api_key' => env('XAI_API_KEY'),   // GROK_API_KEY also accepted
+]);
+
+// (b) Subscription CLI — no key; `grok login` owns auth:
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'  => $task,
+    'backend' => 'grok_cli',
+    'model'   => 'grok-build',
+    'effort'  => 'high',   // low | medium | high | xhigh | max
+]);
+```
+
+`api:status` probes the API channel (filtered to configured keys); the CLI
+channel shows up in `cli:status` and the `/providers` engine cards.
+
+### 30.3 Cursor Composer CLI onboarding
+
+```bash
+curl https://cursor.com/install -fsS | bash   # installs cursor-agent
+cursor-agent login                             # browser OAuth → ~/.cursor
+./vendor/bin/superaicore cli:status            # confirms "logged in"
+```
+
+Dispatch through it (subscription-billed; `--force` auto-approves tools so
+headless runs don't block on per-tool confirmation):
+
+```php
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'  => $task,
+    'backend' => 'cursor_cli',
+    'model'   => 'composer-2.5-fast',   // or 'composer-2.5', 'auto', etc.
+    'cwd'     => base_path(),            // mapped to --workspace
+]);
+```
+
+MCP servers sync to `.cursor/mcp.json` via
+`McpManager::syncAllBackends()`. Headless runners without a browser export
+`CURSOR_API_KEY` instead of `cursor-agent login`. Model picker is driven by
+`CursorModelResolver` (with `liveCatalog()` re-probing `cursor-agent models`).
+
+### 30.4 Grok Build CLI + effort control
+
+```bash
+curl -fsSL https://grok.com/install.sh | bash  # installs grok
+grok login                                      # grok.com OAuth → ~/.grok
+```
+
+```php
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'           => $task,
+    'backend'          => 'grok_cli',
+    'model'            => 'grok-build',
+    'effort'           => 'max',          // → --effort
+    // 'reasoning_effort' => '...',       // → --reasoning-effort
+]);
+```
+
+Scripted spawns use `--prompt-file` (no argv length limit); the backend
+emits the standard envelope with parsed `usage.input_tokens` /
+`output_tokens`. Grok has native sub-agents (`--agents` / `create-subagent`)
+and manages MCP via `grok mcp add` (no host-writable config file).
+
+### 30.5 Where they show up
+
+Because `EngineCatalog`, `ProviderTypeRegistry`, and the per-engine model
+resolvers feed everything, both CLIs auto-appear in: the `/providers` UI
+(engine cards, builtin rows, add-provider dropdowns, version + login
+badges), model pickers (`modelOptions('cursor')` / `modelOptions('grok')`),
+`cli:status`, the cost dashboard (under "Subscription engines", $0 rows),
+the Process Monitor (live rows + scan keywords), and `McpManager` sync.
 
 ---
 

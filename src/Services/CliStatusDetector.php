@@ -380,6 +380,39 @@ class CliStatusDetector
             return $result;
         }
 
+        if ($binary === 'cursor-agent') {
+            // `cursor-agent login` (browser OAuth) writes
+            // ~/.cursor/agent-cli-state.json; headless runners export
+            // CURSOR_API_KEY. The generic probe misses this because the
+            // binary name ('cursor-agent') doesn't match the dir ('.cursor').
+            $envKey = $env['CURSOR_API_KEY'] ?? null;
+            $home = self::resolvedHome();
+            $stateFile = $home ? $home . '/.cursor/agent-cli-state.json' : '';
+            $hasState = ($stateFile !== '' && is_file($stateFile))
+                || ($home && is_dir($home . '/.cursor'));
+            return [
+                'loggedIn' => (bool) $envKey || $hasState,
+                'status'   => $envKey ? 'env-key' : ($hasState ? 'config-present' : 'not-logged-in'),
+                'method'   => $envKey ? 'api-key' : ($hasState ? 'oauth' : null),
+                'config_dir' => $home ? $home . '/.cursor' : null,
+                'expires_at' => null,
+            ];
+        }
+        if ($binary === 'grok') {
+            // `grok login` (grok.com OAuth) caches credentials under ~/.grok.
+            // The subscription channel; the metered xAI key (XAI_API_KEY) is
+            // the separate API provider, not this CLI.
+            $home = self::resolvedHome();
+            $hasState = $home && is_dir($home . '/.grok');
+            return [
+                'loggedIn' => (bool) $hasState,
+                'status'   => $hasState ? 'config-present' : 'not-logged-in',
+                'method'   => $hasState ? 'oauth' : null,
+                'config_dir' => $hasState ? $home . '/.grok' : null,
+                'expires_at' => null,
+            ];
+        }
+
         // Generic fallback for any CLI engine registered through
         // EngineCatalog but without a hardcoded branch above (0.6.2+).
         // Walks the provider-type registry to see if any configured type

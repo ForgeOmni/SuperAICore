@@ -380,7 +380,7 @@ return [
             'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-flash'],
             'moderate' => ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6'],
             'hard'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-pro'],
-            'expert'   => ['provider' => 'anthropic', 'model' => 'claude-opus-4-7'],
+            'expert'   => ['provider' => 'anthropic', 'model' => 'claude-opus-4-8'],
         ],
         'max_cost_usd'   => (float) env('AI_CORE_SQUAD_MAX_COST', 0),
         'checkpoint_dir' => env('AI_CORE_SQUAD_CHECKPOINT_DIR', null),
@@ -452,7 +452,7 @@ return [
             'easy'     => ['provider' => env('AI_CORE_CLI_SQUAD_EASY_PROV',     'cli:gemini_cli'),  'model' => env('AI_CORE_CLI_SQUAD_EASY_MODEL',     'gemini-2.5-flash')],
             'moderate' => ['provider' => env('AI_CORE_CLI_SQUAD_MODERATE_PROV', 'cli:codex_cli'),   'model' => env('AI_CORE_CLI_SQUAD_MODERATE_MODEL', 'gpt-5.1')],
             'hard'     => ['provider' => env('AI_CORE_CLI_SQUAD_HARD_PROV',     'cli:claude_cli'),  'model' => env('AI_CORE_CLI_SQUAD_HARD_MODEL',     'claude-sonnet-4-6')],
-            'expert'   => ['provider' => env('AI_CORE_CLI_SQUAD_EXPERT_PROV',   'cli:claude_cli'),  'model' => env('AI_CORE_CLI_SQUAD_EXPERT_MODEL',   'claude-opus-4-7')],
+            'expert'   => ['provider' => env('AI_CORE_CLI_SQUAD_EXPERT_PROV',   'cli:claude_cli'),  'model' => env('AI_CORE_CLI_SQUAD_EXPERT_MODEL',   'claude-opus-4-8')],
         ],
         'checkpoint_dir' => env('AI_CORE_CLI_SQUAD_CHECKPOINT_DIR', null),
         'max_cost_usd'   => (float) env('AI_CORE_CLI_SQUAD_MAX_COST', 0),
@@ -525,6 +525,26 @@ return [
             'enabled' => env('AI_CORE_QWEN_CLI_ENABLED', true),
             'binary'  => env('QWEN_CLI_BIN', 'qwen'),
             'timeout' => 300,
+        ],
+        'cursor_cli' => [
+            // Cursor Composer headless agent (`cursor-agent`). Subscription
+            // engine — owns its own login (~/.cursor). Default model
+            // composer-2.5-fast. `force` auto-approves tools for headless
+            // runs (without it cursor-agent blocks on per-tool confirmation).
+            'enabled' => env('AI_CORE_CURSOR_CLI_ENABLED', true),
+            'binary'  => env('CURSOR_CLI_BIN', 'cursor-agent'),
+            'timeout' => 300,
+            'force'   => (bool) env('AI_CORE_CURSOR_FORCE', true),
+        ],
+        'grok_cli' => [
+            // xAI Grok Build CLI (`grok`). Subscription engine — grok.com
+            // login (~/.grok). Default model grok-build. `always_approve`
+            // auto-approves tools for headless runs. Distinct from the
+            // metered xAI API provider (superagent backend, `grok` type).
+            'enabled'        => env('AI_CORE_GROK_CLI_ENABLED', true),
+            'binary'         => env('GROK_CLI_BIN', 'grok'),
+            'timeout'        => 300,
+            'always_approve' => (bool) env('AI_CORE_GROK_ALWAYS_APPROVE', true),
         ],
         'gemini_api' => [
             'enabled' => env('AI_CORE_GEMINI_API_ENABLED', true),
@@ -821,6 +841,10 @@ return [
     // Override via config publish. Hosts can add unlisted models.
     'model_pricing' => [
         // ─── Anthropic Claude ───
+        // Opus 4.8 is the flagship since SDK 1.0.8 (carries the `opus`
+        // alias). Native 1M context + interleaved thinking + fast mode +
+        // dynamic workflow orchestration. $15/$75 per 1M, same Opus tier.
+        'claude-opus-4-8'             => ['input' => 15.00, 'output' => 75.00],
         'claude-opus-4-7'             => ['input' => 15.00, 'output' => 75.00],
         'claude-opus-4-6'             => ['input' => 15.00, 'output' => 75.00],
         'claude-opus-4-5'             => ['input' => 15.00, 'output' => 75.00],
@@ -876,6 +900,22 @@ return [
         'qwen3-coder-plus'            => ['input' => 0.40,  'output' => 1.20],
         'qwen3-vl-plus'               => ['input' => 0.78,  'output' => 3.90],
 
+        // ─── xAI Grok (SDK 1.0.8) ───
+        // grok-4.3 is the recommended flagship (1M context). Prices per 1M
+        // tokens, verified against docs.x.ai (May 2026). grok-4-fast is the
+        // cheap 2M-context tier; grok-code-fast-1 targets agentic coding.
+        // The SDK's ModelCatalog carries the same rows, so unlisted Grok
+        // SKUs still resolve — these explicit entries keep cost dashboards
+        // accurate without a catalog round-trip.
+        'grok-4.3'                    => ['input' => 1.25,  'output' => 2.50],
+        'grok-4.20'                   => ['input' => 1.25,  'output' => 2.50],
+        'grok-build-0.1'              => ['input' => 1.00,  'output' => 2.00],
+        'grok-4'                      => ['input' => 3.00,  'output' => 15.00],
+        'grok-4-fast'                 => ['input' => 0.20,  'output' => 0.50],
+        'grok-code-fast-1'            => ['input' => 0.20,  'output' => 1.50],
+        'grok-3'                      => ['input' => 3.00,  'output' => 15.00],
+        'grok-3-mini'                 => ['input' => 0.30,  'output' => 0.50],
+
         // ─── GitHub Copilot CLI (subscription billed; per-token cost is $0) ───
         // The dashboard reports these under a separate "Subscription engines"
         // section so monthly USD totals stay accurate.
@@ -914,5 +954,24 @@ return [
         'kiro:minimax-m2.1'           => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.15× (preview)
         'kiro:glm-5'                  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.50×
         'kiro:qwen3-coder-next'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'], // 0.05× (preview)
+
+        // ─── Cursor Composer CLI (subscription billed; per-token cost is $0) ───
+        // Routed via `cursor-agent` against the user's Cursor plan. The CLI
+        // does not meter per-token, so usage rows emit $0 and the dashboard
+        // groups them under "Subscription engines" (keyed by engine `cursor:`).
+        'cursor:auto'                          => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:composer-2.5-fast'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:composer-2.5'                  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:claude-opus-4-8-thinking-high' => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:claude-opus-4-7-thinking-high' => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:gpt-5.5-high'                  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:gpt-5.3-codex'                 => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:gpt-5.2'                       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+
+        // ─── Grok Build CLI (subscription billed; per-token cost is $0) ───
+        // Routed via `grok` against a grok.com subscription. Distinct from
+        // the metered xAI API rows above (`grok-4.3` etc.); the CLI channel
+        // is keyed by engine `grok:` and contributes $0 to USD totals.
+        'grok:grok-build'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
     ],
 ];

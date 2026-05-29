@@ -53,7 +53,7 @@ use SuperAgent\Squad\TaskDecomposer;
  *     'easy'     => ['provider' => 'cli:gemini_cli',  'model' => 'gemini-2.5-flash'],
  *     'moderate' => ['provider' => 'cli:codex_cli',   'model' => 'gpt-5.1'],
  *     'hard'     => ['provider' => 'cli:claude_cli',  'model' => 'claude-sonnet-4-6'],
- *     'expert'   => ['provider' => 'sdk:anthropic',   'model' => 'claude-opus-4-7'],
+ *     'expert'   => ['provider' => 'sdk:anthropic',   'model' => 'claude-opus-4-8'],
  *   ]
  *
  * Falls back to `super-ai-core.cli_squad.tier_map` config when no
@@ -99,7 +99,7 @@ class CliSquadOrchestrator implements ModeOrchestrator
         'easy'     => ['provider' => 'cli:gemini_cli',  'model' => 'gemini-2.5-flash'],
         'moderate' => ['provider' => 'cli:codex_cli',   'model' => 'gpt-5.1'],
         'hard'     => ['provider' => 'cli:claude_cli',  'model' => 'claude-sonnet-4-6'],
-        'expert'   => ['provider' => 'cli:claude_cli',  'model' => 'claude-opus-4-7'],
+        'expert'   => ['provider' => 'cli:claude_cli',  'model' => 'claude-opus-4-8'],
     ];
 
     public function __construct(

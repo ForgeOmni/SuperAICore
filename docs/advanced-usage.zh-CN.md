@@ -35,6 +35,9 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 25. [无头 `/v1/usage` JSON 端点（0.9.1）](#25-无头-v1usage-json-端点091)
 26. [`cache_hit_rate` 聚合（0.9.1）](#26-cache_hit_rate-聚合091)
 27. [TaskRunner 可靠性波次（0.9.2）](#27-taskrunner-可靠性波次092)
+28. [Squad 多智能体 + SDK 1.0.0 配套绑定（0.9.6）](#28-squad-多智能体--sdk-100-配套绑定096)
+29. [SDK 1.0.5 升级 + opencode 借鉴特性波次（0.9.7）](#29-sdk-105-升级--opencode-借鉴特性波次097)
+30. [Opus 4.8 + Grok + Cursor（1.0.0 / SDK 1.0.9）](#30-opus-48--grok--cursor100--sdk-109)
 
 ---
 
@@ -2944,6 +2947,128 @@ curl -X POST -H "X-CSRF-TOKEN: $TOKEN" "$BASE_URL/share/sessions/$SESSION_ID/des
 | "agent 想中途看 LSP 诊断" | LSP 工具（§29.9） |
 | "长会话想要更小的压缩摘要" | `summary_prompt: structured`（§29.9） |
 | "Gemini 3.5 thinking + grounding" | Gemini 3.5 per-call 选项（§29.9） |
+
+---
+
+## 30. Opus 4.8 + Grok + Cursor（1.0.0 / SDK 1.0.9）
+
+1.0.0 稳定版把 SDK 约束提到 `^1.0.9`，并新增 Claude Opus 4.8 世代、
+两条独立通道的 xAI Grok，以及两个新的订阅 CLI 引擎（Cursor Composer +
+Grok Build）。下面的一切都是增量的 —— 没有 schema 变更，也不需要
+config publish。
+
+### 30.1 Claude Opus 4.8 路由
+
+`claude-opus-4-8` 是 Anthropic 新的旗舰:它占据 `opus` 别名，原生
+1M 上下文、interleaved thinking、fast mode 与 effort control，定价在 Opus
+档（每 1M $15 / $75）。别名会自动解析:
+
+```php
+use SuperAICore\Services\ClaudeModelResolver;
+
+ClaudeModelResolver::resolve('opus');            // 'claude-opus-4-8'
+ClaudeModelResolver::resolve('claude-opus-4-8'); // passthrough
+```
+
+`claude` 引擎目录、`model_pricing`，以及 `squad` / `cli_squad` 的 **expert**
+档全都指向 4.8。需要旧版 Opus 时显式 pin 即可 —— 旧 id 仍保留在目录里:
+
+```php
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'  => $task,
+    'backend' => 'anthropic_api',
+    'model'   => 'claude-opus-4-8',   // or 'claude-opus-4-7' to pin
+]);
+```
+
+### 30.2 两条 Grok 通道 —— API vs CLI（别搞混）
+
+"Grok" 有两种接入方式，而且它们是刻意分开的:
+
+| | Provider type `grok`（API） | Engine `grok_cli`（CLI） |
+|---|---|---|
+| Backend | `superagent` → SDK `GrokProvider` | `grok_cli`（binary `grok`） |
+| Endpoint | `https://api.x.ai/v1` | grok.com（Grok Build） |
+| Auth | `XAI_API_KEY` / `GROK_API_KEY` | `grok login`（`~/.grok`） |
+| Default model | `grok-4.3`（1M ctx） | `grok-build` |
+| Billing | 计量（usage） | 订阅（$0 行） |
+
+```php
+// (a) Metered xAI API — provider row, type=grok, routed via superagent:
+$provider = \SuperAICore\Models\AiProvider::create([
+    'backend' => 'superagent',
+    'type'    => 'grok',
+    'name'    => 'xAI Grok',
+    'api_key' => env('XAI_API_KEY'),   // GROK_API_KEY also accepted
+]);
+
+// (b) Subscription CLI — no key; `grok login` owns auth:
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'  => $task,
+    'backend' => 'grok_cli',
+    'model'   => 'grok-build',
+    'effort'  => 'high',   // low | medium | high | xhigh | max
+]);
+```
+
+`api:status` 探测的是 API 通道（仅过滤已配置 key 的）；CLI 通道出现在
+`cli:status` 与 `/providers` 引擎卡片里。
+
+### 30.3 Cursor Composer CLI 上手
+
+```bash
+curl https://cursor.com/install -fsS | bash   # installs cursor-agent
+cursor-agent login                             # browser OAuth → ~/.cursor
+./vendor/bin/superaicore cli:status            # confirms "logged in"
+```
+
+通过它 dispatch（按订阅计费；`--force` 自动批准工具，这样无头运行不会
+卡在逐工具确认上）:
+
+```php
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'  => $task,
+    'backend' => 'cursor_cli',
+    'model'   => 'composer-2.5-fast',   // or 'composer-2.5', 'auto', etc.
+    'cwd'     => base_path(),            // mapped to --workspace
+]);
+```
+
+MCP servers 通过 `McpManager::syncAllBackends()` 同步到
+`.cursor/mcp.json`。没有浏览器的无头 runner 改为导出 `CURSOR_API_KEY`，
+而不是 `cursor-agent login`。模型选择由 `CursorModelResolver` 驱动（其
+`liveCatalog()` 会重新探测 `cursor-agent models`）。
+
+### 30.4 Grok Build CLI + effort 控制
+
+```bash
+curl -fsSL https://grok.com/install.sh | bash  # installs grok
+grok login                                      # grok.com OAuth → ~/.grok
+```
+
+```php
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'           => $task,
+    'backend'          => 'grok_cli',
+    'model'            => 'grok-build',
+    'effort'           => 'max',          // → --effort
+    // 'reasoning_effort' => '...',       // → --reasoning-effort
+]);
+```
+
+脚本化 spawn 使用 `--prompt-file`（没有 argv 长度限制）；后端发出标准
+envelope，并带有解析好的 `usage.input_tokens` / `output_tokens`。Grok 有
+原生子 agent（`--agents` / `create-subagent`），并通过 `grok mcp add`
+管理 MCP（没有宿主可写的 config 文件）。
+
+### 30.5 它们会出现在哪里
+
+因为 `EngineCatalog`、`ProviderTypeRegistry` 与各引擎的 model resolver
+喂给了一切，两个 CLI 都会自动出现在:`/providers` UI（引擎卡片、builtin
+行、add-provider 下拉、version + login 徽标）、模型选择器
+（`modelOptions('cursor')` / `modelOptions('grok')`）、`cli:status`、成本面板
+（在 "Subscription engines" 下，$0 行）、Process Monitor（实时行 + 扫描
+关键字），以及 `McpManager` sync。
 
 ---
 

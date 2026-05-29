@@ -16,9 +16,12 @@
   - `gemini` CLI 在 `$PATH` 中 —— Gemini CLI 后端
   - `copilot` CLI 在 `$PATH` 中（再跑 `copilot login`）—— GitHub Copilot CLI 后端
   - `kiro-cli` 在 `$PATH` 中（再跑 `kiro-cli login`；或设置 `KIRO_API_KEY` 走 headless，需 Pro / Pro+ / Power）—— Kiro CLI 后端（0.6.1+）
+  - `cursor-agent` 在 `$PATH` 中（再跑 `cursor-agent login`；或设置 `CURSOR_API_KEY` 走 headless）—— Cursor Composer CLI 后端（1.0.0+）
+  - `grok` 在 `$PATH` 中（再跑 `grok login`）—— xAI Grok Build CLI 后端（1.0.0+）
   - Anthropic API Key —— `anthropic_api`
   - OpenAI API Key —— `openai_api`
   - Google AI Studio Key —— `gemini_api`
+  - xAI API Key（`XAI_API_KEY` / `GROK_API_KEY`）—— 经 `superagent` 走按量计费的 `grok` provider type（1.0.0+）
 
 ## 2. 通过 Composer 安装
 
@@ -105,6 +108,8 @@ CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
 COPILOT_CLI_BIN=copilot
 KIRO_CLI_BIN=kiro-cli
+CURSOR_CLI_BIN=cursor-agent
+GROK_CLI_BIN=grok
 AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
 # Kiro 的 --no-interactive 模式默认拒绝未预先授权的工具；除非使用
 # --trust-tools=<categories> 预置白名单，否则保持 true（0.6.1+）。
@@ -117,6 +122,17 @@ AI_CORE_KIRO_TRUST_ALL_TOOLS=true
 # 0.5.8+：cli:status 中 copilot 行的可选 liveness 探测，默认关闭
 # （每次状态轮询 spawn 一次 `copilot --help` 成本过高）。
 SUPERAICORE_COPILOT_PROBE=false
+# Cursor Composer + Grok Build CLI（1.0.0+）。订阅制引擎 —— 各自管自己的
+# 登录（~/.cursor、~/.grok）。`force`/`always_approve` 会在 headless 运行中
+# 自动批准工具；置 false 可恢复逐工具确认。
+AI_CORE_CURSOR_CLI_ENABLED=true
+AI_CORE_CURSOR_FORCE=true
+AI_CORE_GROK_CLI_ENABLED=true
+AI_CORE_GROK_ALWAYS_APPROVE=true
+# CURSOR_API_KEY=...   # headless Cursor（否则用 `cursor-agent login`）
+# 经 superagent 走按量计费的 `grok` provider type 所需的 xAI API key（1.0.0+）。
+# 与上面 grok.com 订阅制的 `grok` CLI 引擎是两回事。
+# XAI_API_KEY=xai-...  # 也接受 GROK_API_KEY 作为后备名
 # 0.6.0+：CLI 启动时可选的模型目录自动刷新。两个都要设置才会触发，
 # 且本地覆盖文件超过 7 天才会真正执行；网络错误会被吞掉。
 # SUPERAGENT_MODELS_URL=https://your-cdn/models.json
@@ -172,7 +188,7 @@ AI_CORE_PROCESS_MONITOR=false
 ./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
-不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`、`copilot`、`kiro-cli`）—— 按需装：
+不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`、`copilot`、`kiro-cli`、`cursor-agent`、`grok`）—— 按需装：
 
 ```bash
 npm i -g @anthropic-ai/claude-code
@@ -181,6 +197,8 @@ npm i -g @google/gemini-cli
 npm i -g @github/copilot   # 然后 `copilot login`（OAuth device flow）
 # kiro-cli —— 按 https://kiro.dev/cli/ 安装，然后 `kiro-cli login`
 # （或 export KIRO_API_KEY=ksk_... 走 Pro / Pro+ / Power 订阅的 headless 模式）
+curl https://cursor.com/install -fsS | bash   # 然后 `cursor-agent login`（1.0.0+）
+curl -fsSL https://grok.com/install.sh | bash  # 然后 `grok login`（1.0.0+）
 ```
 
 一键替代（推荐）—— 让 superaicore 自己检测并安装：
@@ -265,7 +283,7 @@ $env = CliOutputParser::parseClaude($stdout);    // 或 parseCodex / parseCopilo
 
 ## 9. 通过 `provider_types` config 扩展 provider type（0.6.2+）
 
-SuperAICore 内置 9 种 provider type（`anthropic` / `anthropic-proxy` / `bedrock` / `vertex` / `google-ai` / `openai` / `openai-compatible` / `kiro-api` / `builtin`）—— 每种都在 `Services\ProviderTypeRegistry::bundled()` 里带有 label、图标、表单字段、env 键名、base-url env、允许的 backend、`extra_config → env` 映射。宿主应用可以重命名已有 type（例如把 `label_key` 指到宿主自己的 lang 命名空间），也可以加全新的 type，一段 config 搞定,不用 fork:
+SuperAICore 内置 15 种 provider type（`builtin` / `moonshot-builtin` / `anthropic` / `anthropic-proxy` / `bedrock` / `vertex` / `google-ai` / `openai` / `openai-compatible` / `openai-responses` / `lmstudio` / `deepseek` / `qwen-anthropic` / `grok` / `kiro-api`）—— 每种都在 `Services\ProviderTypeRegistry::bundled()` 里带有 label、图标、表单字段、env 键名、base-url env、允许的 backend、`extra_config → env` 映射。宿主应用可以重命名已有 type（例如把 `label_key` 指到宿主自己的 lang 命名空间），也可以加全新的 type，一段 config 搞定,不用 fork:
 
 ```php
 // config/super-ai-core.php
@@ -1094,6 +1112,35 @@ protected function schedule(Schedule $schedule)
 mode 工作流、按 agent 权限规则集、子 agent 权限继承、PTY 长轮询
 接入、会话分享主机队列、snapshot 保留调度）见
 [docs/advanced-usage.zh-CN.md §29](docs/advanced-usage.zh-CN.md)。
+
+**1.0.0 —— 首个稳定版；无迁移；SDK 约束升至 `^1.0.9`。**
+全面增量 —— 无 schema 变更，无需 publish 配置。公开 API 现已按
+SemVer 稳定（见 `docs/api-stability.md`）。四件值得知道的事：
+
+1. **Claude Opus 4.8 成为新旗舰。** SDK 1.0.9 把
+   `claude-opus-4-8` 提为旗舰（接管 `opus` 别名；原生 1M 上下文、
+   交错 thinking、fast 模式、effort 控制）。`ClaudeModelResolver`、
+   `claude` 引擎目录、`model_pricing`，以及 `squad` / `cli_squad` 的
+   **expert** 档现在都指向 4.8。显式锁了更老 Opus id 的宿主照常工作 ——
+   旧 id 仍保留在目录里。
+
+2. **xAI Grok 走两条通道。** (a) 按量计费的 **API** provider type
+   `grok` 经 `superagent` 后端路由（`XAI_API_KEY` / `GROK_API_KEY`，
+   默认 `grok-4.3`）。(b) **订阅制 CLI** 引擎 `grok_cli`（二进制
+   `grok`，grok.com 登录）是另一条独立通道。两者只共享品牌，别无其他。
+
+3. **两个新的订阅制 CLI 引擎。** `cursor_cli`（Cursor Composer，
+   `cursor-agent`）和 `grok_cli`（Grok Build）。均为 `builtin` 登录、
+   订阅计费（usage 行记 $0，shadow cost 取自目录）。默认启用；通过
+   `AI_CORE_CURSOR_CLI_ENABLED=false` / `AI_CORE_GROK_CLI_ENABLED=false`
+   关闭。它们会自动出现在 `/providers`、`cli:status`、模型选择器、
+   成本看板和进程监控里。
+
+4. **无需回退任何东西。** 1.0.0 之前的调用方行为字节级一致；锁版本的
+   宿主把 SDK 降回 1.0.7 也仍然可用。
+
+Cursor / Grok CLI 上手菜谱、Opus 4.8 路由，以及 Grok API 与 CLI
+通道拆分见 [docs/advanced-usage.zh-CN.md §30](docs/advanced-usage.zh-CN.md)。
 
 ## 常见问题
 

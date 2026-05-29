@@ -5,7 +5,9 @@ namespace SuperAICore\Services;
 use SuperAICore\Capabilities\ClaudeCapabilities;
 use SuperAICore\Capabilities\CodexCapabilities;
 use SuperAICore\Capabilities\CopilotCapabilities;
+use SuperAICore\Capabilities\CursorCapabilities;
 use SuperAICore\Capabilities\GeminiCapabilities;
+use SuperAICore\Capabilities\GrokCapabilities;
 use SuperAICore\Capabilities\KimiCapabilities;
 use SuperAICore\Capabilities\KiroCapabilities;
 use SuperAICore\Capabilities\SuperAgentCapabilities;
@@ -32,6 +34,8 @@ class CapabilityRegistry
         $this->register(new CopilotCapabilities());
         $this->register(new KiroCapabilities());
         $this->register(new KimiCapabilities());
+        $this->register(new CursorCapabilities());
+        $this->register(new GrokCapabilities());
         $this->register(new SuperAgentCapabilities());
     }
 

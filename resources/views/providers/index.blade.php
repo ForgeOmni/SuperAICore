@@ -84,6 +84,10 @@
                                 <code>npm i -g @google/gemini-cli</code>
                             @elseif($be === 'copilot')
                                 <code>npm i -g @github/copilot</code>
+                            @elseif($be === 'cursor')
+                                <code>curl https://cursor.com/install -fsS | bash</code>
+                            @elseif($be === 'grok')
+                                <code>curl -fsSL https://grok.com/install.sh | bash</code>
                             @endif
                         </div>
                     @endif

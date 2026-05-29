@@ -111,6 +111,10 @@ class ProviderTypeRegistry
                     AiProvider::BACKEND_GEMINI,
                     AiProvider::BACKEND_COPILOT,
                     AiProvider::BACKEND_KIRO,
+                    // Cursor Composer + Grok Build CLIs own their own OAuth
+                    // login (~/.cursor, ~/.grok), so they ride the builtin type.
+                    AiProvider::BACKEND_CURSOR,
+                    AiProvider::BACKEND_GROK,
                 ],
                 'needs_api_key'  => false,
                 'needs_base_url' => false,
@@ -282,6 +286,23 @@ class ProviderTypeRegistry
                 'base_url_env'     => 'DASHSCOPE_BASE_URL',
                 'needs_base_url'   => false,
                 'sdk_provider'     => 'qwen-anthropic',
+            ],
+
+            // 1.0.0 — xAI Grok first-class provider (SDK 1.0.8). Routes
+            // through the SDK's `GrokProvider` against the OpenAI-compatible
+            // endpoint https://api.x.ai/v1 (verified against docs.x.ai).
+            // Default model grok-4.3 (1M context). The SDK reads XAI_API_KEY
+            // first and falls back to GROK_API_KEY; the env builder sets the
+            // canonical one and aliases the other so hosts that already use
+            // either name work unchanged.
+            AiProvider::TYPE_GROK => [
+                'icon'             => 'bi-x-diamond',
+                'fields'           => ['api_key'],
+                'default_backend'  => AiProvider::BACKEND_SUPERAGENT,
+                'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT],
+                'env_key'          => 'XAI_API_KEY',
+                'env_extras'       => ['GROK_API_KEY' => 'api_key'],
+                'sdk_provider'     => 'grok',
             ],
 
             AiProvider::TYPE_KIRO_API => [

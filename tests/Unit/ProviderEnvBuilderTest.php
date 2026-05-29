@@ -121,6 +121,20 @@ final class ProviderEnvBuilderTest extends TestCase
         $this->assertSame([], $builtin);
     }
 
+    public function test_grok_flows_api_key_into_both_xai_and_grok_env(): void
+    {
+        // Bundled grok type: XAI_API_KEY is canonical, GROK_API_KEY is
+        // aliased off the same api_key so either env name the SDK reads
+        // resolves. No base_url (xAI's endpoint is fixed in the SDK).
+        $env = $this->builder()->buildEnvFromConfig([
+            'type'    => AiProvider::TYPE_GROK,
+            'api_key' => 'xai-key-789',
+        ]);
+
+        $this->assertSame('xai-key-789', $env['XAI_API_KEY']);
+        $this->assertSame('xai-key-789', $env['GROK_API_KEY']);
+    }
+
     public function test_host_added_type_flows_its_env_key(): void
     {
         // Simulate a host (SuperTeam) adding a new type via config

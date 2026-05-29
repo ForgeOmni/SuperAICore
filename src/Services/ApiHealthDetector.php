@@ -62,6 +62,7 @@ final class ApiHealthDetector
         'qwen-native',
         'glm',
         'minimax',
+        'grok',
     ];
 
     /**
@@ -81,6 +82,9 @@ final class ApiHealthDetector
         'qwen-native' => 'QWEN_API_KEY',
         'glm'         => 'GLM_API_KEY',
         'minimax'     => 'MINIMAX_API_KEY',
+        // xAI Grok. SDK reads XAI_API_KEY first, GROK_API_KEY as fallback;
+        // we gate on the canonical one for the "configured?" check.
+        'grok'        => 'XAI_API_KEY',
     ];
 
     /**

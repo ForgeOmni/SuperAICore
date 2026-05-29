@@ -7,7 +7,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Français](README.fr.md)
 
-用于统一调度八种 AI 执行引擎的 Laravel 包 —— **Claude Code CLI**、**Codex CLI**、**Gemini CLI**、**GitHub Copilot CLI**、**AWS Kiro CLI**、**Moonshot Kimi Code CLI**、**Alibaba Qwen Code CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析、OpenAI 兼容代理、magic-trace 风格的环形追踪缓冲，以及一套完整的后台管理 UI。
+用于统一调度十种 AI 执行引擎的 Laravel 包 —— **Claude Code CLI**、**Codex CLI**、**Gemini CLI**、**GitHub Copilot CLI**、**AWS Kiro CLI**、**Moonshot Kimi Code CLI**、**Alibaba Qwen Code CLI**、**Cursor Composer CLI**、**xAI Grok Build CLI**、**SuperAgent SDK**。内置独立于框架的 CLI、基于能力（capability）的调度器、MCP 服务器管理、使用量记录、成本分析、OpenAI 兼容代理、magic-trace 风格的环形追踪缓冲，以及一套完整的后台管理 UI。
 
 在干净的 Laravel 项目中可独立运行。UI 可选、可完全替换 —— 既能嵌入宿主应用（例如 SuperTeam），也可以在仅使用服务层时关掉。
 
@@ -24,6 +24,7 @@
   - [Squad 多智能体 + SDK 1.0.0 波次（0.9.6）](#squad-多智能体--sdk-100-波次096)
   - [opencode 借鉴特性波次（0.9.7 / SDK 1.0.5）](#opencode-借鉴特性波次097--sdk-105)
   - [Qwen + 追踪 + 9Router 波次（0.9.8）](#qwen--追踪--9router-波次098)
+  - [Opus 4.8 + Grok + Cursor 波次（1.0.0 / SDK 1.0.9）](#opus-48--grok--cursor-波次100--sdk-109)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -61,7 +62,7 @@
 
 ### 执行引擎 + provider 类型
 
-- **八个执行引擎**，统一实现同一套 `Dispatcher` 契约：
+- **十个执行引擎**，统一实现同一套 `Dispatcher` 契约：
   - **Claude Code CLI** —— provider 类型：`builtin`（本地登录）、`anthropic`、`anthropic-proxy`、`bedrock`、`vertex`。
   - **Codex CLI** —— `builtin`（ChatGPT 登录）、`openai`、`openai-compatible`。
   - **Gemini CLI** —— `builtin`（Google OAuth）、`google-ai`、`vertex`。
@@ -69,10 +70,12 @@
   - **AWS Kiro CLI**（0.6.1+）—— `builtin`（本机 `kiro-cli login` 登录态）、`kiro-api`（DB 存的 key 注入成 `KIRO_API_KEY` 走 headless 模式）。CLI 后端里自带能力最全的一家 —— 原生 agents、skills、MCP，以及**原生 subagent DAG 编排**（不走 `SpawnPlan` 模拟）。Skill 直接复用 Claude 的 `SKILL.md` 格式。**按 credits 订阅计费**（Pro / Pro+ / Power 套餐）。
   - **Moonshot Kimi Code CLI**（0.6.8+）—— `builtin`（`kimi login` 走 `auth.kimi.com` OAuth）。与 SDK 内置的直连 HTTP `KimiProvider` 互补，专门覆盖 OAuth 订阅的 agentic-loop 路径，和 `anthropic_api` ↔ `claude_cli` 是同样的分工。默认走 Kimi 原生 `Agent` fanout；需要切到 AICore 三阶段 Pipeline 时设 `use_native_agents=false`。**订阅计费** —— Moonshot Pro / Power。
   - **Alibaba Qwen Code CLI**（0.9.8+）—— gemini-cli 的分支（`QwenLM/qwen-code` v0.16.0），适配 Qwen 模型家族。仅支持 API key（`DASHSCOPE_API_KEY` / `QWEN_API_KEY`），OAuth 免费层已于 2026-04-15 EOL。默认模型 `qwen3.7-max`：1M 上下文、$2.50/$7.50 per 1M、原生支持 Anthropic `/v1/messages` 协议（在 fallback 链里可作为 Claude 的无缝替代）。**用量计费。**
-  - **SuperAgent SDK** —— provider 类型：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`，加上 `openai-responses`（0.7.0+）和 `lmstudio`（0.7.0+）。
+  - **Cursor Composer CLI**（1.0.0+）—— `builtin`（`cursor-agent login` 浏览器 OAuth → `~/.cursor`；headless 可导出 `CURSOR_API_KEY`）。Cursor 的 headless Composer 智能体（`cursor-agent`）。默认模型 `composer-2.5-fast`，同时代理 Anthropic（`claude-opus-4-8-thinking-high`）与 OpenAI（`gpt-5.x-codex`）模型及 `auto` 路由。MCP 走 `.cursor/mcp.json`。**订阅计费** —— Cursor 套餐。
+  - **xAI Grok Build CLI**（1.0.0+）—— `builtin`（`grok login` grok.com OAuth → `~/.grok`）。xAI 的「Grok Build」agentic CLI（`grok`）。默认模型 `grok-build`；原生 sub-agents、effort 控制（`--effort low…max`）、MCP 走 `grok mcp add`。**订阅计费** —— grok.com 套餐。*（与下方计量的 xAI **API** provider 类型是两条独立通道。）*
+  - **SuperAgent SDK** —— provider 类型：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`，加上 `openai-responses`（0.7.0+）、`lmstudio`（0.7.0+）、`deepseek`（0.9.0+）、`qwen-anthropic`（0.9.8+），以及 `grok`（1.0.0+ —— 计量的 xAI API，`XAI_API_KEY`/`GROK_API_KEY`，默认 `grok-4.3`，1M 上下文）。
 - **`openai-responses` provider 类型**（0.7.0+）—— 通过 SDK 的 `OpenAIResponsesProvider` 走 `/v1/responses`。依据 `base_url` 形状自动识别 Azure OpenAI 部署（自动追加 `api-version=2025-04-01-preview`；可通过 `extra_config.azure_api_version` 覆盖）。若此行没存 API key 而是 `extra_config.access_token`（来自宿主 ChatGPT-OAuth 流程），SDK 会自动把 base URL 切到 `chatgpt.com/backend-api/codex`，让 Plus / Pro / Business 订阅用户走自家订阅配额。
 - **`lmstudio` provider 类型**（0.7.0+）—— 本地 LM Studio 服务（默认 `http://localhost:1234`）。走 OpenAI-compat 接线，无需真 API key —— SDK 自动合成占位 `Authorization` 头。
-- **十一个 dispatcher 适配器**对应八个引擎（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`kiro_cli`、`kimi_cli`、`qwen_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— `builtin` / `kiro-api` 走 CLI 适配器，API Key 走 HTTP 适配器。CLI 也可以直接指定这些适配器名。
+- **十三个 dispatcher 适配器**对应十个引擎（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`kiro_cli`、`kimi_cli`、`qwen_cli`、`cursor_cli`、`grok_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— `builtin` / `kiro-api` 走 CLI 适配器，API Key 走 HTTP 适配器。CLI 也可以直接指定这些适配器名。
 - **`EngineCatalog` 单一数据源** —— 引擎的标签、图标、Dispatcher 后端、支持的 provider 类型、可用模型、声明式的 `ProcessSpec`（二进制名、版本/登录状态参数、prompt/output/model flag、默认 flag）都集中在一个 PHP 服务里。新增 CLI 引擎只需改 `EngineCatalog::seed()`，UI/扫描/开关矩阵全部自动跟进。宿主通过 `super-ai-core.engines` 配置覆盖。`modelOptions($key)` / `modelAliases($key)`（0.5.9+）驱动宿主应用模型下拉。
 
 ### Skill 与 sub-agent 运行器
@@ -494,6 +497,40 @@ options 暴露），以及 `qwen-anthropic` SDK provider（新的
 gh-watch 表结构、SDK 1.0.6 接线）见
 [docs/advanced-usage.zh-CN.md §30](docs/advanced-usage.zh-CN.md)。
 
+### Opus 4.8 + Grok + Cursor 波次（1.0.0 / SDK 1.0.9）
+
+1.0.0 稳定版升级到 SDK `^1.0.9`，落地 Opus 4.8 代际、两条通道的 xAI Grok，
+以及两个新的订阅型 CLI 引擎。纯增量 —— 无 schema 变更、无迁移、无需 config publish。
+
+- **Claude Opus 4.8 旗舰**（1.0.0）—— SDK 1.0.9 将 `claude-opus-4-8` 提升为
+  Anthropic 旗舰：接管 `opus` 别名，原生 1M 上下文、交错思考（interleaved
+  thinking）、fast 模式、effort 控制、动态工作流 / 多智能体编排，Opus 档定价
+  （$15 / $75 per 1M）。`ClaudeModelResolver` 将 `opus → claude-opus-4-8`，
+  catalog 顶部列出 `claude-opus-4-8` / `claude-opus-4-8[1m]`；`claude` 引擎
+  catalog、`model_pricing`、`squad` / `cli_squad` 的 **expert** 档全部指向 4.8。
+- **xAI Grok API provider（`grok` 类型）**（1.0.0）—— 经 `superagent` 后端
+  路由到 SDK 1.0.9 的 `GrokProvider`（xAI OpenAI 兼容端点 `https://api.x.ai/v1`）。
+  `XAI_API_KEY`（规范名）+ `GROK_API_KEY`（别名）；默认模型 `grok-4.3`（1M 上下文）。
+  已接入 `ApiHealthDetector`（`api:status` + 仪表盘探测）与成本目录
+  （grok-4.3 / grok-4-fast / grok-code-fast-1 / grok-3-mini）。
+- **Cursor Composer CLI（`cursor_cli`）**（1.0.0）—— Cursor 的 headless
+  `cursor-agent`（Composer 2.5）。订阅型引擎；`builtin` 登录态在 `~/.cursor`。
+  支持 streaming + scripted-spawn + 一次性 chat，按 Claude-Code 形状解析
+  JSON / stream-json 并跟踪 token，MCP 走 `.cursor/mcp.json`，`--force` headless
+  工具放行。默认模型 `composer-2.5-fast`。
+- **Grok Build CLI（`grok_cli`）**（1.0.0）—— xAI 的 `grok`「Grok Build」
+  agentic CLI。订阅型引擎；`builtin` 登录态在 `~/.grok`。effort 控制
+  （`--effort low…max` / `--reasoning-effort`）、`--prompt-file` scripted spawn、
+  原生 sub-agents。默认模型 `grok-build`。**与计量的 Grok API provider 类型相互独立**
+  —— 同一品牌、两条通道。
+- **数据驱动的各处入口** —— 因为 `EngineCatalog`、`ProviderTypeRegistry` 与各引擎
+  ModelResolver 驱动一切，`/providers` UI（引擎卡片、builtin 行、新增 provider
+  下拉、版本 + 登录徽章）、模型选择器、`cli:status`、成本仪表盘、进程监视器、
+  `McpManager` 同步都会自动拾取新引擎。
+
+完整菜谱（Cursor / Grok CLI 上线、Opus 4.8 路由、Grok API 与 CLI 通道区分、effort
+控制）见 [docs/advanced-usage.zh-CN.md §30](docs/advanced-usage.zh-CN.md)。
+
 ### CLI 安装器与健康检查
 
 - **`cli:status`** —— 每家 CLI 的安装/登录状态与安装提示。
@@ -819,7 +856,7 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**、**0.9.2 TaskRunner 可靠性波次**、**0.9.6 Squad 多智能体 + SDK 1.0.0 波次**、**0.9.7 opencode 借鉴波次**，以及 **0.9.8 Qwen + 追踪 + 9Router 波次**。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**、**0.9.2 TaskRunner 可靠性波次**、**0.9.6 Squad 多智能体 + SDK 1.0.0 波次**、**0.9.7 opencode 借鉴波次**、**0.9.8 Qwen + 追踪 + 9Router 波次**，以及 **1.0.0 Opus 4.8 + Grok + Cursor 波次**。
 - **[Cookbook](examples/cookbook/README.md)**（0.9.8+）—— gs-quant 风格的五个叙事型示例:dispatcher 基础、prompt 缓存、provider 轮换、跨 harness 恢复、追踪快速入门。
 - **[商业化分层](docs/commercialization-tiers.md)**（0.9.8+）—— 关于在 MIT 内核之上如何分层（Cloud Dashboard / Managed Dispatcher / Enterprise overlays）的参考文档。该文档描述的内容今日尚未实现。
 - **[供应链策略](SUPPLY_CHAIN.md)**（0.9.8+）—— Composer lifecycle scripts 全部禁止、`composer install --no-scripts` 默认启用、每周跑 `composer audit`。

@@ -22,6 +22,9 @@ final class CliInstallerTest extends TestCase
             'gemini'  => CliInstaller::SOURCE_NPM,
             'copilot' => CliInstaller::SOURCE_NPM,
             'kimi'    => CliInstaller::SOURCE_UV,
+            // Cursor + Grok ship via vendor curl|bash installers, not npm.
+            'cursor'  => CliInstaller::SOURCE_SCRIPT,
+            'grok'    => CliInstaller::SOURCE_SCRIPT,
         ];
         foreach (CliInstaller::INSTALLABLE_BACKENDS as $b) {
             $this->assertArrayHasKey($b, $matrix, "missing source entry for {$b}");

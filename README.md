@@ -24,6 +24,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [Squad multi-agent + SDK 1.0.0 wave (0.9.6)](#squad-multi-agent--sdk-100-wave-096)
   - [opencode-borrowed feature wave (0.9.7 / SDK 1.0.5)](#opencode-borrowed-feature-wave-097--sdk-105)
   - [Qwen + tracing + 9Router wave (0.9.8)](#qwen--tracing--9router-wave-098)
+  - [Opus 4.8 + Grok + Cursor wave (1.0.0 / SDK 1.0.9)](#opus-48--grok--cursor-wave-100--sdk-109)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -61,7 +62,7 @@ Each feature below is tagged with the version it landed in. Features without a t
 
 ### Execution engines + provider types
 
-- **Eight execution engines** unified behind a single `Dispatcher` contract:
+- **Ten execution engines** unified behind a single `Dispatcher` contract:
   - **Claude Code CLI** — provider types: `builtin` (local login), `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`.
   - **Codex CLI** — `builtin` (ChatGPT login), `openai`, `openai-compatible`.
   - **Gemini CLI** — `builtin` (Google OAuth), `google-ai`, `vertex`.
@@ -69,10 +70,12 @@ Each feature below is tagged with the version it landed in. Features without a t
   - **AWS Kiro CLI** *(since 0.6.1)* — `builtin` (local `kiro-cli login`), `kiro-api` (stored key injected as `KIRO_API_KEY` for headless). Ships the richest out-of-the-box CLI feature set — native agents, skills, MCP, and **subagent DAG orchestration** (no `SpawnPlan` emulation). Reads Claude's `SKILL.md` format verbatim. **Subscription billed** — credit-based Pro / Pro+ / Power plans.
   - **Moonshot Kimi Code CLI** *(since 0.6.8)* — `builtin` (`kimi login` OAuth via `auth.kimi.com`). Complements the SDK's direct-HTTP `KimiProvider` by covering the OAuth-subscription agentic-loop path, mirroring the `anthropic_api` ↔ `claude_cli` split. Native `Agent` fanout is honoured by default; opt into AICore's three-phase Pipeline via `use_native_agents=false`. **Subscription billed** — Moonshot Pro / Power.
   - **Alibaba Qwen Code CLI** *(since 0.9.8)* — gemini-cli fork (`QwenLM/qwen-code` v0.16.0). API key only via `DASHSCOPE_API_KEY` / `QWEN_API_KEY` (Qwen OAuth was EOL'd 2026-04-15). Default model `qwen3.7-max` — 1M context, $2.50/$7.50 per 1M, speaks Anthropic's `/v1/messages` natively (drop-in for Claude in fallback chains). **Usage billed.**
-  - **SuperAgent SDK** — provider types: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` *(since 0.7.0)* and `lmstudio` *(since 0.7.0)*.
+  - **Cursor Composer CLI** *(since 1.0.0)* — `builtin` (`cursor-agent login` browser OAuth → `~/.cursor`; headless runners may export `CURSOR_API_KEY`). Cursor's headless Composer agent (`cursor-agent`). Default model `composer-2.5-fast`; also proxies Anthropic (`claude-opus-4-8-thinking-high`) and OpenAI (`gpt-5.x-codex`) SKUs + an `auto` router. MCP via `.cursor/mcp.json`. **Subscription billed** — Cursor plan.
+  - **xAI Grok Build CLI** *(since 1.0.0)* — `builtin` (`grok login` grok.com OAuth → `~/.grok`). xAI's "Grok Build" agentic CLI (`grok`). Default model `grok-build`; native sub-agents, effort control (`--effort low…max`), MCP via `grok mcp add`. **Subscription billed** — grok.com plan. *(Distinct from the metered xAI **API** provider type below.)*
+  - **SuperAgent SDK** — provider types: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` *(since 0.7.0)*, `lmstudio` *(since 0.7.0)*, `deepseek` *(since 0.9.0)*, `qwen-anthropic` *(since 0.9.8)*, and `grok` *(since 1.0.0 — metered xAI API, `XAI_API_KEY`/`GROK_API_KEY`, default `grok-4.3`, 1M context)*.
 - **`openai-responses` provider type** *(since 0.7.0)* — routes through the SDK's `OpenAIResponsesProvider` against `/v1/responses`. Auto-detects Azure OpenAI deployments from the `base_url` pattern (adds `api-version=2025-04-01-preview` query string; override via `extra_config.azure_api_version`). When the row stores an `access_token` from a host-app ChatGPT-OAuth flow instead of an API key, the SDK flips the base URL to `chatgpt.com/backend-api/codex` so Plus / Pro / Business subscribers hit their subscription quota.
 - **`lmstudio` provider type** *(since 0.7.0)* — local LM Studio server (default `http://localhost:1234`). OpenAI-compat wire; no real API key needed — the SDK synthesises a placeholder `Authorization` header.
-- **Eleven dispatcher adapters** behind the eight engines (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `kimi_cli`, `qwen_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`). CLI adapters when a provider uses `builtin` / `kiro-api`; HTTP adapters when it uses an API key. Addressable directly from the CLI when needed.
+- **Thirteen dispatcher adapters** behind the ten engines (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `kimi_cli`, `qwen_cli`, `cursor_cli`, `grok_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`). CLI adapters when a provider uses `builtin` / `kiro-api`; HTTP adapters when it uses an API key. Addressable directly from the CLI when needed.
 - **`EngineCatalog` single source of truth** — engine labels, icons, dispatcher backends, supported provider types, available models, and the declarative `ProcessSpec` (binary, version/auth-status args, prompt/output/model flags, default flags) live in one PHP service. Adding a new CLI engine means editing `EngineCatalog::seed()` and every picker updates automatically. Host apps override per-engine fields via `super-ai-core.engines` config. `modelOptions($key)` / `modelAliases($key)` *(since 0.5.9)* drive host-app model dropdowns.
 
 ### Skill & sub-agent runner
@@ -210,7 +213,7 @@ No migrations.
   checkpoint_path, mailbox_log}`. Tier map ships with sensible
   defaults (`trivial` → `claude-haiku-4-5`, `easy` →
   `deepseek-v4-flash`, `moderate` → `claude-sonnet-4-6`, `hard` →
-  `deepseek-v4-pro`, `expert` → `claude-opus-4-7`); override per-call
+  `deepseek-v4-pro`, `expert` → `claude-opus-4-8`); override per-call
   via `options.tier_map` or globally via `super-ai-core.squad.tier_map`.
 - **`AutoModelRouter` service** *(0.9.6)* — `/model auto` heuristic
   for any dispatch path. Wraps SDK 0.9.8 `Routing\AutoModelStrategy`
@@ -539,6 +542,46 @@ Full recipes (Qwen CLI install, tracing viewer setup, OpenAI proxy
 client setup, routing combo CRUD, multi-account onboarding, OAuth
 refresher schedule, session branch forking, gh-watch row schema,
 SDK 1.0.6 wirings): [docs/advanced-usage.md §30](docs/advanced-usage.md).
+
+### Opus 4.8 + Grok + Cursor wave (1.0.0 / SDK 1.0.9)
+
+The 1.0.0 stable cut takes SDK `^1.0.9` and lands the Opus 4.8 generation,
+xAI Grok on two channels, and two new subscription CLI engines. Additive —
+no schema changes, no migrations, no config publish.
+
+- **Claude Opus 4.8 flagship** *(1.0.0)* — SDK 1.0.9 promotes
+  `claude-opus-4-8` to the Anthropic flagship: it takes the `opus` alias,
+  native 1M context, interleaved thinking, fast mode, effort control, and
+  dynamic-workflow / agent-orchestration support, at the Opus tier
+  ($15 / $75 per 1M). `ClaudeModelResolver` resolves `opus → claude-opus-4-8`
+  and lists `claude-opus-4-8` / `claude-opus-4-8[1m]` first; the `claude`
+  engine catalog, `model_pricing`, and the `squad` / `cli_squad` **expert**
+  tiers all point at 4.8.
+- **xAI Grok API provider (`grok` type)** *(1.0.0)* — first-class provider
+  type routed through the `superagent` backend to SDK 1.0.9's `GrokProvider`
+  (xAI's OpenAI-compatible `https://api.x.ai/v1`). `XAI_API_KEY` (canonical)
+  with `GROK_API_KEY` aliased; default model `grok-4.3` (1M context).
+  Surfaced in `ApiHealthDetector` (`api:status` + dashboard probe) and the
+  cost catalog (grok-4.3 / grok-4-fast / grok-code-fast-1 / grok-3-mini).
+- **Cursor Composer CLI (`cursor_cli`)** *(1.0.0)* — Cursor's headless
+  `cursor-agent` (Composer 2.5). Subscription engine; `builtin` login at
+  `~/.cursor`. Streaming + scripted-spawn + one-shot chat, Claude-Code-shaped
+  JSON / stream-json parsing with token tracking, MCP via `.cursor/mcp.json`,
+  `--force` headless tool-approval. Default model `composer-2.5-fast`.
+- **Grok Build CLI (`grok_cli`)** *(1.0.0)* — xAI's `grok` "Grok Build"
+  agentic CLI. Subscription engine; `builtin` login at `~/.grok`. Effort
+  control (`--effort low…max` / `--reasoning-effort`), `--prompt-file`
+  scripted spawn, native sub-agents. Default model `grok-build`. **Distinct
+  from the metered Grok API provider type** — same brand, different channel.
+- **Data-driven surfaces** — because `EngineCatalog`, `ProviderTypeRegistry`,
+  and the per-engine model resolvers feed everything, the `/providers` UI
+  (engine cards, builtin rows, add-provider dropdowns, version + login
+  badges), model pickers, `cli:status`, the cost dashboard, the Process
+  Monitor, and `McpManager` sync all pick up the new engines automatically.
+
+Full recipes (Cursor / Grok CLI onboarding, Opus 4.8 routing, Grok API vs
+CLI channel split, effort control):
+[docs/advanced-usage.md §30](docs/advanced-usage.md).
 
 ### CLI installer & health
 

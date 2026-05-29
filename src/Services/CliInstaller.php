@@ -31,7 +31,7 @@ final class CliInstaller
     public const SOURCE_PIP    = 'pip';
 
     /** Backends we know how to install. Superagent is intentionally absent. */
-    public const INSTALLABLE_BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'kimi'];
+    public const INSTALLABLE_BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'cursor', 'grok'];
 
     /**
      * Install-command matrix. Each backend maps to a list of `{source, argv}`
@@ -60,6 +60,14 @@ final class CliInstaller
             'kimi' => [
                 ['source' => self::SOURCE_UV,  'argv' => ['uv', 'tool', 'install', 'kimi-cli']],
                 ['source' => self::SOURCE_PIP, 'argv' => ['pip', 'install', '--user', 'kimi-cli'], 'note' => 'fallback when uv unavailable'],
+            ],
+            // Cursor's official installer drops `cursor-agent` into ~/.local/bin.
+            'cursor' => [
+                ['source' => self::SOURCE_SCRIPT, 'argv' => ['sh', '-c', 'curl https://cursor.com/install -fsS | bash'], 'note' => 'POSIX only'],
+            ],
+            // xAI's Grok Build CLI installer drops `grok` into ~/.local/bin.
+            'grok' => [
+                ['source' => self::SOURCE_SCRIPT, 'argv' => ['sh', '-c', 'curl -fsSL https://grok.com/install.sh | bash'], 'note' => 'POSIX only'],
             ],
         ];
     }

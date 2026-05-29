@@ -4,6 +4,137 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-05-28
+
+**First stable release — SDK 1.0.9 uptake: Claude Opus 4.8 flagship, xAI Grok
+API provider, and two new subscription CLI engines (Cursor Composer + Grok
+Build).** The public API is now stable per [SemVer](https://semver.org); see
+`docs/api-stability.md` for the support contract. SDK constraint moves
+`^1.0.7` → `^1.0.9`. Additive across the board — no schema changes, no
+migrations, no config publish required. The model catalog and
+provider matrix are data-driven, so the `/providers` UI, model pickers,
+`cli:status`, cost dashboard, and Process Monitor all pick up the new
+engines automatically. Full Unit suite green (pre-existing `kiro-cli`
+live-probe drift aside — the locally installed Kiro CLI now reports a 4.5/4.7
+lineup that the bundled 4.6 fixtures predate; unrelated to this work).
+
+```bash
+composer update forgeomni/superaicore
+# no migrations, no config publish — additive only
+```
+
+### Added — Claude Opus 4.8 flagship (SDK 1.0.8)
+
+SDK 1.0.8 promotes `claude-opus-4-8` to the Anthropic flagship (takes the
+`opus` alias, Opus pricing $15/$75, native 1M context, interleaved thinking,
+fast mode, effort control, and dynamic workflow / agent-orchestration
+support). Surfaced through the project:
+
+- **`ClaudeModelResolver`** — `opus` alias → `claude-opus-4-8`; catalog gains
+  `claude-opus-4-8` + `claude-opus-4-8[1m]` at the top of the Opus group
+  (4.7/4.6 kept for explicit pinning).
+- **`EngineCatalog`** — the `claude` engine's `available_models` lists
+  `claude-opus-4-8` / `claude-opus-4-7` first (the catalog auto-expansion
+  already surfaced 4.8 from `ModelCatalog`; the seed makes it explicit for
+  no-SDK fallback).
+- **`config/super-ai-core.php`** — `model_pricing` adds the `claude-opus-4-8`
+  row ($15/$75); the `squad` and `cli_squad` `expert` tiers now route to
+  `claude-opus-4-8` (env-overridable).
+- **`CliSquadOrchestrator`** — default `expert` tier model bumped to
+  `claude-opus-4-8`.
+
+### Added — xAI Grok API provider type (`AiProvider::TYPE_GROK`)
+
+First-class `grok` provider type routed through the `superagent` backend to
+SDK 1.0.8's `GrokProvider` (xAI's OpenAI-compatible endpoint
+`https://api.x.ai/v1`). API key from `XAI_API_KEY` (canonical) with
+`GROK_API_KEY` aliased off the same field; default model `grok-4.3` (1M
+context). Wired into `ProviderTypeRegistry` (`sdk_provider: grok`),
+`AiProvider::TYPES`/`BACKEND_TYPES[superagent]`, `ApiHealthDetector`
+(`grok` → `XAI_API_KEY`, added to the dashboard probe + `api:status`), and
+`model_pricing` (grok-4.3 / grok-4-fast / grok-code-fast-1 / grok-3-mini /
+… verified against docs.x.ai, May 2026).
+
+### Added — Cursor Composer CLI backend (`cursor_cli` / engine `cursor`)
+
+Spawns Cursor's headless `cursor-agent` (the "Composer" agent, 2026.05.28).
+Subscription-billed via the user's Cursor plan, so usage rows emit $0 and the
+dashboard groups them under "Subscription engines". The `builtin` provider
+type rides the local `cursor-agent login` state (`~/.cursor`); headless
+runners may export `CURSOR_API_KEY`.
+
+- **`CursorCliBackend`** — `Backend` + `StreamingBackend` +
+  `ScriptedSpawnBackend`. `-p --output-format json|stream-json --force`
+  (auto-approve tools headless), `--model`, `--workspace`, trailing-positional
+  prompt. Tolerant parser handles single-object JSON, Claude-Code-shaped
+  `stream-json` NDJSON (`assistant`/`result` events, last turn wins), and a
+  plain-text fallback; token usage parsed into the standard envelope.
+- **`CursorModelResolver`** — family aliases (`composer`/`opus`/`gpt`/`auto`)
+  + curated catalog (default `composer-2.5-fast`; also `composer-2.5`,
+  `claude-opus-4-8-thinking-high`, gpt-5.x). `liveCatalog()` re-probes
+  `cursor-agent models` on demand.
+- **`CursorCapabilities`** — MCP via `.cursor/mcp.json` (synced by
+  `McpManager::syncAllBackends`), `stream-json` format, no tool-name rewrites.
+- Registered in `BackendRegistry`, `EngineCatalog` (ProcessSpec, subscription
+  billing), `CapabilityRegistry`, `AiProvider::BACKEND_CURSOR` +
+  `BACKEND_TYPES`, `ProviderTypeRegistry` (builtin), `CliStatusDetector`
+  (bespoke `~/.cursor` auth probe), `CliInstaller` (official curl installer),
+  `config.backends.cursor_cli`, and `model_pricing` (`cursor:*` → $0).
+
+### Added — Grok Build CLI backend (`grok_cli` / engine `grok`)
+
+Spawns xAI's `grok` "Grok Build" agentic CLI (0.2.8) in headless mode.
+Subscription-billed via grok.com login (`~/.grok`), default model
+`grok-build`. **Distinct from the metered `grok` API provider type above** —
+same brand, different channel (CLI subscription vs `XAI_API_KEY` API).
+
+- **`GrokCliBackend`** — `Backend` + `StreamingBackend` +
+  `ScriptedSpawnBackend`. `-p/--single` (or `--prompt-file` for scripted
+  spawn), `--output-format json|streaming-json`, `--model`, `--always-approve`,
+  and effort control (`--effort low|medium|high|xhigh|max` /
+  `--reasoning-effort`) passed through from options/extra_config. Same
+  tolerant Claude-Code-shaped parser + token tracking as the Cursor backend.
+- **`GrokModelResolver`** — `grok` → `grok-build`; `liveCatalog()` probes
+  `grok models`.
+- **`GrokCapabilities`** — native sub-agents (`--agents`/`create-subagent`),
+  MCP managed via `grok mcp add` (no flat config file → `mcpConfigPath` null),
+  `stream-json` format.
+- Registered across `BackendRegistry`, `EngineCatalog`, `CapabilityRegistry`,
+  `AiProvider::BACKEND_GROK` + `BACKEND_TYPES`, `ProviderTypeRegistry`
+  (builtin), `CliStatusDetector` (`~/.grok` auth probe), `CliInstaller`,
+  `config.backends.grok_cli`, and `model_pricing` (`grok:grok-build` → $0).
+
+### Changed — UI surfaces the new engines
+
+`/providers` is data-driven off `EngineCatalog` + `ProviderTypeRegistry`, so
+the Cursor Composer and Grok Build engine cards, builtin provider rows, the
+"Add provider" backend/type dropdowns, CLI version + login badges, and the
+Process Monitor all appear automatically. Added per-engine install hints
+(`cursor`/`grok`) to the providers view.
+
+### Changed — SuperAgent SDK constraint `^1.0.7` → `^1.0.9`
+
+`composer.json` moves to `^1.0.9`; `composer.lock` resolves to v1.0.9.
+1.0.8 (Opus 4.8 + dynamic workflows + Grok provider) and 1.0.9 (the
+`/deep-research` Opus 4.8 harness command) are both additive with zero
+breaking changes, so downgrading to 1.0.7 still works for pinned hosts.
+
+> **1.0.9 is SDK-REPL only.** Its sole change is a fourth Opus 4.8 harness
+> slash command (`/deep-research`, alongside `/workflows` · `/ultraplan` ·
+> `/ultrareview`) inside the `superagent` CLI's `Harness\CommandRouter`.
+> SuperAICore does not re-expose those interactive REPL commands, so there
+> is no project-side surface to wire — the dependency bump is the whole
+> change. No new models, providers, schema, or config keys.
+
+### Tests
+
+New: `CursorModelResolverTest`, `GrokModelResolverTest`,
+`CursorCliBackendTest`, `GrokCliBackendTest`, `CursorGrokCapabilitiesTest`,
+plus a `grok` descriptor/env case in `ProviderTypeRegistryTest` /
+`ProviderEnvBuilderTest`. Updated `BackendRegistryTest` (cursor_cli/grok_cli),
+`ProviderTypeRegistryTest` (TYPE_GROK in the bundled set), and
+`CliInstallerTest` (script-source default for cursor/grok).
+
 ## [0.9.9] — 2026-05-23
 
 **Maintenance release — SDK 1.0.7 uptake + `QwenCliBackend`

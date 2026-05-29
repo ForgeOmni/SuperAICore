@@ -16,9 +16,12 @@ Ce guide détaille l'installation complète de `forgeomni/superaicore` dans une 
   - `gemini` CLI dans `$PATH` — pour le backend Gemini CLI
   - `copilot` CLI dans `$PATH` (puis `copilot login`) — pour le backend GitHub Copilot CLI
   - `kiro-cli` dans `$PATH` (puis `kiro-cli login` ; ou définir `KIRO_API_KEY` pour le mode headless Pro / Pro+ / Power) — pour le backend Kiro CLI (0.6.1+)
+  - `cursor-agent` dans `$PATH` (puis `cursor-agent login` ; ou `CURSOR_API_KEY` pour le mode headless) — pour le backend Cursor Composer CLI (1.0.0+)
+  - `grok` dans `$PATH` (puis `grok login`) — pour le backend xAI Grok Build CLI (1.0.0+)
   - Clé API Anthropic — pour `anthropic_api`
   - Clé API OpenAI — pour `openai_api`
   - Clé Google AI Studio — pour `gemini_api`
+  - Clé API xAI (`XAI_API_KEY` / `GROK_API_KEY`) — pour le type de provider facturé `grok` via `superagent` (1.0.0+)
 
 ## 2. Installer via Composer
 
@@ -105,6 +108,8 @@ CODEX_CLI_BIN=codex
 GEMINI_CLI_BIN=gemini
 COPILOT_CLI_BIN=copilot
 KIRO_CLI_BIN=kiro-cli
+CURSOR_CLI_BIN=cursor-agent
+GROK_CLI_BIN=grok
 AI_CORE_COPILOT_ALLOW_ALL_TOOLS=true
 # Le mode --no-interactive de Kiro refuse d'exécuter des outils sans
 # approbation préalable ; à moins d'utiliser --trust-tools=<catégories>,
@@ -120,6 +125,18 @@ AI_CORE_KIRO_TRUST_ALL_TOOLS=true
 # (0.5.8+). Désactivée par défaut — un `copilot --help` à chaque sondage
 # de statut serait du gaspillage.
 SUPERAICORE_COPILOT_PROBE=false
+# CLIs Cursor Composer + Grok Build (1.0.0+). Moteurs sur abonnement —
+# ils gèrent leur propre login (~/.cursor, ~/.grok). `force`/`always_approve`
+# auto-approuvent les outils en mode headless ; mettre à false pour revenir
+# à la confirmation par outil.
+AI_CORE_CURSOR_CLI_ENABLED=true
+AI_CORE_CURSOR_FORCE=true
+AI_CORE_GROK_CLI_ENABLED=true
+AI_CORE_GROK_ALWAYS_APPROVE=true
+# CURSOR_API_KEY=...   # Cursor headless (sinon `cursor-agent login`)
+# Clé API xAI pour le type de provider facturé `grok` via superagent (1.0.0+).
+# Distincte du moteur CLI `grok` (abonnement grok.com) ci-dessus.
+# XAI_API_KEY=xai-...  # GROK_API_KEY est aussi accepté comme nom de repli
 # Rafraîchissement automatique optionnel du catalogue de modèles au
 # démarrage de la CLI (0.6.0+). Les deux variables doivent être définies ;
 # ne s'exécute que si l'override local a plus de 7 jours, les erreurs
@@ -179,7 +196,7 @@ Si des skills ou sous-agents Claude Code sont déjà installés (sous `./.claude
 ./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
-Aucune configuration requise. Sans `--dry-run`, la commande passe la main aux CLI backends (`claude`, `codex`, `gemini`, `copilot`, `kiro-cli`) — installez ceux que vous comptez utiliser :
+Aucune configuration requise. Sans `--dry-run`, la commande passe la main aux CLI backends (`claude`, `codex`, `gemini`, `copilot`, `kiro-cli`, `cursor-agent`, `grok`) — installez ceux que vous comptez utiliser :
 
 ```bash
 npm i -g @anthropic-ai/claude-code
@@ -188,6 +205,8 @@ npm i -g @google/gemini-cli
 npm i -g @github/copilot   # puis `copilot login` (OAuth device flow)
 # kiro-cli — télécharger depuis https://kiro.dev/cli/ puis `kiro-cli login`
 # (ou export KIRO_API_KEY=ksk_... pour le mode headless Pro / Pro+ / Power)
+curl https://cursor.com/install -fsS | bash   # puis `cursor-agent login` (1.0.0+)
+curl -fsSL https://grok.com/install.sh | bash  # puis `grok login` (1.0.0+)
 ```
 
 Raccourci en une commande (recommandé) — laissez superaicore détecter et installer :
@@ -272,7 +291,7 @@ $env = CliOutputParser::parseClaude($stdout);    // ou parseCodex / parseCopilot
 
 ## 9. Étendre les types de provider via `provider_types` (0.6.2+)
 
-SuperAICore embarque 9 types de provider (`anthropic` / `anthropic-proxy` / `bedrock` / `vertex` / `google-ai` / `openai` / `openai-compatible` / `kiro-api` / `builtin`) — chacun décrit dans `Services\ProviderTypeRegistry::bundled()` avec son libellé, icône, champs de formulaire, nom de variable d'env, env de base-url, backends autorisés, et sa table `extra_config → env`. Les apps hôtes peuvent rebaptiser un type existant (par ex. pointer `label_key` vers un namespace lang local) ou déclarer un nouveau type complet via un seul bloc de config, sans fork :
+SuperAICore embarque 15 types de provider (`builtin`, `moonshot-builtin`, `anthropic`, `anthropic-proxy`, `bedrock`, `vertex`, `google-ai`, `openai`, `openai-compatible`, `openai-responses`, `lmstudio`, `deepseek`, `qwen-anthropic`, `grok`, `kiro-api`) — chacun décrit dans `Services\ProviderTypeRegistry::bundled()` avec son libellé, icône, champs de formulaire, nom de variable d'env, env de base-url, backends autorisés, et sa table `extra_config → env`. Les apps hôtes peuvent rebaptiser un type existant (par ex. pointer `label_key` vers un namespace lang local) ou déclarer un nouveau type complet via un seul bloc de config, sans fork :
 
 ```php
 // config/super-ai-core.php
@@ -1157,6 +1176,38 @@ AskUserTool, bouton de revert, workflow mode plan, ruleset de
 permissions par agent, héritage de permissions sous-agent, intégration
 PTY long-poll, file de partage de session, programmation de la
 rétention de snapshots.
+
+**1.0.0 — première version stable ; aucune migration ; pin SDK passe à `^1.0.9`.**
+Additif partout — aucun changement de schéma, aucun publish de config requis.
+L'API publique est désormais stable selon SemVer (voir `docs/api-stability.md`).
+Quatre choses à savoir :
+
+1. **Claude Opus 4.8 est le nouveau modèle phare.** Le SDK 1.0.9 promeut
+   `claude-opus-4-8` (prend l'alias `opus` ; contexte natif 1M, thinking
+   entrelacé, mode rapide, contrôle d'effort). `ClaudeModelResolver`, le
+   catalogue du moteur `claude`, `model_pricing` et les tiers **expert** de
+   `squad` / `cli_squad` pointent désormais sur 4.8. Les hôtes épinglant un id
+   Opus plus ancien continuent de fonctionner — les anciens ids restent au
+   catalogue.
+2. **xAI Grok arrive sur deux canaux.** (a) Le type de provider **API**
+   facturé `grok` route via le backend `superagent` (`XAI_API_KEY` /
+   `GROK_API_KEY`, défaut `grok-4.3`). (b) Le moteur **CLI sur abonnement**
+   `grok_cli` (binaire `grok`, login grok.com) est un canal distinct. Ils
+   partagent la marque, rien d'autre.
+3. **Deux nouveaux moteurs CLI sur abonnement.** `cursor_cli` (Cursor Composer,
+   `cursor-agent`) et `grok_cli` (Grok Build). Les deux en login `builtin`,
+   facturés à l'abonnement (lignes d'usage à $0, coût fantôme depuis le
+   catalogue). Activés par défaut ; désactivez via
+   `AI_CORE_CURSOR_CLI_ENABLED=false` / `AI_CORE_GROK_CLI_ENABLED=false`. Ils
+   apparaissent automatiquement dans `/providers`, `cli:status`, les sélecteurs
+   de modèle, le tableau de bord des coûts et le moniteur de processus.
+4. **Rien à défaire.** Les appelants pré-1.0.0 voient un comportement
+   byte-identique ; redescendre le SDK à 1.0.7 fonctionne toujours pour les
+   hôtes épinglés.
+
+Voir [docs/advanced-usage.fr.md §30](docs/advanced-usage.fr.md) pour la recette
+d'onboarding des CLI Cursor / Grok, le routage Opus 4.8, et la séparation des
+canaux API-vs-CLI de Grok.
 
 ## Dépannage
 

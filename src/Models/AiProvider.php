@@ -35,7 +35,14 @@ class AiProvider extends Model
     const BACKEND_COPILOT    = 'copilot';
     const BACKEND_KIRO       = 'kiro';
     const BACKEND_KIMI       = 'kimi';
-    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT, self::BACKEND_KIRO, self::BACKEND_KIMI];
+    // Cursor Composer CLI (`cursor-agent`) — subscription engine, dispatcher
+    // `cursor_cli`. Owns its own browser-OAuth login (`cursor-agent login`).
+    const BACKEND_CURSOR     = 'cursor';
+    // Grok Build CLI (`grok`) — subscription engine, dispatcher `grok_cli`,
+    // grok.com login. NB: distinct from the metered xAI API provider TYPE
+    // `grok` (TYPE_GROK), which routes through the `superagent` backend.
+    const BACKEND_GROK       = 'grok';
+    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT, self::BACKEND_KIRO, self::BACKEND_KIMI, self::BACKEND_CURSOR, self::BACKEND_GROK];
 
     const TYPE_BUILTIN           = 'builtin';
     const TYPE_ANTHROPIC         = 'anthropic';
@@ -74,6 +81,13 @@ class AiProvider extends Model
     // but against Qwen's serverless. Drop-in substitute for Claude in
     // fallback chains. API key only (Qwen OAuth was EOL'd 2026-04-15).
     const TYPE_QWEN_ANTHROPIC    = 'qwen-anthropic';
+    // xAI Grok first-class provider (SDK 1.0.8+). Routes through the SDK's
+    // `GrokProvider` against xAI's OpenAI-compatible endpoint at
+    // https://api.x.ai/v1. Default model `grok-4.3` (1M context). API key
+    // is read from XAI_API_KEY (GROK_API_KEY accepted as a fallback). The
+    // flagship models reason natively; only `grok-3-mini` honours the
+    // `reasoning_effort` dial, gated SDK-side.
+    const TYPE_GROK              = 'grok';
 
     const TYPES = [
         self::TYPE_BUILTIN           => 'builtin',
@@ -87,6 +101,7 @@ class AiProvider extends Model
         self::TYPE_LMSTUDIO          => 'lmstudio',
         self::TYPE_DEEPSEEK          => 'deepseek',
         self::TYPE_QWEN_ANTHROPIC    => 'qwen-anthropic',
+        self::TYPE_GROK              => 'grok',
         self::TYPE_GOOGLE_AI         => 'google-ai',
         self::TYPE_KIRO_API          => 'kiro-api',
         self::TYPE_MOONSHOT_BUILTIN  => 'moonshot-builtin',
@@ -125,6 +140,7 @@ class AiProvider extends Model
             self::TYPE_LMSTUDIO,
             self::TYPE_DEEPSEEK,
             self::TYPE_QWEN_ANTHROPIC,
+            self::TYPE_GROK,
         ],
         self::BACKEND_GEMINI => [
             self::TYPE_BUILTIN,
@@ -144,6 +160,18 @@ class AiProvider extends Model
             // through the superagent backend via SDK's KimiProvider, not
             // through this CLI.
             self::TYPE_MOONSHOT_BUILTIN,
+        ],
+        self::BACKEND_CURSOR => [
+            // `cursor-agent login` (browser OAuth) → ~/.cursor/. Headless
+            // runners may export CURSOR_API_KEY, but the matrix surfaces the
+            // builtin login path only (the CLI owns the credential).
+            self::TYPE_BUILTIN,
+        ],
+        self::BACKEND_GROK => [
+            // `grok login` (grok.com OAuth) → ~/.grok/. Subscription channel;
+            // the metered xAI API key path is the separate `grok` TYPE on the
+            // superagent backend, not this CLI engine.
+            self::TYPE_BUILTIN,
         ],
     ];
 
