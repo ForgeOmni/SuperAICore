@@ -107,6 +107,7 @@ class BackendRegistry
                 $config['kimi_cli']['timeout'] ?? 300,
                 $config['kimi_cli']['max_steps_per_turn'] ?? 500,
                 $logger,
+                $config['kimi_cli']['variant'] ?? KimiCliBackend::VARIANT_AUTO,
             ));
         }
         // QwenLM/qwen-code v0.16.0 (2026-05-21). Default model qwen3.7-max

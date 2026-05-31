@@ -311,3 +311,47 @@ tests/Unit/ProviderTypeRegistryTest.php        (M)  fixture 跟随
 ```
 
 Total:9 个新文件 + 12 个修改 = **21 个文件变动**。全套测试 **453/453 绿**(56 用例为 Kimi 新增)。
+
+---
+
+## 8. kimi-cli → kimi-code 过渡:双 CLI 支持
+
+**日期**:2026-05-31 · **触发**:Moonshot 发布 [`@moonshot-ai/kimi-code`](https://github.com/MoonshotAI/kimi-code)(v0.6.0,TypeScript 重写)**取代**旧的 `MoonshotAI/kimi-cli`(Python,≤ v1.38.x)。两者**发布同一个 `kimi` binary**,但 headless 接口与 stream-json 形状**不兼容**。本次让 `KimiCliBackend` 在过渡期**同时支持两种 CLI**,保持稳定。
+
+### 8.1 两种 dialect 的差异(核对 kimi-code v0.6.0 源码)
+
+| 维度 | legacy `kimi-cli`(`--print`) | new `kimi-code`(`--prompt`) |
+| --- | --- | --- |
+| 触发 headless | `--print`(布尔,隐式 `--yolo`) | 传 `--prompt` 即进入 print 模式 |
+| 自动批准 | `--print` 隐式 yolo | print 模式天然非交互;`--prompt` **不可**与 `--yolo`/`--auto`/`--plan` 同用(会报错) |
+| 输出格式 | `--output-format=stream-json` | `--output-format <text\|stream-json>`(仅 prompt 模式有效) |
+| 步数上限 | `--max-steps-per-turn <N>` | **无此 flag**(config.toml 驱动) |
+| 每次运行 MCP | `--mcp-config-file <path>` | **无此 flag**(MCP 由 config.toml / skills 驱动) |
+| 工作目录 | `-w <dir>` | **无此 flag**(用进程 cwd) |
+| 未知选项 | 容忍 | **硬拒绝**(`allowUnknownOption(false)`)—— 旧命令打到新 CLI 会直接报错退出 |
+| assistant `content` | typed block 数组(`text`/`think`) | **纯字符串** |
+| resume 提示 | stderr | NDJSON 行 `{"role":"meta","type":"session.resume_hint",…}` |
+
+### 8.2 实现
+
+- **`KimiCliBackend::VARIANT_LEGACY` / `VARIANT_CODE` / `VARIANT_AUTO`** —— 构造函数新增 `$variant`(默认 `auto`)。
+- **探测**:`auto` 时跑一次 `kimi --help`(无 auth / 无网络,commander 在 action 前就退出),按是否出现 `--print` flag 区分(legacy 有、kimi-code 没有);结果**按 binary 缓存**,每进程每 binary 至多探一次。探测失败 → 默认 `kimi-code`(它是向前替代品)。纯分类器 `classifyVariantFromHelp()` 无 I/O,便于单测。
+- **四处命令构造按 dialect 分支**:`buildCommand`(generate/stream)、`prepareScriptedProcess`、`streamChat`、以及 stream 的 commandSummary 展示串。
+- **`parseStreamJson` / `extractAssistantText` 兼容两种形状**:`content` 为字符串(kimi-code)或 block 数组(legacy)都能抽取文本;`role:meta` resume 提示不计入文本。即便探测判错,解析仍稳。
+- **配置**:`config/super-ai-core.php` 的 `kimi_cli.variant`(env `AI_CORE_KIMI_CLI_VARIANT`,默认 `auto`;可固定为 `kimi-code` / `kimi-cli`),由 `BackendRegistry` 透传进构造函数。
+
+### 8.3 过渡期建议
+
+- 默认 `auto` 对绝大多数装机即开即用。
+- 若运维想避免每进程的 `--help` 探测,或想锁定某一 dialect,设 `AI_CORE_KIMI_CLI_VARIANT=kimi-code`(已升级)或 `=kimi-cli`(仍在旧版)。
+- kimi-code 没有 `--mcp-config-file`:`mcp_config_file` 选项在 kimi-code 下静默忽略(并打 debug 日志),MCP 改由 `~/.kimi/config.toml` / skills 配置。
+- `kimi_cli` 这个 **Dispatcher backend id 不变**(向后兼容),变的只是底层调用的 CLI dialect。
+
+### 8.4 测试
+
+`tests/Unit/KimiCliBackendTest.php` 扩到 **21 用例**:legacy 命令形状、kimi-code 命令形状(断言不含 `--print`/`--max-steps-per-turn`/`--yolo`/`-w`)、分类器(含"`--print` 子串不误判")、两种 stream-json 形状解析(字符串 content + `role:meta` 行)。全绿。
+
+### 8.5 本次范围 / 已知后续
+
+- **覆盖**:one-shot / streaming / scripted-spawn / streamChat 四条 dispatch 路径,以及 `EngineCatalog` 的 `kimi` `ProcessSpec` 声明形状(随 kimi-code 默认前移,版本探测对两者通用)。
+- **暂未覆盖(独立后续)**:`KimiAgentSync` 仍按 legacy `~/.kimi/agents/<ns>/<name>/`(`agent.yaml` + `system.md`)布局写文件,`KimiSyncCommand` 打的调用提示仍是 legacy 的 `kimi --agent-file … --print …`。kimi-code 的 agent/skill 发现机制不同(`.agents/` + `--skills-dir`,无 `--agent-file`),做到 kimi-code agent-sync 平价是一项独立特性,需单独调研其 agent 文件布局后再开。dispatch 层(用户本次诉求"同时支持两种 CLI")已完整覆盖。

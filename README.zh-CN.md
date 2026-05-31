@@ -25,6 +25,7 @@
   - [opencode 借鉴特性波次（0.9.7 / SDK 1.0.5）](#opencode-借鉴特性波次097--sdk-105)
   - [Qwen + 追踪 + 9Router 波次（0.9.8）](#qwen--追踪--9router-波次098)
   - [Opus 4.8 + Grok + Cursor 波次（1.0.0 / SDK 1.0.9）](#opus-48--grok--cursor-波次100--sdk-109)
+  - [kimi-cli + kimi-code 双轨波次（1.0.2 / SDK 1.0.10）](#kimi-cli--kimi-code-双轨波次102--sdk-1010)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -496,6 +497,41 @@ options 暴露），以及 `qwen-anthropic` SDK provider（新的
 路由 combo CRUD、多账号上线流程、OAuth 刷新排程、会话分支 fork、
 gh-watch 表结构、SDK 1.0.6 接线）见
 [docs/advanced-usage.zh-CN.md §30](docs/advanced-usage.zh-CN.md)。
+
+### kimi-cli + kimi-code 双轨波次（1.0.2 / SDK 1.0.10）
+
+Moonshot 发布了 `@moonshot-ai/kimi-code`（TypeScript 重写）来**取代**旧的 Python
+`MoonshotAI/kimi-cli`。两者发布**同一个 `kimi` binary**，但 headless 接口不兼容，
+因此 1.0.2 让 `kimi_cli` 后端**同时支持两种 CLI**跨过过渡期 —— 并把 SDK 约束提到
+`^1.0.10`。纯增量 —— 无 schema 变更、无迁移、无需 config publish；`kimi_cli` 这个
+Dispatcher backend id 不变。
+
+- **双 dialect 的 `kimi_cli` 后端**（1.0.2）—— `KimiCliBackend` 通过一次性、按
+  binary 缓存的 `kimi --help` 探测自动判别装的是哪一种（legacy 有 `--print` flag，
+  kimi-code 没有），并在全部四条 spawn 路径上适配 argv。legacy 保持
+  `--print --output-format=stream-json --max-steps-per-turn N [--mcp-config-file F]
+  --prompt …`；kimi-code 用 `--prompt` 触发 print 模式 —— 无 `--print`/`--yolo`，
+  也无 `--max-steps-per-turn` / `--mcp-config-file` / `-w`（由 config.toml 驱动，
+  未知选项硬拒绝）。用 `AI_CORE_KIMI_CLI_VARIANT`（默认 `auto` / `kimi-code` /
+  `kimi-cli`）可固定 dialect。
+- **stream-json 解析兼容两种形状**（1.0.2）—— 解析器同时接受两种线上形状:assistant
+  `content` 为纯字符串（kimi-code）或 typed `text`/`think` block 数组（legacy），
+  并把新的 `{"role":"meta","type":"session.resume_hint",…}` 行当作 trace。即便探测
+  判错也稳。
+- **SDK `^1.0.9` → `^1.0.10`**（1.0.2）—— Kimi/Moonshot HTTP 路径加固，泛化到每一个
+  OpenAI 兼容 provider，并透明地惠及 `superagent` 后端:恢复流式 `usage` 计量
+  （`stream_options.include_usage` —— 流式 `kimi` / `qwen` / `glm` / `deepseek` /
+  `grok` / `openrouter` / `openai` 调用的 token/成本/缓存不再被静默清零）、严格的
+  工具 schema 归一化（MCP / Skill / Agent 工具能过 Moonshot 校验器）、Kimi 推理模型
+  改用 `max_completion_tokens`、按模型的能力发现。新增 opt-in
+  `SUPERAGENT_KIMI_SWARM_ENABLED` 开关。
+- **不变的各处入口**（1.0.2）—— `kimi_cli` backend id、`/providers` 引擎卡片、模型
+  选择器、`cli:status`、成本仪表盘、进程监视器都无需改动;变的只是底层 CLI dialect。
+  （kimi-code `.agents/` 模型的 agent-sync 平价是一项已记录的后续。）
+
+完整菜谱（变体探测 + 覆盖、kimi-cli/kimi-code flag 对照、SDK 1.0.10 透明修复）见
+[docs/advanced-usage.zh-CN.md §31](docs/advanced-usage.zh-CN.md) 与
+`docs/kimi-cli-backend.md` §8。
 
 ### Opus 4.8 + Grok + Cursor 波次（1.0.0 / SDK 1.0.9）
 

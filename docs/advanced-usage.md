@@ -38,6 +38,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 28. [Squad multi-agent + SDK 1.0.0 companion bindings (0.9.6)](#28-squad-multi-agent--sdk-100-companion-bindings-096)
 29. [SDK 1.0.5 bump + opencode-borrowed feature wave (0.9.7)](#29-sdk-105-bump--opencode-borrowed-feature-wave-097)
 30. [Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#30-opus-48--grok--cursor-100--sdk-109)
+31. [kimi-cli + kimi-code dual-CLI support (1.0.2 / SDK 1.0.10)](#31-kimi-cli--kimi-code-dual-cli-support-102--sdk-1010)
 
 ---
 
@@ -3228,6 +3229,87 @@ resolvers feed everything, both CLIs auto-appear in: the `/providers` UI
 badges), model pickers (`modelOptions('cursor')` / `modelOptions('grok')`),
 `cli:status`, the cost dashboard (under "Subscription engines", $0 rows),
 the Process Monitor (live rows + scan keywords), and `McpManager` sync.
+
+---
+
+## 31. kimi-cli + kimi-code dual-CLI support (1.0.2 / SDK 1.0.10)
+
+Moonshot's new `@moonshot-ai/kimi-code` (TypeScript) replaces the legacy Python
+`MoonshotAI/kimi-cli`. Both publish the same `kimi` binary but expose an
+incompatible headless surface, so the `kimi_cli` backend now detects which is
+installed and adapts. The pin also moves SDK `^1.0.9` → `^1.0.10`. Additive —
+no schema changes, no config publish; the `kimi_cli` Dispatcher backend id is
+unchanged.
+
+### 31.1 Variant detection + override
+
+`KimiCliBackend` resolves the dialect once per binary (cached) via a one-shot
+`kimi --help` probe — the legacy CLI advertises a `--print` flag, kimi-code
+does not. Pin it to skip probing during the transition:
+
+```php
+// config/super-ai-core.php — backends.kimi_cli.variant
+'variant' => env('AI_CORE_KIMI_CLI_VARIANT', 'auto'),  // auto | kimi-code | kimi-cli
+```
+
+```bash
+AI_CORE_KIMI_CLI_VARIANT=kimi-code   # force the new CLI (already upgraded)
+AI_CORE_KIMI_CLI_VARIANT=kimi-cli    # force the legacy CLI (still on Python)
+AI_CORE_KIMI_CLI_VARIANT=auto        # default: probe `kimi --help`
+```
+
+Dispatch is identical either way — the backend id never changes:
+
+```php
+app(\SuperAICore\Dispatcher::class)->dispatch([
+    'prompt'  => $task,
+    'backend' => 'kimi_cli',
+    'model'   => 'kimi-k2-turbo',   // optional; --model on both dialects
+]);
+```
+
+### 31.2 The flag matrix (why detection is needed)
+
+| | legacy `kimi-cli` (`--print`) | new `kimi-code` (`--prompt`) |
+|---|---|---|
+| Headless trigger | `--print` (boolean, implies yolo) | `--prompt` (print mode) |
+| Output format | `--output-format=stream-json` | `--output-format stream-json` |
+| Step cap | `--max-steps-per-turn N` | — (config.toml) |
+| Per-run MCP | `--mcp-config-file F` | — (config.toml) |
+| Work dir | `-w <dir>` | — (process cwd) |
+| Unknown options | tolerated | hard-rejected |
+| assistant `content` | block array (`text` / `think`) | plain string |
+| resume hint | stderr | `{"role":"meta",…}` NDJSON line |
+
+The parser is tolerant of both `content` shapes and ignores the kimi-code
+`role:meta` resume line, so it stays correct even if detection guesses wrong.
+The legacy command sent to kimi-code would be rejected outright (unknown
+`--print`), which is exactly why the backend adapts argv per dialect. kimi-code
+has no per-run `--mcp-config-file` flag, so a passed `mcp_config_file` is
+silently dropped (MCP is config.toml-driven there).
+
+### 31.3 SDK 1.0.10 — transparent Kimi/OpenAI-compatible fixes
+
+The pin to `^1.0.10` reaches the `superagent` backend with no SuperAICore code
+change. The direct-HTTP `kimi` / `qwen` / `glm` / `deepseek` / `grok` /
+`openrouter` / `openai` provider types now get:
+
+- **Streaming usage accounting** — `stream_options.include_usage` is sent, so
+  streamed responses carry a `usage` block again. Before, streamed calls through
+  these types recorded $0 token/cost/cache on `ai_usage` rows and the
+  `/providers` dashboard.
+- **Strict tool-schema normalization** — local `$ref`/`$defs` are inlined and
+  typeless enum-only properties get a `type`, so MCP / Skill / Agent tools
+  survive Moonshot's validator.
+- **`max_completion_tokens`** for Kimi reasoning models (no more empty answers
+  when the reasoning channel eats the budget) + `reasoning_content` round-trip.
+- **Per-model capability discovery** — `thinking` / `vision` / `tools` /
+  `structured_output` flags read from the provider's `/models` response feed
+  capability routing.
+- **`SUPERAGENT_KIMI_SWARM_ENABLED`** (new, opt-in) — the speculative Kimi
+  Agent-Swarm REST tool is gated off by default.
+
+Design notes for the dual-CLI backend live in `docs/kimi-cli-backend.md` §8.
 
 ---
 

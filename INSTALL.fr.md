@@ -1209,6 +1209,36 @@ Voir [docs/advanced-usage.fr.md §30](docs/advanced-usage.fr.md) pour la recette
 d'onboarding des CLI Cursor / Grok, le routage Opus 4.8, et la séparation des
 canaux API-vs-CLI de Grok.
 
+**1.0.2 — transition kimi-cli → kimi-code ; aucune migration ; pin SDK passe à
+`^1.0.10`.** Additif partout — aucun changement de schéma, aucun publish de
+config requis. Deux choses à savoir :
+
+1. **Le backend `kimi_cli` supporte désormais les deux CLI kimi.** Le nouveau
+   `@moonshot-ai/kimi-code` (TypeScript) de Moonshot remplace l'ancien
+   `MoonshotAI/kimi-cli` (Python) ; les deux publient le même binaire `kimi`
+   avec une surface headless + forme stream-json incompatibles. `KimiCliBackend`
+   détecte automatiquement lequel est installé (sonde `kimi --help` mise en
+   cache — l'ancien a un flag `--print`, kimi-code non) et adapte l'argv + le
+   parsing sur les quatre chemins de spawn. Épinglez le dialecte avec
+   `AI_CORE_KIMI_CLI_VARIANT` (`auto` par défaut / `kimi-code` / `kimi-cli`)
+   pour éviter la sonde pendant la transition. L'id de backend Dispatcher
+   `kimi_cli`, la carte `/providers` et les sélecteurs de modèle sont inchangés.
+   (La parité agent-sync pour le modèle `.agents/` de kimi-code est un suivi
+   tracé ; `KimiAgentSync` écrit encore l'agencement legacy `~/.kimi/agents/`.)
+2. **Le SDK 1.0.10 durcit le chemin HTTP Kimi — de façon transparente.** Le pin
+   passe `^1.0.9` → `^1.0.10`. Les types de provider HTTP direct `kimi` /
+   `qwen` / `glm` / `deepseek` / `grok` / `openrouter` / `openai` (routés via le
+   backend `superagent`) retrouvent le comptage `usage` en streaming
+   (`stream_options.include_usage` — les appels streamés n'enregistrent plus
+   $0), la normalisation stricte des schémas d'outils, `max_completion_tokens`
+   pour les modèles de raisonnement Kimi, et la découverte de capacités par
+   modèle. Nouveau garde opt-in `SUPERAGENT_KIMI_SWARM_ENABLED`. Rien à défaire
+   — les appelants pré-1.0.2 voient un comportement identique.
+
+Voir [docs/advanced-usage.fr.md §31](docs/advanced-usage.fr.md) et
+`docs/kimi-cli-backend.md` §8 pour la recette de détection de variante et la
+matrice des flags kimi-cli/kimi-code.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

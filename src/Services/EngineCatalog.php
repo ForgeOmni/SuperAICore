@@ -530,15 +530,22 @@ class EngineCatalog
                 'available_models'    => [
                     'kimi-code/kimi-for-coding',
                 ],
+                // Declarative shape for the `/providers` engine-info readout
+                // and the host-convenience CliProcessBuilderRegistry — NOT
+                // the real dispatch path. Actual prompts go through the
+                // variant-aware KimiCliBackend, which adapts argv to whichever
+                // `kimi` is installed (legacy kimi-cli `--print` vs new
+                // kimi-code `--prompt`). This spec tracks the new kimi-code
+                // default; `--version` probes work on both dialects.
                 'process_spec' => new ProcessSpec(
                     binary:           'kimi',
                     versionArgs:      ['--version'],
-                    // `kimi login` / `kimi logout` manage auth; the state
-                    // lives in ~/.kimi/ — CliStatusDetector probes the
-                    // directory rather than invoking a subcommand. Leaving
-                    // authStatusArgs null skips the default probe.
+                    // `/login` (kimi-code) / `kimi login` (legacy) manage
+                    // auth; state lives in ~/.kimi/ — CliStatusDetector probes
+                    // the directory rather than a subcommand. Null skips the
+                    // default probe.
                     authStatusArgs:   null,
-                    promptFlag:       '--print',
+                    promptFlag:       '--prompt',
                     outputFormatFlag: '--output-format=stream-json',
                     modelFlag:        '--model',
                 ),

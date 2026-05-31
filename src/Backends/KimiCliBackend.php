@@ -13,37 +13,43 @@ use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 
 /**
- * Spawns Moonshot AI's `kimi` CLI (MoonshotAI/kimi-cli) in headless mode.
+ * Spawns Moonshot AI's `kimi` CLI in headless mode — across BOTH the
+ * legacy `MoonshotAI/kimi-cli` and the new `@moonshot-ai/kimi-code` that
+ * replaces it. Both publish the same `kimi` binary, so during the
+ * transition a host may have either one installed; this backend probes
+ * which dialect is present and adapts its argv + stream-json parsing.
  *
- * Authentication model (MVP-1): only `moonshot-builtin` — `kimi login`
- * has already populated `~/.kimi/credentials/kimi-code.json` with the
- * OAuth token. No env injection, same as Claude / Gemini / Kiro builtin.
+ * Authentication model: only `moonshot-builtin` — `kimi login` (legacy) or
+ * `/login` inside `kimi` (kimi-code) has already populated `~/.kimi/…` with
+ * the OAuth token. No env injection, same as Claude / Gemini / Kiro builtin.
  * A direct-HTTP `api_key` channel against api.moonshot.ai is intentionally
  * NOT exposed here — that path routes through the `superagent` backend
  * via the SDK's KimiProvider under separate provider types.
  *
- * Headless surface (verified against kimi v1.38.0, 2026-04-22):
+ * ── Headless surface, legacy kimi-cli (verified against kimi v1.38.0) ──
  *   - `--print` is a boolean flag (no value); implicitly enables `--yolo`
  *   - `--output-format stream-json` → NDJSON on stdout, one line per event
  *   - `--prompt "..."` (or `-p`) delivers the user message
  *   - `--work-dir <dir>` (`-w`) overrides cwd independently of env
  *   - `--max-steps-per-turn <N>` caps the agentic loop (default 500)
  *   - `--mcp-config-file <path>` repeatable, per-run MCP injection
+ *   - assistant `content` is an ARRAY of typed blocks (`text` / `think`)
+ *   - resume hint goes to stderr (does not pollute the NDJSON stream)
  *
- * Stream-json event shapes (three observed on a Shell tool-use turn):
- *   1. `{"role":"assistant","content":[{"type":"think","think":"..."},
- *        {"type":"text","text":"..."}], "tool_calls":[{ "type":"function",
- *        "id":"tool_XXX","function":{"name":"Shell","arguments":"{...}"}}]}`
- *   2. `{"role":"tool","content":[{"type":"text","text":"..."}],
- *        "tool_call_id":"tool_XXX"}`
- *   3. `{"role":"assistant","content":[{"type":"text","text":"final"}]}`
+ * ── Headless surface, new kimi-code (verified against v0.6.0) ──
+ *   - NO `--print`: print mode is triggered by passing `--prompt`; unknown
+ *     options are hard-rejected, and `--yolo`/`--auto`/`--plan` may NOT be
+ *     combined with `--prompt` (print mode is non-interactive by nature)
+ *   - `--output-format <text|stream-json>` (only valid in prompt mode)
+ *   - NO `--max-steps-per-turn`, NO per-run `--mcp-config-file`, NO `-w`
+ *     (the step budget and MCP servers are config.toml-driven; cwd is the
+ *     process cwd)
+ *   - assistant `content` is a plain STRING; a `{"role":"meta",
+ *     "type":"session.resume_hint", …}` NDJSON line carries the resume hint
  *
- * **Usage is NOT reported** in stream-json. We emit zero token counts in
- * the envelope; `CostCalculator` treats Kimi as subscription-billed and
- * returns $0. A char-count shadow-cost estimator is an MVP-2 follow-up.
- *
- * The resume-session hint (`To resume this session: kimi -r <uuid>`) is
- * emitted on stderr, not stdout — it does not pollute the NDJSON stream.
+ * **Usage is NOT reported** in stream-json (either dialect). We emit zero
+ * token counts in the envelope; `CostCalculator` treats Kimi as
+ * subscription-billed and returns $0.
  */
 class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
@@ -51,11 +57,34 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     use BuildsScriptedProcess;
     use LargeArgvSafeSpawn;
 
+    /** Legacy MoonshotAI/kimi-cli (≤ v1.x): headless via `--print`. */
+    public const VARIANT_LEGACY = 'kimi-cli';
+
+    /** New @moonshot-ai/kimi-code (≥ v0.6): headless via `--prompt`. */
+    public const VARIANT_CODE = 'kimi-code';
+
+    /** Probe the installed `kimi` binary and pick the dialect at runtime. */
+    public const VARIANT_AUTO = 'auto';
+
+    /**
+     * Detected variants keyed by resolved binary string, so the one-shot
+     * `--help` probe runs at most once per binary per process.
+     *
+     * @var array<string,string>
+     */
+    protected static array $variantCache = [];
+
+    /**
+     * @param  string  $variant  One of `VARIANT_LEGACY` / `VARIANT_CODE` to
+     *                           pin a dialect, or `VARIANT_AUTO` (default) to
+     *                           detect it from the installed binary.
+     */
     public function __construct(
         protected string $binary = 'kimi',
         protected int $timeout = 300,
         protected int $maxStepsPerTurn = 500,
         protected ?LoggerInterface $logger = null,
+        protected string $variant = self::VARIANT_AUTO,
     ) {}
 
     public function name(): string
@@ -142,10 +171,12 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
                 ?? $providerConfig['model']
                 ?? 'kimi-code/kimi-for-coding';
 
+            $printFlag = $this->resolveVariant() === self::VARIANT_LEGACY ? '--print ' : '';
+
             $result = $this->runStreaming(
                 process:         $process,
                 backend:         $this->name(),
-                commandSummary:  $this->binary . ' --print --output-format=stream-json -p' . ($model ? " --model {$model}" : ''),
+                commandSummary:  $this->binary . " {$printFlag}--output-format=stream-json -p" . ($model ? " --model {$model}" : ''),
                 logFile:         $options['log_file']    ?? null,
                 timeout:         $options['timeout']     ?? null,
                 idleTimeout:     $options['idle_timeout'] ?? null,
@@ -180,13 +211,110 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     }
 
     /**
-     * Assemble the argv for one headless invocation.
+     * Resolve which CLI dialect to target. An explicit constructor/config
+     * variant wins; `auto` probes the installed binary once (cached).
+     *
+     * @return string  VARIANT_LEGACY | VARIANT_CODE
+     */
+    public function resolveVariant(): string
+    {
+        if ($this->variant === self::VARIANT_LEGACY || $this->variant === self::VARIANT_CODE) {
+            return $this->variant;
+        }
+        return $this->detectVariant();
+    }
+
+    /**
+     * One-shot `--help` probe to tell legacy kimi-cli (which advertises a
+     * `--print` flag) apart from the new kimi-code (no `--print`; headless
+     * mode is `--prompt`-driven). Result is cached per binary for the
+     * process lifetime. On an unreadable/failed probe we default to the new
+     * kimi-code dialect — it is the going-forward replacement.
+     */
+    protected function detectVariant(): string
+    {
+        if (array_key_exists($this->binary, self::$variantCache)) {
+            return self::$variantCache[$this->binary];
+        }
+
+        $variant = self::VARIANT_CODE;
+        try {
+            $probe = new Process([$this->binary, '--help']);
+            $probe->setTimeout(10);
+            $probe->run();
+            $help = $probe->getOutput() . "\n" . $probe->getErrorOutput();
+            if (trim($help) !== '') {
+                $variant = self::classifyVariantFromHelp($help);
+            } elseif ($this->logger) {
+                $this->logger->debug('KimiCliBackend: empty --help probe output, assuming kimi-code.');
+            }
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->debug("KimiCliBackend: variant probe failed, assuming kimi-code: {$e->getMessage()}");
+            }
+        }
+
+        return self::$variantCache[$this->binary] = $variant;
+    }
+
+    /**
+     * Pure classifier (no I/O) so it can be unit-tested against captured
+     * `--help` text. Legacy kimi-cli exposes a `--print` flag; kimi-code
+     * does not (its headless surface is `--prompt` + `--output-format`), so
+     * `--print` is the stable discriminator.
+     *
+     * @return string  VARIANT_LEGACY | VARIANT_CODE
+     */
+    public static function classifyVariantFromHelp(string $help): string
+    {
+        return preg_match('/(^|\s)--print\b/', $help) === 1
+            ? self::VARIANT_LEGACY
+            : self::VARIANT_CODE;
+    }
+
+    /** Reset the per-binary variant cache (test seam / hot-reload). */
+    public static function forgetVariantCache(): void
+    {
+        self::$variantCache = [];
+    }
+
+    /**
+     * Assemble the argv for one headless invocation, dispatching on the
+     * detected CLI dialect.
      *
      * @param  array<string,mixed> $options
      * @param  array<string,mixed> $providerConfig
      * @return list<string>
      */
     protected function buildCommand(array $options, array $providerConfig, string $prompt): array
+    {
+        $model = $options['model'] ?? $providerConfig['model'] ?? null;
+        $model = ($model !== null && $model !== '') ? (string) $model : null;
+
+        if ($this->resolveVariant() === self::VARIANT_LEGACY) {
+            return $this->buildLegacyCommand($options, $prompt, $model);
+        }
+
+        if ($this->logger && !empty($options['mcp_config_file'])) {
+            $this->logger->debug(
+                'KimiCliBackend: kimi-code has no --mcp-config-file flag; '
+                . 'MCP servers are config.toml-driven. Ignoring mcp_config_file.',
+            );
+        }
+
+        return $this->buildKimiCodeCommand($prompt, $model);
+    }
+
+    /**
+     * Legacy MoonshotAI/kimi-cli (verified against kimi v1.38.0): `--print`
+     * triggers headless mode, with `--max-steps-per-turn` and per-run
+     * `--mcp-config-file`. Long-form `--prompt` keeps the command readable in
+     * logs + Process Monitor.
+     *
+     * @param  array<string,mixed> $options
+     * @return list<string>
+     */
+    protected function buildLegacyCommand(array $options, string $prompt, ?string $model): array
     {
         $cmd = [
             $this->binary,
@@ -195,10 +323,9 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             '--max-steps-per-turn', (string) ($options['max_steps_per_turn'] ?? $this->maxStepsPerTurn),
         ];
 
-        $model = $options['model'] ?? $providerConfig['model'] ?? null;
-        if ($model !== null && $model !== '') {
+        if ($model !== null) {
             $cmd[] = '--model';
-            $cmd[] = (string) $model;
+            $cmd[] = $model;
         }
 
         $mcpConfigFile = $options['mcp_config_file'] ?? null;
@@ -207,10 +334,33 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             $cmd[] = $mcpConfigFile;
         }
 
-        // Kimi's prompt flag is `--prompt` / `-p` / `-c`. Long form keeps
-        // the command readable in logs + Process Monitor.
         $cmd[] = '--prompt';
         $cmd[] = $prompt;
+
+        return $cmd;
+    }
+
+    /**
+     * New @moonshot-ai/kimi-code (v0.6+): print mode is triggered by
+     * `--prompt` alone — `--print` is gone, and `--yolo`/`--auto`/`--plan`
+     * are rejected alongside `--prompt`. There is no `--max-steps-per-turn`
+     * or per-run `--mcp-config-file` flag (both config.toml-driven), and
+     * unknown options are hard-rejected, so we send only the supported subset.
+     *
+     * @return list<string>
+     */
+    protected function buildKimiCodeCommand(string $prompt, ?string $model): array
+    {
+        $cmd = [
+            $this->binary,
+            '--prompt', $prompt,
+            '--output-format', 'stream-json',
+        ];
+
+        if ($model !== null) {
+            $cmd[] = '--model';
+            $cmd[] = $model;
+        }
 
         return $cmd;
     }
@@ -219,12 +369,15 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
      * Parse Kimi's NDJSON stream into a single envelope.
      *
      * Walks every line, ignoring non-JSON lines (Kimi occasionally emits a
-     * trailing blank line). Concatenates `text` blocks from `role=assistant`
-     * messages, picking the LAST assistant message as the authoritative
-     * answer — mid-run assistant turns often carry partial text or tool-
-     * request narration which isn't the final response. Tool execution
-     * results (`role=tool`) are captured only as a trace and not folded
-     * into `text`. Public for unit testing.
+     * trailing blank line). Concatenates the user-visible text from
+     * `role=assistant` messages, picking the LAST assistant message as the
+     * authoritative answer — mid-run assistant turns often carry partial text
+     * or tool-request narration which isn't the final response. Tool results
+     * (`role=tool`) and the kimi-code resume hint (`role=meta`) are captured
+     * only as a trace and not folded into `text`. Public for unit testing.
+     *
+     * Tolerant of BOTH stream-json dialects: legacy kimi-cli puts `content`
+     * as an array of typed blocks; kimi-code puts it as a plain string.
      *
      * @return array{text:string, turns:int, tool_calls:int}
      */
@@ -243,13 +396,7 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 
             if ($event['role'] === 'assistant') {
                 $turns++;
-                $turnText = '';
-                foreach ((array) ($event['content'] ?? []) as $block) {
-                    if (!is_array($block)) continue;
-                    if (($block['type'] ?? null) === 'text' && isset($block['text'])) {
-                        $turnText .= (string) $block['text'];
-                    }
-                }
+                $turnText = $this->extractAssistantText($event['content'] ?? null);
                 // Last assistant wins — replaces earlier partial text.
                 if ($turnText !== '') {
                     $text = $turnText;
@@ -265,6 +412,31 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             'turns'      => $turns,
             'tool_calls' => $toolCalls,
         ];
+    }
+
+    /**
+     * Pull the user-visible assistant text out of one message's `content`,
+     * accepting both wire shapes seen across the CLI transition:
+     *   - kimi-code (≥0.6): `content` is a plain string.
+     *   - kimi-cli (legacy): `content` is an array of typed blocks; only
+     *     `type=text` blocks surface (CoT `type=think` stays internal).
+     */
+    protected function extractAssistantText(mixed $content): string
+    {
+        if (is_string($content)) {
+            return $content;
+        }
+        if (!is_array($content)) {
+            return '';
+        }
+        $text = '';
+        foreach ($content as $block) {
+            if (!is_array($block)) continue;
+            if (($block['type'] ?? null) === 'text' && isset($block['text'])) {
+                $text .= (string) $block['text'];
+            }
+        }
+        return $text;
     }
 
     /**
@@ -299,7 +471,13 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             throw new \RuntimeException("Kimi: cannot read prompt file {$promptFile}");
         }
 
-        $flags = ['--print', '--output-format', 'stream-json', '-w', $projectRoot, '--prompt', $promptText];
+        if ($this->resolveVariant() === self::VARIANT_LEGACY) {
+            $flags = ['--print', '--output-format', 'stream-json', '-w', $projectRoot, '--prompt', $promptText];
+        } else {
+            // kimi-code: print mode is `--prompt`-driven; there is no `-w`
+            // flag, but buildWrappedProcess already cd's into $projectRoot.
+            $flags = ['--prompt', $promptText, '--output-format', 'stream-json'];
+        }
         if (!empty($options['model'])) {
             $flags[] = '--model';
             $flags[] = (string) $options['model'];
@@ -325,7 +503,11 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     public function streamChat(string $prompt, callable $onChunk, array $options = []): string
     {
         $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_KIMI);
-        $args = [$cliPath, '--print', '--output-format', 'stream-json', '--prompt', $prompt];
+        if ($this->resolveVariant() === self::VARIANT_LEGACY) {
+            $args = [$cliPath, '--print', '--output-format', 'stream-json', '--prompt', $prompt];
+        } else {
+            $args = [$cliPath, '--prompt', $prompt, '--output-format', 'stream-json'];
+        }
         if (!empty($options['model'])) {
             $args[] = '--model';
             $args[] = (string) $options['model'];
@@ -349,11 +531,12 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
                 $event = json_decode($line, true);
                 if (!is_array($event)) continue;
                 if (($event['role'] ?? '') === 'assistant') {
-                    foreach ((array) ($event['content'] ?? []) as $block) {
-                        if (($block['type'] ?? '') === 'text' && is_string($block['text'] ?? null)) {
-                            $fullResponse .= $block['text'];
-                            $onChunk($block['text']);
-                        }
+                    // Tolerant of both dialects: kimi-code emits `content` as a
+                    // string (one flushed step), legacy as a block array.
+                    $chunk = $this->extractAssistantText($event['content'] ?? null);
+                    if ($chunk !== '') {
+                        $fullResponse .= $chunk;
+                        $onChunk($chunk);
                     }
                 }
             }

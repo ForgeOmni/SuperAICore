@@ -1167,6 +1167,34 @@ See [docs/advanced-usage.md §30](docs/advanced-usage.md) for the Cursor /
 Grok CLI onboarding recipe, Opus 4.8 routing, and the Grok API-vs-CLI
 channel split.
 
+**1.0.2 — kimi-cli → kimi-code transition; no migration; SDK pin moves to
+`^1.0.10`.** Additive across the board — no schema changes, no config publish
+required. Two things worth knowing:
+
+1. **The `kimi_cli` backend now supports both kimi CLIs.** Moonshot's new
+   `@moonshot-ai/kimi-code` (TypeScript) replaces the legacy Python
+   `MoonshotAI/kimi-cli`; both publish the same `kimi` binary with an
+   incompatible headless surface + stream-json shape. `KimiCliBackend`
+   auto-detects which is installed (a cached `kimi --help` probe — legacy has a
+   `--print` flag, kimi-code doesn't) and adapts argv + parsing across all four
+   spawn paths. Pin the dialect with `AI_CORE_KIMI_CLI_VARIANT` (`auto` default
+   / `kimi-code` / `kimi-cli`) to skip probing during the transition. The
+   `kimi_cli` Dispatcher backend id, `/providers` card, and model pickers are
+   unchanged. (Agent-sync for kimi-code's `.agents/` model is a tracked
+   follow-up; `KimiAgentSync` still writes the legacy `~/.kimi/agents/` layout.)
+2. **SDK 1.0.10 hardens the Kimi HTTP path — transparently.** The pin moves
+   `^1.0.9` → `^1.0.10`. The direct-HTTP `kimi` / `qwen` / `glm` / `deepseek` /
+   `grok` / `openrouter` / `openai` provider types (routed through the
+   `superagent` backend) get streaming `usage` accounting back
+   (`stream_options.include_usage` — streamed calls no longer record $0), strict
+   tool-schema normalization, `max_completion_tokens` for Kimi reasoning models,
+   and per-model capability discovery. New opt-in `SUPERAGENT_KIMI_SWARM_ENABLED`
+   gate. Nothing to undo — pre-1.0.2 callers see identical behaviour.
+
+See [docs/advanced-usage.md §31](docs/advanced-usage.md) and
+`docs/kimi-cli-backend.md` §8 for the variant-detection recipe and the
+kimi-cli/kimi-code flag matrix.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

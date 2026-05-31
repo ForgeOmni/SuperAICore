@@ -1142,6 +1142,32 @@ SemVer 稳定（见 `docs/api-stability.md`）。四件值得知道的事：
 Cursor / Grok CLI 上手菜谱、Opus 4.8 路由，以及 Grok API 与 CLI
 通道拆分见 [docs/advanced-usage.zh-CN.md §30](docs/advanced-usage.zh-CN.md)。
 
+**1.0.2 —— kimi-cli → kimi-code 过渡；无迁移；SDK 约束升至 `^1.0.10`。**
+全面增量 —— 无 schema 变更，无需 publish 配置。两件值得知道的事：
+
+1. **`kimi_cli` 后端现在同时支持两种 kimi CLI。** Moonshot 的新
+   `@moonshot-ai/kimi-code`（TypeScript）取代旧的 Python
+   `MoonshotAI/kimi-cli`；两者发布同一个 `kimi` binary，但 headless 接口与
+   stream-json 形状不兼容。`KimiCliBackend` 自动判别装的是哪一种（按 binary
+   缓存的 `kimi --help` 探测 —— legacy 有 `--print` flag，kimi-code 没有），并在
+   全部四条 spawn 路径上适配 argv + 解析。想在过渡期跳过探测，用
+   `AI_CORE_KIMI_CLI_VARIANT`（默认 `auto` / `kimi-code` / `kimi-cli`）固定
+   dialect。`kimi_cli` Dispatcher backend id、`/providers` 卡片、模型选择器均不变。
+   （kimi-code `.agents/` 模型的 agent-sync 是已记录的后续；`KimiAgentSync` 目前仍
+   按 legacy `~/.kimi/agents/` 布局写文件。）
+
+2. **SDK 1.0.10 加固 Kimi HTTP 路径 —— 且透明。** 约束从 `^1.0.9` 升到
+   `^1.0.10`。直连 HTTP 的 `kimi` / `qwen` / `glm` / `deepseek` / `grok` /
+   `openrouter` / `openai` provider type（经 `superagent` 后端路由）拿回流式
+   `usage` 计量（`stream_options.include_usage` —— 流式调用不再记 $0）、严格的
+   工具 schema 归一化、Kimi 推理模型改用 `max_completion_tokens`、按模型的能力
+   发现。新增 opt-in `SUPERAGENT_KIMI_SWARM_ENABLED` 开关。无需回退 —— 1.0.2 之前
+   的调用方行为一致。
+
+变体探测菜谱与 kimi-cli/kimi-code flag 对照见
+[docs/advanced-usage.zh-CN.md §31](docs/advanced-usage.zh-CN.md) 与
+`docs/kimi-cli-backend.md` §8。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

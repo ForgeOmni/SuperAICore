@@ -25,6 +25,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague de fonctionnalités inspirées d'opencode (0.9.7 / SDK 1.0.5)](#vague-de-fonctionnalités-inspirées-dopencode-097--sdk-105)
   - [Vague Qwen + traçage + 9Router (0.9.8)](#vague-qwen--traçage--9router-098)
   - [Vague Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#vague-opus-48--grok--cursor-100--sdk-109)
+  - [Vague kimi-cli + kimi-code (1.0.2 / SDK 1.0.10)](#vague-kimi-cli--kimi-code-102--sdk-1010)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -587,6 +588,51 @@ trace, intégration de client OpenAI proxy, CRUD combo de routing,
 onboarding multi-comptes, planning OAuth refresher, forking de
 session branch, schéma de table gh-watch, câblages SDK 1.0.6) :
 [docs/advanced-usage.fr.md §30](docs/advanced-usage.fr.md).
+
+### Vague kimi-cli + kimi-code (1.0.2 / SDK 1.0.10)
+
+Moonshot a publié `@moonshot-ai/kimi-code` (une réécriture TypeScript) pour
+**remplacer** l'ancien `MoonshotAI/kimi-cli` (Python). Les deux publient le
+**même binaire `kimi`** mais exposent une surface headless incompatible ; la
+1.0.2 fait donc chevaucher la transition au backend `kimi_cli` — et passe le
+pin SDK à `^1.0.10`. Additif — aucun changement de schéma, aucune migration,
+aucun config publish ; l'id de backend Dispatcher `kimi_cli` est inchangé.
+
+- **Backend `kimi_cli` bi-dialecte** *(1.0.2)* — `KimiCliBackend` détecte
+  automatiquement quel `kimi` est installé via une sonde `kimi --help` unique
+  et mise en cache (l'ancien expose un flag `--print` ; kimi-code non) et
+  adapte l'argv sur les quatre chemins de spawn. L'ancien garde
+  `--print --output-format=stream-json --max-steps-per-turn N
+  [--mcp-config-file F] --prompt …` ; kimi-code utilise le mode print déclenché
+  par `--prompt` — pas de `--print`/`--yolo`, ni `--max-steps-per-turn` /
+  `--mcp-config-file` / `-w` (pilotés par config.toml, options inconnues
+  rejetées). Épinglez le dialecte avec `AI_CORE_KIMI_CLI_VARIANT` (`auto` par
+  défaut / `kimi-code` / `kimi-cli`).
+- **Parsing stream-json tolérant** *(1.0.2)* — le parseur accepte les deux
+  formes de fil : `content` assistant en chaîne simple (kimi-code) ou en
+  tableau de blocs typés `text`/`think` (ancien), et traite la nouvelle ligne
+  `{"role":"meta","type":"session.resume_hint",…}` comme trace. Robuste même si
+  la détection se trompe.
+- **SDK `^1.0.9` → `^1.0.10`** *(1.0.2)* — durcissement du chemin HTTP
+  Kimi/Moonshot, généralisé à tout provider compatible OpenAI et atteignant le
+  backend `superagent` de façon transparente : comptage `usage` en streaming
+  restauré (`stream_options.include_usage` — fini les tokens/coûts/cache mis
+  silencieusement à zéro sur les appels streamés `kimi` / `qwen` / `glm` /
+  `deepseek` / `grok` / `openrouter` / `openai`), normalisation stricte des
+  schémas d'outils (les outils MCP / Skill / Agent passent le validateur de
+  Moonshot), `max_completion_tokens` pour les modèles de raisonnement Kimi, et
+  découverte de capacités par modèle. Nouveau garde opt-in
+  `SUPERAGENT_KIMI_SWARM_ENABLED`.
+- **Surfaces inchangées** *(1.0.2)* — l'id de backend `kimi_cli`, la carte
+  moteur `/providers`, les sélecteurs de modèle, `cli:status`, le tableau de
+  bord des coûts et le moniteur de processus n'ont besoin de rien ; seul le
+  dialecte CLI sous-jacent s'adapte. (La parité agent-sync pour le modèle
+  `.agents/` de kimi-code est un suivi tracé.)
+
+Recettes complètes (détection + override de variante, matrice des flags
+kimi-cli/kimi-code, correctifs transparents SDK 1.0.10) :
+[docs/advanced-usage.fr.md §31](docs/advanced-usage.fr.md) et
+`docs/kimi-cli-backend.md` §8.
 
 ### Vague Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)
 

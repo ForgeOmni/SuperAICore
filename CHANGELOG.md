@@ -4,6 +4,137 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-05-31
+
+**`kimi_cli` backend straddles the kimi-cli → kimi-code transition, on SDK
+1.0.10.** Moonshot shipped `@moonshot-ai/kimi-code` (a TypeScript rewrite) to
+replace the legacy Python `MoonshotAI/kimi-cli`; both publish the same `kimi`
+binary but expose an incompatible headless surface + stream-json shape, so a
+host mid-transition may have either. `KimiCliBackend` now probes which dialect
+is installed and adapts its argv + parsing — the `kimi_cli` Dispatcher backend
+id is unchanged, so routing, the `/providers` UI, and callers need nothing.
+Bundled with the SDK pin `^1.0.9` → `^1.0.10` (Kimi/Moonshot HTTP-path
+hardening + generalized OpenAI-compatible fixes, which reach the `superagent`
+backend transparently). Additive across the board — no schema changes, no
+migrations, no config publish. Full Unit suite green save the pre-existing
+`kiro-cli` model-name drift (unrelated; SuperAgent's `resources/models.json` is
+byte-identical between 1.0.9 and 1.0.10).
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+# no migrations, no config publish — additive only
+```
+
+### Added — `kimi_cli` backend supports both legacy `kimi-cli` and the new `kimi-code` (`src/Backends/KimiCliBackend.php`)
+
+Moonshot shipped [`@moonshot-ai/kimi-code`](https://github.com/MoonshotAI/kimi-code)
+(v0.6.0, a TypeScript rewrite) to **replace** the legacy Python
+`MoonshotAI/kimi-cli` (≤ v1.38.x). Both publish the **same `kimi` binary** but
+expose an **incompatible** headless surface and stream-json shape, so during
+the transition a host may have either one installed. `KimiCliBackend` now
+detects which dialect is present and adapts — the `kimi_cli` Dispatcher backend
+id is unchanged, so callers, routing, and the `/providers` UI need no changes.
+
+- **Variant detection** — a new `variant` knob (`VARIANT_AUTO` default /
+  `VARIANT_LEGACY` / `VARIANT_CODE`). `auto` runs a one-shot `kimi --help` probe
+  (no auth, no network — commander prints help and exits before any action) and
+  classifies on the stable discriminator: legacy advertises a `--print` flag,
+  kimi-code does not. The result is cached per binary for the process lifetime;
+  an unreadable probe defaults to kimi-code (the going-forward replacement). The
+  pure classifier `classifyVariantFromHelp()` is unit-tested without spawning.
+- **Per-dialect commands** — all four command-building sites (`generate` /
+  `stream` `buildCommand`, `prepareScriptedProcess`, `streamChat`, and the
+  Process-Monitor command summary) branch on the dialect:
+  - **legacy** keeps `--print --output-format=stream-json --max-steps-per-turn N
+    [--mcp-config-file F] [-w dir] --prompt …` (byte-for-byte as before);
+  - **kimi-code** sends `--prompt … --output-format stream-json [--model M]` —
+    no `--print` (print mode is `--prompt`-triggered), no `--yolo`/`--auto`
+    (rejected alongside `--prompt`), no `--max-steps-per-turn` / `--mcp-config-file`
+    / `-w` (config.toml-driven; cwd comes from the wrapper). kimi-code
+    hard-rejects unknown options, so only its supported subset is sent; a
+    passed `mcp_config_file` is silently dropped (with a debug log).
+- **Tolerant stream-json parser** — `parseStreamJson()` / the new
+  `extractAssistantText()` accept **both** wire shapes: assistant `content` as a
+  plain string (kimi-code) or an array of typed `text`/`think` blocks (legacy).
+  The kimi-code resume hint (`{"role":"meta","type":"session.resume_hint",…}`)
+  is treated as trace and never folded into the answer text. Robust even if
+  detection guesses wrong.
+- **Config** — `config/super-ai-core.php` gains `kimi_cli.variant`
+  (`AI_CORE_KIMI_CLI_VARIANT`, default `auto`; pin `kimi-code` / `kimi-cli` to
+  skip probing during the transition), threaded through `BackendRegistry` into
+  the constructor.
+- **`EngineCatalog`** — the `kimi` engine's declarative `ProcessSpec`
+  (`/providers` engine-info readout + the host-convenience
+  `CliProcessBuilderRegistry`, NOT the real dispatch path) moves its
+  `promptFlag` from `--print` → `--prompt` to track the new kimi-code default.
+  `--version` probing works on both dialects; real prompts always go through
+  the variant-aware backend.
+- **Scope / follow-up** — this covers all four dispatch paths. `KimiAgentSync`
+  still writes the legacy `~/.kimi/agents/<ns>/<name>/` layout (and
+  `KimiSyncCommand` prints the legacy `--agent-file … --print` hint); kimi-code
+  uses a different agent/skill discovery model (`.agents/` + `--skills-dir`),
+  so agent-sync parity is tracked as a separate follow-up (see
+  `docs/kimi-cli-backend.md` §8.5).
+- **Tests** — `tests/Unit/KimiCliBackendTest.php` expands to 21 cases:
+  per-dialect command shape (asserting kimi-code omits `--print` /
+  `--max-steps-per-turn` / `--yolo` / `-w`), the classifier (incl. a
+  `--print`-substring false-match guard), and both stream-json shapes (string
+  `content` + the `role:meta` line). Full suite green save the pre-existing
+  `kiro-cli` drift. Design notes in `docs/kimi-cli-backend.md` §8.
+
+### Changed — SDK pin moves `^1.0.9` → `^1.0.10` (Kimi/Moonshot hardening + generalized OpenAI-compatible fixes)
+
+**SDK uptake only — additive, no schema changes, no migrations, no config
+publish, and zero SuperAICore code changes.** SuperAgent 1.0.10 hardens the
+Kimi (Moonshot) HTTP path against MoonshotAI's official `kimi-code` client and
+generalizes the wire-level fixes to every OpenAI-compatible provider. Because
+the direct-HTTP `kimi` / `qwen` / `glm` / `minimax` / `deepseek` / `grok` /
+`openrouter` / `openai` provider types all route through the `superagent`
+backend into the SDK's shared `ChatCompletionsProvider`, every improvement
+below reaches SuperAICore transparently — the bump is the only change required.
+
+```bash
+composer update forgeomni/superagent
+# no migrations, no config publish — pure SDK uptake
+```
+
+- **Streaming usage accounting restored (every OpenAI-compatible provider).**
+  SDK 1.0.10's `ChatCompletionsProvider` now sends
+  `stream_options: {include_usage: true}` and parses `usage` from either the
+  top-level or `choices[0]` wire location. Without it, streamed responses from
+  Kimi/Qwen/GLM/MiniMax/DeepSeek/Grok/OpenRouter/OpenAI carried **no** usage
+  block — silently zeroing token counts, cached-token accounting, and cost on
+  `ai_usage` rows, the `/providers` cost dashboard, and `CostCalculator`. Any
+  SuperAICore dispatch with `stream: true` through these provider types now
+  records real token/cost/cache figures.
+- **Tool schemas survive Moonshot's strict validator** — the SDK's new shared
+  `Format\JsonSchemaNormalizer` inlines local `$ref`/`$defs` and fills missing
+  `type` keywords on enum-only properties before tool serialization, so MCP /
+  Skill / Agent tools dispatched through the `kimi` provider type are no longer
+  rejected. The deref half is in the shared base, so DeepSeek / GLM / Qwen /
+  Grok / OpenRouter / OpenAI tool-calling benefits too.
+- **Kimi reasoning models stop returning empty answers** — the SDK sends
+  `max_completion_tokens` (not `max_tokens`) and round-trips `reasoning_content`
+  across turns for Kimi, so think → tool-call → think sequences stay coherent
+  and the hidden reasoning channel no longer consumes the whole budget.
+- **Truer capability routing** — SDK 1.0.10's `ModelCatalogRefresher` derives a
+  real per-model capability map (`thinking` / `vision` / `video` / `tools` /
+  `structured_output`) from the provider's `/models` response (Moonshot's
+  `supports_*` flags, OpenRouter's `supported_parameters`), so capability-based
+  routing through `CapabilityRegistry` / the SDK's `CapabilityRouter` sees real
+  per-model signal instead of the provider-level fallback.
+- **`SUPERAGENT_KIMI_SWARM_ENABLED` (new, opt-in).** The SDK's speculative Kimi
+  Agent-Swarm REST tool is now gated off by default — `kimi-code` ships no swarm
+  endpoint (its parallelism comes from local subagents), so the tool returns an
+  actionable error unless a host sets `SUPERAGENT_KIMI_SWARM_ENABLED=1` against
+  a preview/private endpoint. SuperAICore's own `kimi_cli` CLI backend and the
+  `kimi` HTTP provider type are unaffected; no SuperAICore env wiring changed.
+
+Full Unit suite green save the pre-existing `kiro-cli` model-name drift (the
+locally installed Kiro CLI reports a 4.5/4.7 lineup that the bundled 4.6
+fixtures predate — unrelated to this bump; SuperAgent's `resources/models.json`
+is byte-identical between 1.0.9 and 1.0.10).
+
 ## [1.0.1] — 2026-05-29
 
 **Maintenance release — no-SDK fallback fidelity + `phpunit-no-superagent`

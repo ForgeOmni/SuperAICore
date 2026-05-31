@@ -497,6 +497,15 @@ return [
             'enabled' => env('AI_CORE_KIMI_CLI_ENABLED', true),
             'binary' => env('KIMI_CLI_BIN', 'kimi'),
             'timeout' => 300,
+            // CLI dialect. Moonshot's new `@moonshot-ai/kimi-code` replaces
+            // the legacy `MoonshotAI/kimi-cli`, but both publish the same
+            // `kimi` binary with DIFFERENT headless flags + stream-json shape.
+            //   'auto'      — (default) probe `kimi --help` once and adapt
+            //                 (legacy advertises `--print`; kimi-code does not)
+            //   'kimi-code' — force the new dialect (`--prompt`-driven)
+            //   'kimi-cli'  — force the legacy dialect (`--print`-driven)
+            // Pin a value during the transition if probing is undesirable.
+            'variant' => env('AI_CORE_KIMI_CLI_VARIANT', 'auto'),
             // Kimi's agentic loop is capped at max_steps_per_turn (defaults
             // to 500 in ~/.kimi/config.toml). Override here when the host
             // wants a tighter budget for cost control, or higher for long
