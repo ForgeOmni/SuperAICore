@@ -1,0 +1,75 @@
+name: cross-cli-council
+description: >
+  Cross-CLI council. One CLI drafts an answer, three different CLIs each
+  scrutinize it through a distinct lens in parallel, then a chair CLI weighs the
+  votes into a final answer. Perspective diversity comes from running each
+  verifier on a different CLI.
+
+phases:
+  - title: Draft
+  - title: Scrutinize
+  - title: Decide
+
+defaults:
+  backend: claude_cli
+
+schemas:
+  vote:
+    type: object
+    required: [verdict, reason]
+    properties:
+      verdict: { type: string, enum: [pass, fail] }
+      reason: { type: string }
+
+steps:
+  - name: draft
+    phase: Draft
+    role: researcher
+    backend: claude_cli
+    prompt: |
+      Answer the question as completely and accurately as you can:
+      {{args.question}}
+
+  - name: votes
+    phase: Scrutinize
+    strategy: parallel
+    agents:
+      - role: critic
+        backend: codex_cli
+        schema: vote
+        prompt: |
+          Scrutinize this answer for FACTUAL CORRECTNESS. Question: {{args.question}}
+          Answer:
+          {{steps.draft.output}}
+      - role: critic
+        backend: gemini_cli
+        schema: vote
+        prompt: |
+          Scrutinize this answer for COMPLETENESS — what is missing? Question: {{args.question}}
+          Answer:
+          {{steps.draft.output}}
+      - role: critic
+        backend: claude_cli
+        schema: vote
+        prompt: |
+          Scrutinize this answer for INTERNAL CONSISTENCY and clarity. Question: {{args.question}}
+          Answer:
+          {{steps.draft.output}}
+
+  - name: final
+    phase: Decide
+    role: chair
+    backend: claude_cli
+    prompt: |
+      Given the draft answer and the three lens votes, produce the final,
+      corrected answer. Address every failing vote explicitly.
+
+      Question: {{args.question}}
+
+      Draft:
+      {{steps.draft.output}}
+
+      Votes:
+      {{steps.votes.output}}
+
+return: final

@@ -14,6 +14,7 @@ use SuperAICore\Console\Commands\CopilotFleetCommand;
 use SuperAICore\Console\Commands\CopilotSyncCommand;
 use SuperAICore\Console\Commands\CopilotSyncHooksCommand;
 use SuperAICore\Console\Commands\FallbackPolicyCommand;
+use SuperAICore\Console\Commands\FlowCommand;
 use SuperAICore\Console\Commands\GeminiSyncCommand;
 use SuperAICore\Console\Commands\HooksSyncCommand;
 use SuperAICore\Console\Commands\KimiSyncCommand;
@@ -40,7 +41,7 @@ class Application extends SymfonyApplication
 {
     public function __construct()
     {
-        parent::__construct('superaicore', '0.8.6');
+        parent::__construct('superaicore', '1.0.5');
 
         $this->add(new CallCommand());
         $this->add(new ListBackendsCommand());
@@ -69,5 +70,8 @@ class Application extends SymfonyApplication
         $this->add(new SquadCommand());
         $this->add(new AutoCommand());
         $this->add(new TeamCommand());
+        // SmartFlow — cross-CLI dynamic workflows (the multi-CLI port of
+        // Claude Code's built-in Workflow engine).
+        $this->add(new FlowCommand());
     }
 }

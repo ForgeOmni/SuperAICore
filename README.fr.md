@@ -26,6 +26,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague Qwen + traçage + 9Router (0.9.8)](#vague-qwen--traçage--9router-098)
   - [Vague Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#vague-opus-48--grok--cursor-100--sdk-109)
   - [Vague kimi-cli + kimi-code (1.0.2 / SDK 1.0.10)](#vague-kimi-cli--kimi-code-102--sdk-1010)
+  - [Vague workflows cross-CLI SmartFlow (1.0.5 / SDK 1.1.0)](#vague-workflows-cross-cli-smartflow-105--sdk-110)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -100,6 +101,54 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague workflows cross-CLI SmartFlow (1.0.5 / SDK 1.1.0)
+
+Le pin SDK passe à `^1.1.0`. SuperAICore 1.0.5 porte le moteur `Workflow`
+intégré de Claude Code sous le nom **SmartFlow** — workflows dynamiques cross-CLI —
+et le fédère avec le SmartFlow (cross-modèle) propre à superagent. Là où le
+SmartFlow du SDK route un flow à travers les providers de modèles, celui de
+SuperAICore le route à travers les **CLIs/backends** qu'il gère déjà, de sorte que
+différents CLIs collaborent sur une même tâche. Additif et non cassant : le
+Dispatcher, AgentSpawn et les orchestrateurs Squad/Team/Smart/Auto restent
+intacts. Nouveau module `src/SmartFlow/`, nouvelle commande `superaicore flow`,
+nouvelle doc `docs/smartflow.md`.
+
+- **Un flow, plusieurs CLIs** *(1.0.5)* — les mêmes primitives
+  (`agent()` / `parallel()` / `pipeline()` / `gate()` / `council()` / `budget` /
+  `schema` / `SKIP`) pilotent n'importe quel backend enregistré, donc un flow peut
+  planifier sur `claude_cli` et faire relire par `codex_cli` + `gemini_cli` en
+  parallèle. `backend` est le levier cross-CLI sur chaque étape ; les `personas`
+  réutilisables portent le system prompt et peuvent épingler un backend/modèle.
+- **Filet de sécurité structuré à 3 couches** *(1.0.5)* — les CLIs renvoient de la
+  prose, donc un `schema` est intégré au prompt et récupéré via les couches
+  native → bloc balisé ```` ```json ```` → reniflage regex, validé par un
+  `SchemaValidator` sans dépendance ; un échec total produit une sentinelle `SKIP`
+  au lieu d'un crash.
+- **Resume + journal d'appels** *(1.0.5)* — chaque exécution écrit un journal JSONL
+  sous `~/.superaicore/flows` ; `--resume <id>` rejoue le plus long préfixe
+  inchangé depuis le cache à coût nul (signatures adressées par contenu ; les
+  gates restent alignées).
+- **Vrai parallélisme** *(1.0.5)* — les lots `parallel()` / `pipeline()`
+  s'exécutent comme sous-processus `bin/flow-agent-runner.php` concurrents
+  (`proc_open` + `stream_select`, fallback polling sous Windows), avec dégradation
+  en in-process quand c'est indisponible.
+- **Répétition à coût nul** *(1.0.5)* — `flow run --rehearse` exécute n'importe
+  quel flow de bout en bout sans aucun CLI invoqué (stubs déterministes conformes
+  au schéma), donc les flows sont testables sur une machine vierge ; chaque flow
+  intégré répète au vert.
+- **Fédération avec superagent** *(1.0.5)* — `Flow::delegate()` (et
+  `strategy: delegate` en YAML) confie un sous-flow au SmartFlow cross-modèle de
+  superagent : le mode **named** exécute l'un des flows propres à superagent, qui
+  se distribue lui-même à travers les providers ; le mode **spec** exécute un flow
+  dont SuperAICore a écrit la structure, que superagent exécute selon
+  l'instruction. La dépense déléguée se fédère dans le budget parent ; toute
+  l'exécution imbriquée répète à coût nul.
+- **4 flows cross-CLI intégrés + écriture YAML** *(1.0.5)* — `cross-cli-review`,
+  `cross-cli-dev`, `cross-cli-council` et `cross-cli-federated` (qui délègue la
+  recherche à superagent), compilés par `YamlFlowLoader` ; déposez les vôtres sous
+  `./flows` ou `./.superaicore/flows`. Bloc de config
+  `super-ai-core.smartflow.*`.
 
 ### Vague d'outils jcode (0.9.0 / SDK 0.9.7)
 
@@ -844,6 +893,30 @@ Guide complet étape par étape : [INSTALL.fr.md](INSTALL.fr.md).
 ./vendor/bin/superaicore super-ai-core:models refresh --provider=kimi    # overlay GET /models live (0.6.9+)
 ```
 
+### SmartFlow — workflows cross-CLI (1.0.5)
+
+```bash
+# Lister / inspecter les flows cross-CLI
+./vendor/bin/superaicore flow list
+./vendor/bin/superaicore flow show cross-cli-review
+
+# Répéter de bout en bout à coût NUL (aucun CLI invoqué — stubs déterministes)
+./vendor/bin/superaicore flow run cross-cli-review --args diff=@my.diff --rehearse
+
+# Pour de vrai : Claude résume, Codex + Gemini relisent en parallèle, Claude décide
+./vendor/bin/superaicore flow run cross-cli-review --args diff=@my.diff --concurrency 4
+
+# Fédéré : plan sur Claude, DÉLÈGUE la recherche au flow cross-modèle de superagent, build/review sur les CLIs
+./vendor/bin/superaicore flow run cross-cli-federated --args goal="add caching" --args research_provider=openai
+
+# Reprendre une exécution antérieure — le préfixe inchangé rejoue depuis le cache, coût nul
+./vendor/bin/superaicore flow run cross-cli-dev --args goal="add caching" --resume <runId>
+```
+
+Également disponible via `php artisan flow ...` dans un hôte Laravel. Voir
+[docs/smartflow.md](docs/smartflow.md) pour les primitives, l'écriture YAML et
+la fédération superagent (modes `delegate` named/spec).
+
 ### CLI Skills & sous-agents
 
 ```bash
@@ -1006,7 +1079,8 @@ Tous les repositories sont des interfaces. Le service provider lie automatiqueme
 
 ## Usage avancé
 
-- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0**, la **vague d'alignement DeepSeek-TUI 0.9.1**, la **vague de fiabilité TaskRunner 0.9.2**, la **vague Squad multi-agent + SDK 1.0.0 0.9.6**, la **vague opencode 0.9.7**, la **vague Qwen + traçage + 9Router 0.9.8** et la **vague Opus 4.8 + Grok + Cursor 1.0.0**.
+- **[Guide d'usage avancé](docs/advanced-usage.fr.md)** — round-trip d'idempotence, trace context W3C, exceptions provider classifiées, `openai-responses` + Azure OpenAI + OAuth ChatGPT, LM Studio, surcharges `http_headers` / `env_http_headers`, features SDK (`extra_body` / `features` / `loop_detection`), migration hôte `ScriptedSpawnBackend`, moteur de skills — télémétrie / ranker BM25 / évolution mode FIX (depuis 0.8.6), la **vague jcode 0.9.0**, la **vague d'alignement DeepSeek-TUI 0.9.1**, la **vague de fiabilité TaskRunner 0.9.2**, la **vague Squad multi-agent + SDK 1.0.0 0.9.6**, la **vague opencode 0.9.7**, la **vague Qwen + traçage + 9Router 0.9.8** et la **vague cross-CLI SmartFlow 1.0.5**.
+- **[SmartFlow — workflows cross-CLI](docs/smartflow.md)** *(1.0.5)* — le portage multi-CLI du `Workflow` de Claude Code : les primitives `agent`/`parallel`/`pipeline`/`gate`/`council`/`budget`/`schema`, l'écriture YAML, l'échelle de sortie structurée à 3 couches, resume + journal d'appels, répétition à coût nul, et **fédération avec le SmartFlow cross-modèle de superagent** (modes `delegate` named/spec).
 - **[Cookbook](examples/cookbook/README.md)** *(0.9.8+)* — cinq exemples narratifs style gs-quant : bases dispatcher, prompt caching, rotation provider, reprise cross-harness, démarrage rapide du traçage.
 - **[Paliers de commercialisation](docs/commercialization-tiers.md)** *(0.9.8+)* — document de référence sur la façon dont une offre par paliers (Cloud Dashboard / Managed Dispatcher / Enterprise overlays) pourrait s'articuler au-dessus du noyau MIT. Rien dans ce document n'est implémenté à ce jour.
 - **[Politique de chaîne d'approvisionnement](SUPPLY_CHAIN.md)** *(0.9.8+)* — pas de scripts de cycle de vie Composer, `composer install --no-scripts` par défaut, `composer audit` hebdomadaire.

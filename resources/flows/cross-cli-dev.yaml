@@ -1,0 +1,63 @@
+name: cross-cli-dev
+description: >
+  Cross-CLI build loop. Claude CLI plans the work, Codex CLI implements it,
+  Gemini CLI reviews the result, and a gate blocks an empty implementation.
+  One goal, three CLIs, each on the step it is best at.
+
+phases:
+  - title: Plan
+  - title: Build
+  - title: Review
+
+defaults:
+  backend: claude_cli
+
+schemas:
+  plan:
+    type: object
+    required: [steps]
+    properties:
+      title: { type: string }
+      steps:
+        type: array
+        minItems: 1
+        items: { type: string }
+
+steps:
+  - name: plan
+    phase: Plan
+    role: planner
+    backend: claude_cli
+    schema: plan
+    prompt: |
+      Produce an implementation plan for this goal:
+      {{args.goal}}
+
+  - name: build
+    phase: Build
+    role: builder
+    backend: codex_cli
+    prompt: |
+      Implement the following plan. Return the code / changes only.
+      Plan:
+      {{steps.plan.output}}
+
+  - name: gate-built
+    strategy: gate
+    check: "nonempty:{{steps.build.output}}"
+    required: true
+    fail_reason: builder produced no output
+
+  - name: review
+    phase: Review
+    role: reviewer
+    backend: gemini_cli
+    prompt: |
+      Review this implementation against its plan. Note any correctness,
+      security, or completeness gaps.
+
+      Plan:
+      {{steps.plan.output}}
+
+      Implementation:
+      {{steps.build.output}}

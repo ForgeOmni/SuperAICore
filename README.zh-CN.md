@@ -26,6 +26,7 @@
   - [Qwen + 追踪 + 9Router 波次（0.9.8）](#qwen--追踪--9router-波次098)
   - [Opus 4.8 + Grok + Cursor 波次（1.0.0 / SDK 1.0.9）](#opus-48--grok--cursor-波次100--sdk-109)
   - [kimi-cli + kimi-code 双轨波次（1.0.2 / SDK 1.0.10）](#kimi-cli--kimi-code-双轨波次102--sdk-1010)
+  - [SmartFlow 跨 CLI 工作流波次（1.0.5 / SDK 1.1.0）](#smartflow-跨-cli-工作流波次105--sdk-110)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -100,6 +101,48 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### SmartFlow 跨 CLI 工作流波次（1.0.5 / SDK 1.1.0）
+
+SDK 约束移到 `^1.1.0`。SuperAICore 1.0.5 把 Claude Code 内置的
+`Workflow` 引擎移植为 **SmartFlow** —— 跨 CLI 的动态工作流 —— 并把它
+与 superagent 自己的（跨模型）SmartFlow 联邦化。SDK 的 SmartFlow 把
+一条 flow 路由到不同的模型 provider 上，而 SuperAICore 的 SmartFlow
+把一条 flow 路由到它已经管理的 **CLI/backend** 上，让不同 CLI 协同
+完成同一个任务。纯增量、无破坏:Dispatcher、AgentSpawn 以及
+Squad/Team/Smart/Auto 编排器都原封不动。新模块 `src/SmartFlow/`、新命令
+`superaicore flow`、新文档 `docs/smartflow.md`。
+
+- **一条 flow,多个 CLI**（1.0.5）—— 同一套原语
+  (`agent()` / `parallel()` / `pipeline()` / `gate()` / `council()` / `budget` /
+  `schema` / `SKIP`) 驱动任意已注册的 backend,所以一条 flow 可以在
+  `claude_cli` 上做规划,同时在 `codex_cli` + `gemini_cli` 上并发评审。每个
+  step 上的 `backend` 就是那个跨 CLI 的旋钮;可复用的 `personas` 承载 system
+  prompt,并可钉住某个 backend/model。
+- **3 层结构化输出安全网**（1.0.5）—— CLI 返回的是散文,所以会把
+  `schema` 烤进 prompt,再通过 native → 围栏
+  ```` ```json ```` → 正则嗅探这几层逐级回收,由零依赖的
+  `SchemaValidator` 校验;彻底失败时产出一个 `SKIP` 哨兵而非崩溃。
+- **Resume + 调用账本**（1.0.5）—— 每次运行都在 `~/.superaicore/flows`
+  下写一份 JSONL 账本;`--resume <id>` 以零成本从缓存重放最长的未变更
+  前缀（内容寻址签名;gate 保持对齐）。
+- **真并行**（1.0.5）—— `parallel()` / `pipeline()` 批次以并发的
+  `bin/flow-agent-runner.php` 子进程运行（`proc_open` +
+  `stream_select`,Windows 轮询回退）,不可用时降级为进程内执行。
+- **零成本彩排**（1.0.5）—— `flow run --rehearse` 在不调用任何 CLI 的
+  情况下端到端跑完任意 flow（确定性的符合 schema 的桩),所以 flow 在裸机
+  上也可测;每个内置 flow 彩排都是绿的。
+- **与 superagent 联邦**（1.0.5）—— `Flow::delegate()`（以及 YAML 中的
+  `strategy: delegate`）把一个子 flow 交给 superagent 的跨模型
+  SmartFlow:**named** 模式运行 superagent 自己的某条 flow,由它在各
+  provider 间自行分发;**spec** 模式运行一条结构由 SuperAICore 编写的
+  flow,由 superagent 按照本项目的指示分发。被委派的开销联邦进父预算;
+  整个嵌套运行以零成本彩排。
+- **4 条内置跨 CLI flow + YAML 编写**（1.0.5）—— `cross-cli-review`、
+  `cross-cli-dev`、`cross-cli-council`、`cross-cli-federated`（后者把研究
+  委派给 superagent),由 `YamlFlowLoader` 编译;把你自己的放在 `./flows`
+  或 `./.superaicore/flows` 下即可。配置块
+  `super-ai-core.smartflow.*`。
 
 ### jcode 配套工具波次（0.9.0 / SDK 0.9.7）
 
@@ -731,6 +774,30 @@ $schedule->command('super-ai-core:gh-watch')->everyFiveMinutes();       // 0.9.8
 ./vendor/bin/superaicore super-ai-core:models refresh --provider=kimi    # 实时 GET /models overlay（0.6.9+）
 ```
 
+### SmartFlow —— 跨 CLI 工作流（1.0.5）
+
+```bash
+# 列出 / 查看跨 CLI flow
+./vendor/bin/superaicore flow list
+./vendor/bin/superaicore flow show cross-cli-review
+
+# 端到端零成本彩排（不调用任何 CLI —— 确定性桩）
+./vendor/bin/superaicore flow run cross-cli-review --args diff=@my.diff --rehearse
+
+# 真跑:Claude 做摘要,Codex + Gemini 并行评审,Claude 拍板
+./vendor/bin/superaicore flow run cross-cli-review --args diff=@my.diff --concurrency 4
+
+# 联邦:在 Claude 上规划,把研究 DELEGATE 给 superagent 的跨模型 flow,在各 CLI 上构建/评审
+./vendor/bin/superaicore flow run cross-cli-federated --args goal="add caching" --args research_provider=openai
+
+# 续跑之前的运行 —— 未变更的前缀从缓存重放,零成本
+./vendor/bin/superaicore flow run cross-cli-dev --args goal="add caching" --resume <runId>
+```
+
+在 Laravel 宿主里也可用 `php artisan flow ...`。原语、YAML 编写以及
+superagent 联邦（`delegate` 的 named/spec 模式）详见
+[docs/smartflow.md](docs/smartflow.md)。
+
 ### Skill 与 sub-agent CLI
 
 ```bash
@@ -892,7 +959,8 @@ echo $result['text'];
 
 ## 高级用法
 
-- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**、**0.9.2 TaskRunner 可靠性波次**、**0.9.6 Squad 多智能体 + SDK 1.0.0 波次**、**0.9.7 opencode 借鉴波次**、**0.9.8 Qwen + 追踪 + 9Router 波次**，以及 **1.0.0 Opus 4.8 + Grok + Cursor 波次**。
+- **[高级用法指南](docs/advanced-usage.zh-CN.md)** —— 幂等 key 往返、W3C trace context、分类的 provider exception、`openai-responses` + Azure OpenAI + ChatGPT OAuth、LM Studio、`http_headers` / `env_http_headers` 覆盖、SDK features（`extra_body` / `features` / `loop_detection`）、`ScriptedSpawnBackend` 宿主迁移、Skill engine 遥测 / BM25 ranker / FIX 模式演化（0.8.6+）、**0.9.0 jcode 波次**、**0.9.1 DeepSeek-TUI 对齐波次**、**0.9.2 TaskRunner 可靠性波次**、**0.9.6 Squad 多智能体 + SDK 1.0.0 波次**、**0.9.7 opencode 借鉴波次**、**0.9.8 Qwen + 追踪 + 9Router 波次**、**1.0.0 Opus 4.8 + Grok + Cursor 波次**，以及 **1.0.5 SmartFlow 跨 CLI 波次**。
+- **[SmartFlow —— 跨 CLI 工作流](docs/smartflow.md)**（1.0.5）—— Claude Code `Workflow` 的多 CLI 移植版:`agent`/`parallel`/`pipeline`/`gate`/`council`/`budget`/`schema` 原语、YAML 编写、3 层结构化输出阶梯、resume + 调用账本、零成本彩排,以及**与 superagent 跨模型 SmartFlow 的联邦**（`delegate` 的 named/spec 模式）。
 - **[Cookbook](examples/cookbook/README.md)**（0.9.8+）—— gs-quant 风格的五个叙事型示例:dispatcher 基础、prompt 缓存、provider 轮换、跨 harness 恢复、追踪快速入门。
 - **[商业化分层](docs/commercialization-tiers.md)**（0.9.8+）—— 关于在 MIT 内核之上如何分层（Cloud Dashboard / Managed Dispatcher / Enterprise overlays）的参考文档。该文档描述的内容今日尚未实现。
 - **[供应链策略](SUPPLY_CHAIN.md)**（0.9.8+）—— Composer lifecycle scripts 全部禁止、`composer install --no-scripts` 默认启用、每周跑 `composer audit`。

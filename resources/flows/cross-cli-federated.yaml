@@ -1,0 +1,61 @@
+name: cross-cli-federated
+description: >
+  Federated flow. SuperAICore plans on Claude CLI, DELEGATES deep research to
+  superagent's own cross-model SmartFlow (superagent self-dispatches across model
+  providers), then builds on Codex CLI and reviews on Gemini CLI. One task spans
+  CLIs and a nested cross-model sub-flow.
+
+phases:
+  - title: Plan
+  - title: Research (delegated → superagent)
+  - title: Build
+  - title: Review
+
+defaults:
+  backend: claude_cli
+
+steps:
+  - name: plan
+    phase: Plan
+    role: planner
+    backend: claude_cli
+    prompt: |
+      Outline what we need to know and do for this goal:
+      {{args.goal}}
+
+  # Hand the research leg to superagent — it runs its OWN `research-trio` flow,
+  # fanning out across model providers however it sees fit ("自行分发"). Steer the
+  # model tier with provider/model; superagent owns the internal structure.
+  - name: research
+    phase: Research (delegated → superagent)
+    strategy: delegate
+    delegate: research-trio
+    provider: "{{args.research_provider}}"
+    flow_args:
+      topic: "{{args.goal}}"
+
+  - name: build
+    phase: Build
+    role: builder
+    backend: codex_cli
+    prompt: |
+      Implement the plan, using the delegated research findings.
+
+      Plan:
+      {{steps.plan.output}}
+
+      Research (from superagent):
+      {{steps.research.output}}
+
+  - name: review
+    phase: Review
+    role: reviewer
+    backend: gemini_cli
+    prompt: |
+      Review the implementation against the plan and research.
+
+      Plan:
+      {{steps.plan.output}}
+
+      Implementation:
+      {{steps.build.output}}

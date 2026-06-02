@@ -983,4 +983,44 @@ return [
         // is keyed by engine `grok:` and contributes $0 to USD totals.
         'grok:grok-build'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
     ],
+
+    // ─── SmartFlow (1.0.5) — cross-CLI dynamic workflows ───────────────────
+    // The multi-CLI port of Claude Code's built-in Workflow engine. One set of
+    // primitives (agent / parallel / pipeline / gate / council / budget /
+    // schema) drives any registered backend, so a single flow can route its
+    // planner to one CLI and its reviewers to another. Static flows ship as
+    // YAML under resources/flows; rehearsal runs any flow end-to-end at zero
+    // cost. See docs/smartflow.md. CLI: `superaicore flow ...`.
+    'smartflow' => [
+        'enabled'         => env('AI_CORE_SMARTFLOW_ENABLED', true),
+
+        // Backend (CLI key) used for agent() calls that don't pin one
+        // themselves (and whose persona doesn't either). Falls back to
+        // `default_backend` then 'claude_cli'.
+        'default_backend' => env('AI_CORE_SMARTFLOW_DEFAULT_BACKEND', null),
+        'default_model'   => env('AI_CORE_SMARTFLOW_DEFAULT_MODEL', null),
+
+        // Max simultaneous CLI workers for parallel()/pipeline() batches. The
+        // process pool degrades to in-process when proc_open is unavailable.
+        'concurrency'     => (int) env('AI_CORE_SMARTFLOW_CONCURRENCY', 4),
+
+        // Where per-run call-ledgers (JSONL) are written for resume. Defaults to
+        // ~/.superaicore/flows. Override with SUPERAICORE_FLOW_DIR too.
+        'ledger_dir'      => env('AI_CORE_SMARTFLOW_LEDGER_DIR', null),
+
+        // Extra directory (or list) to scan for user-authored YAML flows, on top
+        // of resources/flows, ./.superaicore/flows and ./flows.
+        'flows_dir'       => env('AI_CORE_SMARTFLOW_FLOWS_DIR', null),
+
+        // Hard ceilings enforced by the per-run Budget (null = unbounded).
+        'budget' => [
+            'usd'    => env('AI_CORE_SMARTFLOW_BUDGET_USD', null),
+            'tokens' => env('AI_CORE_SMARTFLOW_BUDGET_TOKENS', null),
+        ],
+
+        // Persona overrides, keyed by role id, e.g.
+        //   'reviewer' => ['backend' => 'codex_cli', 'model' => '...'],
+        // merged over the built-ins + resources/flows/personas/*.yaml.
+        'personas' => [],
+    ],
 ];

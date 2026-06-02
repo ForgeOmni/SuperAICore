@@ -1,0 +1,66 @@
+name: cross-cli-review
+description: >
+  Cross-CLI code review. Claude CLI summarizes the change, Codex CLI and Gemini
+  CLI review it in parallel from different angles, then Claude CLI synthesizes
+  one verdict — each role on the CLI that is strongest at it.
+
+phases:
+  - title: Summarize
+  - title: Review
+  - title: Synthesize
+
+defaults:
+  backend: claude_cli
+
+schemas:
+  verdict:
+    type: object
+    required: [decision, summary]
+    properties:
+      decision: { type: string, enum: [approve, request_changes, comment] }
+      summary: { type: string }
+      blocking_issues:
+        type: array
+        items: { type: string }
+
+steps:
+  - name: summary
+    phase: Summarize
+    role: reviewer
+    backend: claude_cli
+    prompt: |
+      Summarize the intent and surface area of this change in 4-6 bullet points.
+      Change / diff:
+      {{args.diff}}
+
+  - name: reviews
+    phase: Review
+    strategy: parallel
+    agents:
+      - role: reviewer
+        backend: codex_cli
+        prompt: |
+          Review for CORRECTNESS and edge cases. Summary:
+          {{steps.summary.output}}
+
+          Change / diff:
+          {{args.diff}}
+      - role: reviewer
+        backend: gemini_cli
+        prompt: |
+          Review for SECURITY, performance, and maintainability. Summary:
+          {{steps.summary.output}}
+
+          Change / diff:
+          {{args.diff}}
+
+  - name: verdict
+    phase: Synthesize
+    role: chair
+    backend: claude_cli
+    schema: verdict
+    prompt: |
+      Synthesize the two reviews into a single decision. Reviews:
+      {{steps.reviews.output}}
+
+return: verdict

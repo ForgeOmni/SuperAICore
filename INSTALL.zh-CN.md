@@ -1168,6 +1168,49 @@ Cursor / Grok CLI 上手菜谱、Opus 4.8 路由，以及 Grok API 与 CLI
 [docs/advanced-usage.zh-CN.md §31](docs/advanced-usage.zh-CN.md) 与
 `docs/kimi-cli-backend.md` §8。
 
+**1.0.5 —— SmartFlow 跨 CLI 工作流；无迁移；SDK 约束移到 `^1.1.0`。**
+全面增量 —— 无 schema 变更；只有在你定制配置时才需要 publish
+（`php artisan vendor:publish --tag=super-ai-core-config`）。三件值得知道的事：
+
+1. **新 `flow` 命令 —— 跨 CLI 的动态工作流。** SuperAICore 把
+   Claude Code 内置的 `Workflow` 移植为 **SmartFlow**（`src/SmartFlow/`）:一套
+   原语（`agent` / `parallel` / `pipeline` / `gate` / `council` /
+   `budget` / `schema`）驱动任意已注册的 backend,所以一条 flow 可以在
+   `claude_cli` 上规划,同时在 `codex_cli` + `gemini_cli` 上并发评审。四条
+   内置 flow 随 `resources/flows/*.yaml` 发布;在没装任何 CLI 的情况下也能
+   零成本彩排其中任意一条:
+   ```bash
+   ./vendor/bin/superaicore flow list
+   ./vendor/bin/superaicore flow run cross-cli-review --args diff=@my.diff --rehearse
+   ./vendor/bin/superaicore flow run cross-cli-dev --args goal="add caching" --concurrency 4
+   ```
+   也挂在 artisan 上为 `php artisan flow ...`。每次运行的账本位于
+   `~/.superaicore/flows`（用 `SUPERAICORE_FLOW_DIR` 覆盖）;`--resume <id>`
+   以零成本重放未变更的前缀。新配置块
+   `super-ai-core.smartflow.*`（`default_backend`、`concurrency`、`ledger_dir`、
+   `flows_dir`、`budget`、`personas`）+ `AI_CORE_SMARTFLOW_*` env。
+
+2. **与 superagent 联邦。** 一条 flow 可以把子 flow 委派给
+   superagent 自己的（跨模型）SmartFlow —— `Flow::delegate()` 或 YAML 中的
+   `strategy: delegate`。**named** 模式运行 superagent 自己的某条 flow
+   （由它在各模型 provider 间自行分发）;**spec** 模式运行一条结构由
+   SuperAICore 编写的 flow（superagent 按照本项目的指示分发）。
+   需要 SDK 在 classpath 上（现在已经是了,pin `^1.1.0`）;SDK 缺失或
+   flow 未知时优雅失败,不会拖垮父 flow。
+   ```bash
+   ./vendor/bin/superaicore flow run cross-cli-federated \
+       --args goal="add caching" --args research_provider=openai --rehearse
+   ```
+
+3. **SDK 1.1.0 带来它自己的（跨模型）SmartFlow —— 透明地。** pin
+   从 `^1.0.10` → `^1.1.0`;`superagent` 后端顺带拿到 SDK 的
+   SmartFlow 以及 1.0.10→1.1.0 的 wire 级加固。除了可选的联邦桥,SuperAICore
+   没有任何代码依赖 SDK 的 SmartFlow 类。无需回退 —— 1.0.5 之前的调用方行为一致。
+
+完整的 SmartFlow 指南（原语、YAML 编写、结构化输出阶梯、resume,以及
+superagent 联邦菜谱）见 [docs/advanced-usage.zh-CN.md §32](docs/advanced-usage.zh-CN.md)
+与 [docs/smartflow.md](docs/smartflow.md)。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

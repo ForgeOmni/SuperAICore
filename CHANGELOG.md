@@ -4,6 +4,110 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] — 2026-06-02
+
+**SmartFlow lands in SuperAICore: cross-CLI dynamic workflows — the multi-CLI
+port of Claude Code's built-in `Workflow`, tracking SuperAgent SDK 1.1.0's
+cross-model SmartFlow.** Where the SDK's SmartFlow routes one flow across 15
+model providers, SuperAICore's routes one flow across the **execution backends**
+it already manages — `claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`,
+`kimi_cli`, `qwen_cli`, `cursor_cli`, `grok_cli`, `kiro_cli`, `superagent`,
+`anthropic_api`, `openai_api`, `gemini_api`. One set of primitives
+(`agent()` / `parallel()` / `pipeline()` / `gate()` / `council()` / `budget` /
+`schema` / `SKIP`) drives any of them, so a single flow can plan on Claude CLI
+and review on Codex + Gemini CLI concurrently. **Additive and non-breaking** —
+the existing Dispatcher, AgentSpawn, Squad/Team/Smart/Auto orchestrators and the
+Backend contract are all untouched; SmartFlow sits beside them as a new
+`src/SmartFlow/` module + `superaicore flow` command. SDK pin `^1.0.10` →
+`^1.1.0`. Full Unit suite green (695 tests, +23 SmartFlow incl. federation).
+
+```bash
+composer update forgeomni/superaicore forgeomni/superagent
+# no migrations; publish the config if you customize it:
+php artisan vendor:publish --tag=super-ai-core-config
+```
+
+### Added — SmartFlow cross-CLI flow engine (`src/SmartFlow/`)
+
+A PHP port of the Claude Code `Workflow` engine, retargeted from model-providers
+to the `Backend` contract so the unit of routing is a **CLI**, not an API model.
+
+- **Primitives & engine** — `Flow` exposes `agent()` (one cross-CLI call),
+  `call()` (deferred), `parallel()` (barrier, concurrent), `pipeline()`
+  (per-item / per-stage), `gate()` (acceptance + fallback/relay),
+  `council()` (perspective-diverse vote, each lens pinnable to a different CLI),
+  `budget`, `log()` / `phase()`. `FlowEngine::run($flowOrClosure, $args, $opts)`
+  is the entry point; `BackendAgentRunner` executes one `AgentCall` against
+  whichever backend the call/persona resolves to via `BackendRegistry`.
+- **`backend` is the cross-CLI dimension** — every `agent()` / persona / YAML
+  step takes a `backend` key naming a registered backend; `provider` is accepted
+  as an alias for ease of porting SDK flows.
+- **3-layer structured-output safety net** — `StructuredOutputLadder` recovers
+  schema-valid output from a CLI's free-text reply: whole-reply JSON →
+  fenced ```` ```json ```` block → regex-sniffed object/array, validated by a
+  dependency-free `SchemaValidator`; on total failure returns a `SKIP` sentinel
+  instead of crashing. (CLIs return prose, so the schema is baked into the
+  prompt rather than enforced by a native `response_format`.)
+- **Roles / personas** — `PersonaRegistry` with 7 built-ins +
+  `resources/flows/personas/personas.yaml` (planner / builder / reviewer /
+  researcher / writer / critic / chair); each persona can pin a `backend` /
+  `model`. Override via `config('super-ai-core.smartflow.personas')`.
+- **Call-ledger + resume** — every run writes a JSONL ledger under
+  `~/.superaicore/flows/`; `--resume <runId>` replays the longest **unchanged
+  prefix** from cache (zero cost) via content-addressed `FlowSignature`,
+  rerunning only from the first changed call. Gates correctly occupy a ledger
+  slot so resume stays aligned across them.
+- **True parallelism** — `ProcessPool` runs `parallel()` / `pipeline()` agent
+  batches as concurrent `bin/flow-agent-runner.php` subprocesses
+  (`proc_open` + `stream_select`, Windows polling fallback, concurrency cap),
+  degrading to in-process when `proc_open` is unavailable.
+- **Zero-cost rehearsal** — `--rehearse` / `--dry-run` (or
+  `SUPERAICORE_FLOW_FAKE`-style runs) synthesize deterministic
+  schema-conforming stub output with no CLI invoked, so any flow runs
+  end-to-end on a machine with zero CLIs installed. Every shipped flow is
+  guaranteed to rehearse green.
+- **Federation with superagent (cross-CLI → cross-model)** — a SuperAICore flow
+  can **delegate a sub-flow to superagent's own SmartFlow**, the layering the two
+  engines are built for: SuperAICore fans out across CLIs, the `superagent` leg
+  fans out across model providers. `Flow::delegate()` (+ `delegate` / `spec`
+  opts on any `agent()`/`call()`, + `strategy: delegate` in YAML) runs through
+  the new `Delegation` value object and `SuperAgentFlowBridge` (in-process via
+  the SDK's `SuperAgent\SmartFlow\FlowEngine`). Two modes: **named** —
+  `delegate('research-trio', …)` runs one of superagent's OWN flows so it
+  self-dispatches (`自行分发`), with `delegate_provider`/`delegate_model` to steer
+  its model tier; **spec** — `delegate('', ['spec' => […]])` runs a flow whose
+  structure SuperAICore authored, so superagent executes to instruction
+  (`按照本项目的指示分发`). A delegated call uses the same ledger / budget / resume /
+  parallel machinery (delegated spend federates into the parent budget) and
+  rehearses end-to-end at zero cost. Missing SDK / unknown flow fails gracefully
+  without crashing the parent.
+- **4 built-in cross-CLI flows** (`resources/flows/*.yaml`, compiled by
+  `YamlFlowLoader` to the same engine): `cross-cli-review` (Claude summarizes →
+  Codex + Gemini review in parallel → Claude synthesizes a verdict),
+  `cross-cli-dev` (Claude plans → Codex builds → gate → Gemini reviews),
+  `cross-cli-council` (Claude drafts → 3 CLIs vote through distinct lenses →
+  Claude decides), and `cross-cli-federated` (Claude plans → **delegates research
+  to superagent's cross-model `research-trio`** → Codex builds → Gemini reviews).
+  Drop your own under `./flows` or `./.superaicore/flows`.
+- **CLI** — `superaicore flow list | show <name> | plan <name> |
+  run <name> [--args k=v | --json {…}] [--rehearse] [--dry-run]
+  [--resume <id>] [--concurrency n] [--budget-usd x] [--backend b]
+  [--model m] [--out-json]`. Also exposed as `php artisan flow ...` inside a
+  Laravel host.
+- **Config** — new `smartflow` block in `config/super-ai-core.php` (`enabled`,
+  `default_backend`, `default_model`, `concurrency`, `ledger_dir`, `flows_dir`,
+  `budget.usd` / `budget.tokens`, `personas`) + `AI_CORE_SMARTFLOW_*` /
+  `SUPERAICORE_FLOW_DIR` env. Service-provider singletons for `FlowEngine`,
+  `FlowRegistry`, `PersonaRegistry`. Docs: `docs/smartflow.md`. Tests:
+  `tests/Unit/SmartFlow/*` (23 tests, incl. delegation/federation).
+
+### Changed — SuperAgent SDK pin `^1.0.10` → `^1.1.0`
+
+Picks up the SDK's own SmartFlow engine plus the 1.0.10→1.1.0 wire-level
+hardening, which reaches the `superagent` backend transparently. No SuperAICore
+code depends on the SDK's SmartFlow classes — the port is independent and built
+on SuperAICore's own `Backend` contract.
+
 ## [1.0.2] — 2026-05-31
 
 **`kimi_cli` backend straddles the kimi-cli → kimi-code transition, on SDK

@@ -39,6 +39,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 29. [Bump SDK 1.0.5 + vague de fonctionnalités inspirées d'opencode (0.9.7)](#29-bump-sdk-105--vague-de-fonctionnalités-inspirées-dopencode-097)
 30. [Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#30-opus-48--grok--cursor-100--sdk-109)
 31. [Support bi-CLI kimi-cli + kimi-code (1.0.2 / SDK 1.0.10)](#31-support-bi-cli-kimi-cli--kimi-code-102--sdk-1010)
+32. [SmartFlow — workflows dynamiques cross-CLI + fédération superagent (1.0.5 / SDK 1.1.0)](#32-smartflow--workflows-dynamiques-cross-cli--fédération-superagent-105--sdk-110)
 
 ---
 
@@ -3292,8 +3293,146 @@ Les notes de conception du backend bi-CLI sont dans `docs/kimi-cli-backend.md`
 
 ---
 
+## 32. SmartFlow — workflows dynamiques cross-CLI + fédération superagent (1.0.5 / SDK 1.1.0)
+
+SmartFlow est le portage par SuperAICore du moteur `Workflow` intégré de Claude
+Code, reciblé pour que l'unité de routage soit un **CLI/backend** plutôt qu'un
+modèle API. Il suit le SmartFlow cross-*modèle* du SDK SuperAgent (SDK 1.1.0) mais
+pilote les backends que SuperAICore gère déjà, et il peut **déléguer** un sous-flow
+au moteur du SDK pour une véritable fédération cross-CLI → cross-modèle. Additif :
+le Dispatcher, AgentSpawn et les orchestrateurs Squad/Team/Smart/Auto restent
+intacts. Référence complète : [docs/smartflow.md](smartflow.md).
+
+### 32.1 Les primitives
+
+Un corps de flow est `callable(Flow $flow): mixed` (ou un fichier YAML compilé en
+un tel callable). `$flow` expose : `agent($prompt, $opts)` (un appel cross-CLI →
+tableau validé avec `schema`, chaîne brute, ou `$flow->SKIP`), `call()` (différé,
+pour le fan-out), `parallel([...])` (barrière ; les appels différés s'exécutent en
+parallèle via un pool de processus), `pipeline($items, ...$stages)` (par item /
+par étape), `gate($name, $check, $opts)` (acceptation avec
+`fallback`/`relay`/`required`), `council($claim, $lenses)` (vote multi-perspective,
+chaque lentille épinglable à un CLI différent), `budget`, et `log()`/`phase()`.
+Clés de `$opts` : `backend` (le CLI — `provider` est un alias accepté), `model`,
+`role` (persona), `system`, `schema`, `temperature`, `max_tokens`, `label`,
+`provider_config`.
+
+```php
+use SuperAICore\SmartFlow\{FlowEngine, FlowDefinition, FlowOptions};
+
+$def = FlowDefinition::make('review', 'cross-CLI review', function ($flow) {
+    $flow->phase('Summarize');
+    $summary = $flow->agent("Summarize:\n{$flow->args['diff']}", ['backend' => 'claude_cli']);
+
+    $flow->phase('Review');
+    $reviews = $flow->parallel([
+        $flow->call("Correctness:\n$summary", ['role' => 'reviewer', 'backend' => 'codex_cli']),
+        $flow->call("Security:\n$summary",    ['role' => 'reviewer', 'backend' => 'gemini_cli']),
+    ]);
+
+    return $flow->agent("Decide:\n" . json_encode($flow->keep($reviews)), [
+        'backend' => 'claude_cli',
+        'schema'  => ['type' => 'object', 'required' => ['decision'],
+            'properties' => ['decision' => ['type' => 'string', 'enum' => ['approve', 'request_changes']]]],
+    ]);
+});
+
+$result = (new FlowEngine())->run($def, ['diff' => $diff]);   // ->value, ->costUsd(), ->ledger, ->runId
+```
+
+### 32.2 Sortie structurée — le filet de sécurité à 3 couches
+
+Les CLIs renvoient de la prose, donc un `schema` demandé est intégré au prompt et
+une valeur valide est récupérée via trois couches croissantes — JSON de la réponse
+entière (`native`/`submitted`) → bloc balisé ```` ```json ```` (`submitted`) →
+objet/tableau reniflé par regex (`extracted`) — validée par un `SchemaValidator`
+sans dépendance. Si aucune ne valide, l'appel renvoie la sentinelle `SKIP` au lieu
+de crasher, de sorte qu'un fan-out peut écarter les mauvaises réponses via
+`$flow->keep(...)`.
+
+### 32.3 Resume, journal, répétition
+
+Chaque exécution ajoute un journal JSONL sous
+`~/.superaicore/flows/<runId>.jsonl` (override : `SUPERAICORE_FLOW_DIR` ou
+`super-ai-core.smartflow.ledger_dir`). Chaque appel reçoit une signature adressée
+par contenu à partir de ce que vous avez *déclaré* ; `--resume <runId>` rejoue le
+plus long préfixe inchangé à coût nul et n'exécute en réel qu'à partir du premier
+appel modifié (les gates occupent un emplacement de journal pour que les appels
+post-gate restent alignés). `--rehearse` / `--dry-run` exécutent un flow de bout en
+bout **sans aucun CLI invoqué** — les appels à schéma reçoivent des stubs
+déterministes conformes au schéma, le coût est `$0` — donc les flows sont testables
+sur une machine vierge.
+
+### 32.4 Fédération — déléguer un sous-flow à superagent
+
+Un flow SuperAICore peut confier un sous-flow au SmartFlow (cross-modèle) propre à
+superagent. C'est le découpage en couches voulu : SuperAICore fait du fan-out à
+travers les CLIs ; le segment `superagent` fait du fan-out à travers les providers
+de modèles. Deux modes :
+
+```php
+// named — superagent exécute l'un de SES PROPRES flows ; il se distribue lui-même à travers les providers
+$findings = $flow->delegate('research-trio', [
+    'flow_args'        => ['topic' => $flow->args['goal']],
+    'delegate_provider' => 'openai',     // steer superagent's model tier
+]);
+
+// spec — superagent exécute un flow que SuperAICore A ÉCRIT (provider-based, cross-model)
+$brief = $flow->delegate('', ['spec' => [
+    'name'  => 'mini-brief',
+    'steps' => [
+        ['name' => 'gather', 'role' => 'researcher', 'provider' => 'openai',    'prompt' => 'research {{args.q}}'],
+        ['name' => 'write',  'role' => 'writer',     'provider' => 'anthropic', 'prompt' => "summarize:\n{{steps.gather.output}}"],
+    ],
+    'return' => 'write',
+], 'flow_args' => ['q' => $flow->args['goal']]]);
+```
+
+Un appel délégué utilise la même machinerie journal / budget / resume /
+`parallel()`, donc son coût se fédère dans le budget parent et il répète avec le
+parent. La **spec inline utilise le schéma du SDK** (les étapes routent à travers
+les `provider`s de modèles, pas les CLIs) et est exécutée par le moteur de
+superagent. Une délégation named nécessite que le flow existe dans le registre du
+SDK (`superagent flow list`) ; un SDK manquant ou un flow inconnu échoue proprement
+(vide / `SKIP`) sans crasher le parent. Sous le capot :
+`SuperAICore\SmartFlow\Delegation` + `SuperAgentFlowBridge` (in-process via
+`SuperAgent\SmartFlow\FlowEngine`).
+
+### 32.5 Écriture YAML
+
+Les flows statiques vivent dans `resources/flows/*.yaml` (compilés par
+`YamlFlowLoader`). Déposez les vôtres sous `./flows`, `./.superaicore/flows`, ou
+`super-ai-core.smartflow.flows_dir`. Templating : `{{args.x}}`,
+`{{steps.<name>.output}}`, `{{item}}`, chemins pointés. Stratégies : `solo`
+(défaut), `parallel`, `pipeline`, `gate`, `delegate`.
+
+```yaml
+- name: research            # hand the research leg to superagent
+  strategy: delegate
+  delegate: research-trio   # named SDK flow (or `spec: {...}` to author inline)
+  provider: "{{args.research_provider}}"
+  flow_args: {topic: "{{args.goal}}"}
+```
+
+Flows intégrés : `cross-cli-review`, `cross-cli-dev`, `cross-cli-council`,
+`cross-cli-federated`. CLI : `superaicore flow list|show|plan|run` (et
+`php artisan flow ...`).
+
+### 32.6 Quand recourir à SmartFlow
+
+Smart / Squad / Auto décomposent une tâche de façon heuristique et routent les
+sous-tâches ; AgentSpawn est le protocole de plan de spawn en 3 phases pour les
+CLIs sans outil Agent natif. Recourez à **SmartFlow** quand vous voulez un flux de
+contrôle multi-étapes *explicitement écrit* (fan-out, pipelines, gates, councils),
+un routage CLI par étape, une sortie structurée, des budgets, de la répétition, du
+resume et la fédération superagent — la même forme que le `Workflow` de Claude
+Code, rendue cross-CLI.
+
+---
+
 ## Voir aussi
 
+- [docs/smartflow.md](smartflow.md) — workflows cross-CLI SmartFlow + fédération superagent (1.0.5)
 - [docs/idempotency.md](idempotency.md) — fenêtre de dédup 60s, contrat niveau repository
 - [docs/streaming-backends.md](streaming-backends.md) — formats de stream par CLI
 - [docs/task-runner-quickstart.md](task-runner-quickstart.md) — référence d'options `TaskRunner`

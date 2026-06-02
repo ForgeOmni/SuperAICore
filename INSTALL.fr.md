@@ -1239,6 +1239,54 @@ Voir [docs/advanced-usage.fr.md §31](docs/advanced-usage.fr.md) et
 `docs/kimi-cli-backend.md` §8 pour la recette de détection de variante et la
 matrice des flags kimi-cli/kimi-code.
 
+**1.0.5 — workflows cross-CLI SmartFlow ; aucune migration ; le pin SDK passe à
+`^1.1.0`.** Additif partout — aucun changement de schéma ; ne publiez la config
+que si vous la personnalisez (`php artisan vendor:publish --tag=super-ai-core-config`).
+Trois choses à connaître :
+
+1. **Nouvelle commande `flow` — workflows dynamiques cross-CLI.** SuperAICore porte
+   le `Workflow` intégré de Claude Code sous le nom **SmartFlow** (`src/SmartFlow/`) :
+   un jeu de primitives (`agent` / `parallel` / `pipeline` / `gate` / `council` /
+   `budget` / `schema`) pilote n'importe quel backend enregistré, donc un flow peut
+   planifier sur `claude_cli` et faire relire par `codex_cli` + `gemini_cli` en
+   parallèle. Quatre flows intégrés sont livrés sous `resources/flows/*.yaml` ;
+   répétez n'importe lequel à coût nul sans aucun CLI installé :
+   ```bash
+   ./vendor/bin/superaicore flow list
+   ./vendor/bin/superaicore flow run cross-cli-review --args diff=@my.diff --rehearse
+   ./vendor/bin/superaicore flow run cross-cli-dev --args goal="add caching" --concurrency 4
+   ```
+   Également monté sur artisan via `php artisan flow ...`. Les journaux par
+   exécution vivent sous `~/.superaicore/flows` (override avec `SUPERAICORE_FLOW_DIR`) ;
+   `--resume <id>` rejoue le préfixe inchangé à coût nul. Nouveau bloc de config
+   `super-ai-core.smartflow.*` (`default_backend`, `concurrency`, `ledger_dir`,
+   `flows_dir`, `budget`, `personas`) + env `AI_CORE_SMARTFLOW_*`.
+
+2. **Fédération avec superagent.** Un flow peut déléguer un sous-flow au SmartFlow
+   (cross-modèle) propre à superagent — `Flow::delegate()` ou `strategy: delegate`
+   en YAML. Le mode **named** exécute l'un des flows propres à superagent (il se
+   distribue lui-même à travers les providers de modèles) ; le mode **spec**
+   exécute un flow dont SuperAICore a écrit la structure (superagent exécute selon
+   l'instruction). Nécessite le SDK sur le classpath (c'est désormais le cas, pin
+   `^1.1.0`) ; un SDK manquant ou un flow inconnu échoue proprement sans crasher le
+   flow parent.
+   ```bash
+   ./vendor/bin/superaicore flow run cross-cli-federated \
+       --args goal="add caching" --args research_provider=openai --rehearse
+   ```
+
+3. **Le SDK 1.1.0 apporte son propre SmartFlow (cross-modèle) — de façon
+   transparente.** Le pin passe de `^1.0.10` à `^1.1.0` ; le backend `superagent`
+   récupère le SmartFlow du SDK plus le durcissement wire-level 1.0.10→1.1.0. Aucun
+   code SuperAICore ne dépend des classes SmartFlow du SDK hormis le pont de
+   fédération optionnel. Rien à défaire — les appelants pré-1.0.5 voient un
+   comportement identique.
+
+Voir [docs/advanced-usage.fr.md §32](docs/advanced-usage.fr.md) et
+[docs/smartflow.md](docs/smartflow.md) pour le guide SmartFlow complet —
+primitives, écriture YAML, l'échelle de sortie structurée, resume et la recette de
+fédération superagent.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

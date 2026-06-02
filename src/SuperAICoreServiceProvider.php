@@ -39,6 +39,20 @@ class SuperAICoreServiceProvider extends ServiceProvider
         // Core singleton services (McpManager is all-static, no binding)
         $this->app->singleton(BackendRegistry::class);
         $this->app->singleton(CapabilityRegistry::class);
+
+        // SmartFlow (1.0.5) — cross-CLI dynamic workflows. The registry scans
+        // resources/flows + project-local dirs; the engine resolves CLI backends
+        // via the bound BackendRegistry. Both are stateless enough to share.
+        $this->app->singleton(\SuperAICore\SmartFlow\FlowRegistry::class);
+        $this->app->singleton(\SuperAICore\SmartFlow\PersonaRegistry::class, function () {
+            return \SuperAICore\SmartFlow\PersonaRegistry::load();
+        });
+        $this->app->singleton(\SuperAICore\SmartFlow\FlowEngine::class, function ($app) {
+            return new \SuperAICore\SmartFlow\FlowEngine(
+                $app->make(\SuperAICore\SmartFlow\PersonaRegistry::class),
+                $app->bound(\Psr\Log\LoggerInterface::class) ? $app->make(\Psr\Log\LoggerInterface::class) : null,
+            );
+        });
         $this->app->singleton(EngineCatalog::class);
         $this->app->singleton(CostCalculator::class);
         $this->app->singleton(\SuperAICore\Support\CliBinaryLocator::class);
@@ -455,6 +469,11 @@ class SuperAICoreServiceProvider extends ServiceProvider
             $this->commands([
                 \SuperAICore\Console\Commands\ClaudeMcpSyncCommand::class,
                 \SuperAICore\Console\Commands\McpSyncBackendsCommand::class,
+
+                // SmartFlow (1.0.5) — cross-CLI dynamic workflows. Exposed as
+                // `php artisan flow ...` inside a Laravel host, mirroring the
+                // standalone `bin/superaicore flow`.
+                \SuperAICore\Console\Commands\FlowCommand::class,
                 \SuperAICore\Console\Commands\ApiStatusCommand::class,
                 \SuperAICore\Console\Commands\KimiSyncCommand::class,
 

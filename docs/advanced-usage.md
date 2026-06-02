@@ -39,6 +39,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 29. [SDK 1.0.5 bump + opencode-borrowed feature wave (0.9.7)](#29-sdk-105-bump--opencode-borrowed-feature-wave-097)
 30. [Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#30-opus-48--grok--cursor-100--sdk-109)
 31. [kimi-cli + kimi-code dual-CLI support (1.0.2 / SDK 1.0.10)](#31-kimi-cli--kimi-code-dual-cli-support-102--sdk-1010)
+32. [SmartFlow — cross-CLI dynamic workflows + superagent federation (1.0.5 / SDK 1.1.0)](#32-smartflow--cross-cli-dynamic-workflows--superagent-federation-105--sdk-110)
 
 ---
 
@@ -3313,8 +3314,139 @@ Design notes for the dual-CLI backend live in `docs/kimi-cli-backend.md` §8.
 
 ---
 
+## 32. SmartFlow — cross-CLI dynamic workflows + superagent federation (1.0.5 / SDK 1.1.0)
+
+SmartFlow is SuperAICore's port of Claude Code's built-in `Workflow` engine,
+retargeted so the unit of routing is a **CLI/backend** rather than an API model.
+It tracks the SuperAgent SDK's cross-*model* SmartFlow (SDK 1.1.0) but drives the
+backends SuperAICore already manages, and it can **delegate** a sub-flow to the
+SDK's engine for genuine cross-CLI → cross-model federation. Additive: the
+Dispatcher, AgentSpawn, and the Squad/Team/Smart/Auto orchestrators are
+untouched. Full reference: [docs/smartflow.md](smartflow.md).
+
+### 32.1 The primitives
+
+A flow body is `callable(Flow $flow): mixed` (or a YAML file compiled to one).
+`$flow` exposes: `agent($prompt, $opts)` (one cross-CLI call → validated array
+with `schema`, raw string, or `$flow->SKIP`), `call()` (deferred, for fan-out),
+`parallel([...])` (barrier; deferred calls run concurrently via a process pool),
+`pipeline($items, ...$stages)` (per-item / per-stage), `gate($name, $check,
+$opts)` (acceptance with `fallback`/`relay`/`required`), `council($claim,
+$lenses)` (perspective-diverse vote, each lens pinnable to a different CLI),
+`budget`, and `log()`/`phase()`. `$opts` keys: `backend` (the CLI — `provider`
+is an accepted alias), `model`, `role` (persona), `system`, `schema`,
+`temperature`, `max_tokens`, `label`, `provider_config`.
+
+```php
+use SuperAICore\SmartFlow\{FlowEngine, FlowDefinition, FlowOptions};
+
+$def = FlowDefinition::make('review', 'cross-CLI review', function ($flow) {
+    $flow->phase('Summarize');
+    $summary = $flow->agent("Summarize:\n{$flow->args['diff']}", ['backend' => 'claude_cli']);
+
+    $flow->phase('Review');
+    $reviews = $flow->parallel([
+        $flow->call("Correctness:\n$summary", ['role' => 'reviewer', 'backend' => 'codex_cli']),
+        $flow->call("Security:\n$summary",    ['role' => 'reviewer', 'backend' => 'gemini_cli']),
+    ]);
+
+    return $flow->agent("Decide:\n" . json_encode($flow->keep($reviews)), [
+        'backend' => 'claude_cli',
+        'schema'  => ['type' => 'object', 'required' => ['decision'],
+            'properties' => ['decision' => ['type' => 'string', 'enum' => ['approve', 'request_changes']]]],
+    ]);
+});
+
+$result = (new FlowEngine())->run($def, ['diff' => $diff]);   // ->value, ->costUsd(), ->ledger, ->runId
+```
+
+### 32.2 Structured output — the 3-layer safety net
+
+CLIs return prose, so a requested `schema` is baked into the prompt and a valid
+value recovered through three escalating layers — whole-reply JSON
+(`native`/`submitted`) → fenced ```` ```json ```` block (`submitted`) →
+regex-sniffed object/array (`extracted`) — validated by a dependency-free
+`SchemaValidator`. If none validates, the call returns the `SKIP` sentinel
+instead of crashing, so a fan-out can `$flow->keep(...)` bad replies out.
+
+### 32.3 Resume, ledger, rehearsal
+
+Every run appends a JSONL ledger under `~/.superaicore/flows/<runId>.jsonl`
+(override: `SUPERAICORE_FLOW_DIR` or `super-ai-core.smartflow.ledger_dir`). Each
+call gets a content-addressed signature from what you *declared*; `--resume
+<runId>` replays the longest unchanged prefix at zero cost and runs live only
+from the first changed call (gates occupy a ledger slot so post-gate calls stay
+aligned). `--rehearse` / `--dry-run` run a flow end-to-end with **no CLI
+invoked** — schema calls get deterministic schema-conforming stubs, cost is `$0`
+— so flows are testable on a bare machine.
+
+### 32.4 Federation — delegate a sub-flow to superagent
+
+A SuperAICore flow can hand a sub-flow to superagent's own (cross-model)
+SmartFlow. This is the intended layering: SuperAICore fans out across CLIs; the
+`superagent` leg fans out across model providers. Two modes:
+
+```php
+// named — superagent runs one of its OWN flows; it self-dispatches across providers
+$findings = $flow->delegate('research-trio', [
+    'flow_args'        => ['topic' => $flow->args['goal']],
+    'delegate_provider' => 'openai',     // steer superagent's model tier
+]);
+
+// spec — superagent runs a flow SuperAICore AUTHORED (provider-based, cross-model)
+$brief = $flow->delegate('', ['spec' => [
+    'name'  => 'mini-brief',
+    'steps' => [
+        ['name' => 'gather', 'role' => 'researcher', 'provider' => 'openai',    'prompt' => 'research {{args.q}}'],
+        ['name' => 'write',  'role' => 'writer',     'provider' => 'anthropic', 'prompt' => "summarize:\n{{steps.gather.output}}"],
+    ],
+    'return' => 'write',
+], 'flow_args' => ['q' => $flow->args['goal']]]);
+```
+
+A delegated call uses the same ledger / budget / resume / `parallel()` machinery,
+so its cost federates into the parent budget and it rehearses with the parent.
+The inline **spec uses the SDK's schema** (steps route across model `provider`s,
+not CLIs) and is executed by superagent's engine. A named delegation requires the
+flow to exist in the SDK registry (`superagent flow list`); a missing SDK or
+unknown flow fails gracefully (empty / `SKIP`) without crashing the parent. Under
+the hood: `SuperAICore\SmartFlow\Delegation` + `SuperAgentFlowBridge` (in-process
+via `SuperAgent\SmartFlow\FlowEngine`).
+
+### 32.5 YAML authoring
+
+Static flows live in `resources/flows/*.yaml` (compiled by `YamlFlowLoader`).
+Drop your own under `./flows`, `./.superaicore/flows`, or
+`super-ai-core.smartflow.flows_dir`. Templating: `{{args.x}}`,
+`{{steps.<name>.output}}`, `{{item}}`, dotted paths. Strategies: `solo`
+(default), `parallel`, `pipeline`, `gate`, `delegate`.
+
+```yaml
+- name: research            # hand the research leg to superagent
+  strategy: delegate
+  delegate: research-trio   # named SDK flow (or `spec: {...}` to author inline)
+  provider: "{{args.research_provider}}"
+  flow_args: {topic: "{{args.goal}}"}
+```
+
+Built-in flows: `cross-cli-review`, `cross-cli-dev`, `cross-cli-council`,
+`cross-cli-federated`. CLI: `superaicore flow list|show|plan|run` (and
+`php artisan flow ...`).
+
+### 32.6 When to reach for SmartFlow
+
+Smart / Squad / Auto decompose a task heuristically and route subtasks;
+AgentSpawn is the 3-phase spawn-plan protocol for CLIs without a native Agent
+tool. Reach for **SmartFlow** when you want *explicitly authored* multi-step
+control flow (fan-out, pipelines, gates, councils), per-step CLI routing,
+structured output, budgets, rehearsal, resume, and superagent federation — the
+same shape as Claude Code's `Workflow`, made cross-CLI.
+
+---
+
 ## See also
 
+- [docs/smartflow.md](smartflow.md) — SmartFlow cross-CLI workflows + superagent federation (1.0.5)
 - [docs/idempotency.md](idempotency.md) — 60s dedup window, repository-level contract
 - [docs/streaming-backends.md](streaming-backends.md) — per-CLI stream formats
 - [docs/task-runner-quickstart.md](task-runner-quickstart.md) — `TaskRunner` option reference

@@ -39,6 +39,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 29. [SDK 1.0.5 升级 + opencode 借鉴特性波次（0.9.7）](#29-sdk-105-升级--opencode-借鉴特性波次097)
 30. [Opus 4.8 + Grok + Cursor（1.0.0 / SDK 1.0.9）](#30-opus-48--grok--cursor100--sdk-109)
 31. [kimi-cli + kimi-code 双轨支持（1.0.2 / SDK 1.0.10）](#31-kimi-cli--kimi-code-双轨支持102--sdk-1010)
+32. [SmartFlow —— 跨 CLI 动态工作流 + superagent 联邦（1.0.5 / SDK 1.1.0）](#32-smartflow--跨-cli-动态工作流--superagent-联邦105--sdk-110)
 
 ---
 
@@ -3147,8 +3148,135 @@ provider type 现在拿到:
 
 ---
 
+## 32. SmartFlow —— 跨 CLI 动态工作流 + superagent 联邦（1.0.5 / SDK 1.1.0）
+
+SmartFlow 是 SuperAICore 对 Claude Code 内置 `Workflow` 引擎的移植,重新定位为
+以 **CLI/backend** 而非 API 模型作为路由单元。它跟随 SuperAgent SDK 的跨*模型*
+SmartFlow（SDK 1.1.0),但驱动的是 SuperAICore 已经管理的各 backend,并且可以把
+一个子 flow **委派**给 SDK 的引擎,实现真正的跨 CLI → 跨模型联邦。纯增量:
+Dispatcher、AgentSpawn 以及 Squad/Team/Smart/Auto 编排器都原封不动。完整参考:
+[docs/smartflow.md](smartflow.md)。
+
+### 32.1 原语
+
+一个 flow body 是 `callable(Flow $flow): mixed`（或一个编译成它的 YAML 文件）。
+`$flow` 暴露:`agent($prompt, $opts)`（一次跨 CLI 调用 → 用 `schema` 校验过的数组、
+原始字符串,或 `$flow->SKIP`）、`call()`（延迟,用于 fan-out）、
+`parallel([...])`（barrier;延迟调用经进程池并发执行）、
+`pipeline($items, ...$stages)`（按 item / 按 stage）、`gate($name, $check,
+$opts)`（带 `fallback`/`relay`/`required` 的验收）、`council($claim,
+$lenses)`（视角多样的投票,每个 lens 可钉到不同 CLI）、
+`budget`,以及 `log()`/`phase()`。`$opts` 的 key:`backend`（那个 CLI —— `provider`
+是被接受的别名）、`model`、`role`（persona）、`system`、`schema`、
+`temperature`、`max_tokens`、`label`、`provider_config`。
+
+```php
+use SuperAICore\SmartFlow\{FlowEngine, FlowDefinition, FlowOptions};
+
+$def = FlowDefinition::make('review', 'cross-CLI review', function ($flow) {
+    $flow->phase('Summarize');
+    $summary = $flow->agent("Summarize:\n{$flow->args['diff']}", ['backend' => 'claude_cli']);
+
+    $flow->phase('Review');
+    $reviews = $flow->parallel([
+        $flow->call("Correctness:\n$summary", ['role' => 'reviewer', 'backend' => 'codex_cli']),
+        $flow->call("Security:\n$summary",    ['role' => 'reviewer', 'backend' => 'gemini_cli']),
+    ]);
+
+    return $flow->agent("Decide:\n" . json_encode($flow->keep($reviews)), [
+        'backend' => 'claude_cli',
+        'schema'  => ['type' => 'object', 'required' => ['decision'],
+            'properties' => ['decision' => ['type' => 'string', 'enum' => ['approve', 'request_changes']]]],
+    ]);
+});
+
+$result = (new FlowEngine())->run($def, ['diff' => $diff]);   // ->value, ->costUsd(), ->ledger, ->runId
+```
+
+### 32.2 结构化输出 —— 3 层安全网
+
+CLI 返回的是散文,所以请求的 `schema` 会被烤进 prompt,再通过三层逐级升级回收
+出一个有效值 —— 整条回复的 JSON
+(`native`/`submitted`) → 围栏 ```` ```json ```` 块（`submitted`） →
+正则嗅探的对象/数组（`extracted`）—— 由零依赖的
+`SchemaValidator` 校验。若都无法校验通过,调用返回 `SKIP` 哨兵而非崩溃,
+于是 fan-out 可以用 `$flow->keep(...)` 把坏回复剔掉。
+
+### 32.3 Resume、账本、彩排
+
+每次运行都在 `~/.superaicore/flows/<runId>.jsonl` 下追加一份 JSONL 账本
+（覆盖:`SUPERAICORE_FLOW_DIR` 或 `super-ai-core.smartflow.ledger_dir`）。每次
+调用都根据你*声明*的内容获得一个内容寻址签名;`--resume
+<runId>` 以零成本重放最长的未变更前缀,只从第一个变更的调用起实跑
+（gate 占一个账本槽位,所以 gate 之后的调用保持对齐）。`--rehearse`
+/ `--dry-run` 在**不调用任何 CLI**的情况下端到端跑完一条 flow —— schema 调用
+拿到确定性的符合 schema 的桩,成本为 `$0` —— 所以 flow 在裸机上也可测。
+
+### 32.4 联邦 —— 把子 flow 委派给 superagent
+
+一条 SuperAICore flow 可以把子 flow 交给 superagent 自己的（跨模型）
+SmartFlow。这正是预期的分层:SuperAICore 在各 CLI 间 fan-out;
+`superagent` 这一支在各模型 provider 间 fan-out。两种模式:
+
+```php
+// named —— superagent 运行它自己的某条 flow;由它在各 provider 间自行分发
+$findings = $flow->delegate('research-trio', [
+    'flow_args'        => ['topic' => $flow->args['goal']],
+    'delegate_provider' => 'openai',     // 引导 superagent 的模型档位
+]);
+
+// spec —— superagent 运行一条由 SuperAICore 编写的 flow（基于 provider、跨模型）
+$brief = $flow->delegate('', ['spec' => [
+    'name'  => 'mini-brief',
+    'steps' => [
+        ['name' => 'gather', 'role' => 'researcher', 'provider' => 'openai',    'prompt' => 'research {{args.q}}'],
+        ['name' => 'write',  'role' => 'writer',     'provider' => 'anthropic', 'prompt' => "summarize:\n{{steps.gather.output}}"],
+    ],
+    'return' => 'write',
+], 'flow_args' => ['q' => $flow->args['goal']]]);
+```
+
+被委派的调用复用同一套账本 / 预算 / resume / `parallel()` 机制,
+所以它的开销联邦进父预算,并随父 flow 一起彩排。内联的 **spec 使用 SDK 的
+schema**（step 在各模型 `provider` 间路由,而非 CLI),由 superagent 的引擎
+执行。named 委派要求该 flow 存在于 SDK registry 中（`superagent flow list`）;
+SDK 缺失或 flow 未知时优雅失败（空 / `SKIP`),不会拖垮父 flow。底层:
+`SuperAICore\SmartFlow\Delegation` + `SuperAgentFlowBridge`（经
+`SuperAgent\SmartFlow\FlowEngine` 进程内执行）。
+
+### 32.5 YAML 编写
+
+静态 flow 位于 `resources/flows/*.yaml`（由 `YamlFlowLoader` 编译）。
+把你自己的放在 `./flows`、`./.superaicore/flows` 或
+`super-ai-core.smartflow.flows_dir` 下。模板:`{{args.x}}`、
+`{{steps.<name>.output}}`、`{{item}}`、点号路径。策略:`solo`
+（默认）、`parallel`、`pipeline`、`gate`、`delegate`。
+
+```yaml
+- name: research            # hand the research leg to superagent
+  strategy: delegate
+  delegate: research-trio   # named SDK flow (or `spec: {...}` to author inline)
+  provider: "{{args.research_provider}}"
+  flow_args: {topic: "{{args.goal}}"}
+```
+
+内置 flow:`cross-cli-review`、`cross-cli-dev`、`cross-cli-council`、
+`cross-cli-federated`。CLI:`superaicore flow list|show|plan|run`（以及
+`php artisan flow ...`）。
+
+### 32.6 何时该用 SmartFlow
+
+Smart / Squad / Auto 用启发式拆解任务并路由子任务;
+AgentSpawn 是给没有原生 Agent 工具的 CLI 用的 3 阶段 spawn-plan 协议。
+当你想要*显式编写*的多步控制流（fan-out、pipeline、gate、council）、
+按 step 的 CLI 路由、结构化输出、预算、彩排、resume 以及 superagent 联邦时,
+就该用 **SmartFlow** —— 与 Claude Code 的 `Workflow` 同一形态,做成跨 CLI 的。
+
+---
+
 ## 另见
 
+- [docs/smartflow.md](smartflow.md) —— SmartFlow 跨 CLI 工作流 + superagent 联邦（1.0.5）
 - [docs/idempotency.md](idempotency.md) —— 60 秒去重窗口、repository 层契约
 - [docs/streaming-backends.md](streaming-backends.md) —— 各 CLI 流格式
 - [docs/task-runner-quickstart.md](task-runner-quickstart.md) —— `TaskRunner` 选项参考
