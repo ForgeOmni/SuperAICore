@@ -76,6 +76,13 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $env = [];
         if (!empty($providerConfig['api_key'])) {
             $env['OPENAI_API_KEY'] = $providerConfig['api_key'];
+        } elseif (($providerConfig['type'] ?? 'builtin') === 'builtin') {
+            // builtin = use `codex login` (ChatGPT subscription, stored in
+            // ~/.codex/auth.json). The user supplied no key, so key validity
+            // must be irrelevant: scrub any stale inherited OPENAI_API_KEY
+            // (false = unset in child) so a leftover/invalid console key in
+            // the host env can't override the subscription login and 401.
+            $env['OPENAI_API_KEY'] = false;
         }
         if (!empty($providerConfig['base_url'])) {
             $env['OPENAI_BASE_URL'] = $providerConfig['base_url'];
@@ -140,6 +147,13 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $env = [];
         if (!empty($providerConfig['api_key'])) {
             $env['OPENAI_API_KEY'] = $providerConfig['api_key'];
+        } elseif (($providerConfig['type'] ?? 'builtin') === 'builtin') {
+            // builtin = use `codex login` (ChatGPT subscription, stored in
+            // ~/.codex/auth.json). The user supplied no key, so key validity
+            // must be irrelevant: scrub any stale inherited OPENAI_API_KEY
+            // (false = unset in child) so a leftover/invalid console key in
+            // the host env can't override the subscription login and 401.
+            $env['OPENAI_API_KEY'] = false;
         }
         if (!empty($providerConfig['base_url'])) {
             $env['OPENAI_BASE_URL'] = $providerConfig['base_url'];

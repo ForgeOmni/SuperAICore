@@ -154,6 +154,12 @@ class TaskRunner
             $this->writeFile((string) $options['prompt_file'], $prompt);
         }
 
+        // Lazy capability sync: ensure this backend's native skill surface
+        // reflects the host's current library before we spawn it. Cheap
+        // (one fingerprint compare), a no-op when no SkillLibrary is bound
+        // or the backend isn't bridgeable, and never throws.
+        $this->ensureCliSkillsSynced($backend);
+
         $dispatchOptions = $this->buildDispatchOptions($backend, $prompt, $options);
         $result = $this->dispatcher->dispatch($dispatchOptions);
 
@@ -380,6 +386,23 @@ class TaskRunner
 
         return ($last ?? TaskResultEnvelope::failed(error: 'TaskRunner fallback chain produced no attempts'))
             ->withFallbackReport($attempts, $this->fallbackDecision($chain, $options, $skipped, $decisionEvents, $totalCostUsd));
+    }
+
+    /**
+     * Lazy on-dispatch skill sync. Normalizes the dispatch backend key
+     * (`codex_cli` → `codex`) and asks {@see CliSkillBridge} to refresh
+     * that backend's native skill surface only if the host library
+     * changed since the last sync. Best-effort: any failure is swallowed
+     * so it can never block a dispatch.
+     */
+    protected function ensureCliSkillsSynced(string $backend): void
+    {
+        try {
+            $engine = str_ends_with($backend, '_cli') ? substr($backend, 0, -4) : $backend;
+            (new \SuperAICore\Services\CliSkillBridge())->ensureSynced($engine);
+        } catch (\Throwable) {
+            // never let capability sync block the actual task
+        }
     }
 
     /**

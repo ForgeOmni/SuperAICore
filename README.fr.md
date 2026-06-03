@@ -27,6 +27,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#vague-opus-48--grok--cursor-100--sdk-109)
   - [Vague kimi-cli + kimi-code (1.0.2 / SDK 1.0.10)](#vague-kimi-cli--kimi-code-102--sdk-1010)
   - [Vague workflows cross-CLI SmartFlow (1.0.5 / SDK 1.1.0)](#vague-workflows-cross-cli-smartflow-105--sdk-110)
+  - [Vague pont de skills CLI (1.0.6)](#vague-pont-de-skills-cli-106)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -101,6 +102,49 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague pont de skills CLI (1.0.6)
+
+Un pont générique unique, sûr face aux symlinks et empreinté, qui diffuse la
+bibliothèque de skills + agents d'un hôte vers la surface native de chaque CLI
+backend — exactement la forme que `McpManager::syncAllBackends()` donne déjà au
+MCP. Avant 1.0.6, chaque hôte bricolait son propre sync séparé par CLI ; 1.0.6
+les unifie derrière un contrat + un service + une commande, plus un sync paresseux
+au dispatch. Additif et non cassant : quand aucune `SkillLibrary` n'est bindée, le
+pont est un no-op silencieux.
+
+- **Contrat `SkillLibrary`** *(1.0.6)* — l'hôte implémente cinq méthodes
+  (`skills()`, `agents()`, `skillWrapper($backend,$name)`,
+  `instructionsDigest($backend)`, `fingerprint()`) et la bind
+  (`$this->app->singleton(SkillLibrary::class, MyLibrary::class)`). SuperAICore
+  sait OÙ / COMMENT / QUAND ; l'hôte fournit le QUOI. Aucune hypothèse d'hôte
+  n'est figée dans le package.
+- **Trois formes d'installation** *(1.0.6)* — `CliSkillBridge` diffuse la
+  bibliothèque par backend : **`native_dir`** (codex / gemini / grok / cursor /
+  qwen) dépose un répertoire de wrapper préfixé par skill dans le répertoire de
+  skills du CLI ; **`instructions`** (copilot / kimi / kiro) écrit un unique
+  fichier digest qui indique au modèle comment charger n'importe quel skill à la
+  demande ; **`source`** (claude) lit `.claude/skills` directement et n'installe
+  rien.
+- **Sûr face aux symlinks** *(1.0.6)* — le pont **n'écrit jamais à travers un
+  symlink**. Chaque répertoire de wrapper / `SKILL.md` / digest / manifeste est
+  vérifié via `is_link()` et le lien périmé est délié (cible intacte) avant toute
+  écriture — ce qui ferme la faille d'écriture-à-travers-symlink qui avait un jour
+  écrasé des corps de skills source.
+- **Sync paresseux au dispatch** *(1.0.6)* — chaque sync inscrit le
+  `fingerprint()` de la bibliothèque dans un manifeste par backend
+  (`.superteam-skill-sync.json`) ; `TaskRunner` réinstalle un backend avant un
+  dispatch uniquement quand l'empreinte a dérivé, de sorte que le hot path est une
+  seule comparaison de hash. Le pruning est borné au manifeste — il ne touche
+  jamais aux skills propres à l'utilisateur.
+- **`superaicore:sync-cli`** *(1.0.6)* — une seule commande propage toute la
+  surface de capacités (skills + MCP) vers chaque CLI installé :
+  `--skills-only` / `--mcp-only` / `--backends=codex,gemini` / `--project-root=`.
+- **Correctif intégré** *(1.0.6)* — les runs `builtin` (abonnement/OAuth) sur les
+  backends claude / codex / gemini / cursor / grok nettoient désormais toute clé
+  console périmée héritée pour qu'elle ne puisse pas court-circuiter le login et
+  provoquer un 401 ; le token OAuth Keychain de Claude est injecté comme
+  `CLAUDE_CODE_OAUTH_TOKEN`, et non `ANTHROPIC_API_KEY`.
 
 ### Vague workflows cross-CLI SmartFlow (1.0.5 / SDK 1.1.0)
 
@@ -942,6 +986,10 @@ la fédération superagent (modes `delegate` named/spec).
 ./vendor/bin/superaicore copilot:sync-hooks                   # fusionner hooks style Claude dans Copilot
 ./vendor/bin/superaicore kiro:sync --dry-run                  # ~/.kiro/agents/*.json (0.6.1+)
 ./vendor/bin/superaicore kimi:sync                            # ~/.kimi/agents/*.yaml + mcp.json (0.6.8+)
+
+# …ou, dans un hôte Laravel avec une SkillLibrary bindée, faire tout ce qui précède de façon générique (1.0.6+) :
+php artisan superaicore:sync-cli                              # skills + MCP → chaque CLI installé
+php artisan superaicore:sync-cli --skills-only --backends=codex,gemini
 
 # Exécuter la même tâche sur N agents Copilot en parallèle
 ./vendor/bin/superaicore copilot:fleet "refactoriser auth" --agents planner,reviewer,tester

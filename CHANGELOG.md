@@ -4,6 +4,78 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] — 2026-06-03
+
+**CLI skill bridge: one generic, symlink-safe, fingerprinted bridge that fans a
+host's skill + agent library into every CLI backend's native surface — the way
+`McpManager` already bridges MCP.** Before 1.0.6 each host hand-rolled a separate
+per-CLI sync (a Codex wrapper installer, a Gemini custom-command sync, a Kimi
+agent translator, …); 1.0.6 unifies the pattern behind a single
+`SuperAICore\Contracts\SkillLibrary` contract + `CliSkillBridge` service +
+`superaicore:sync-cli` command, and wires a **lazy on-dispatch sync** into
+`TaskRunner` so every CLI spawn keeps that backend's skill surface fresh for the
+cost of one fingerprint compare. SuperAICore stays generic — it knows WHERE each
+CLI keeps its skills, HOW to install them safely, and WHEN to re-sync; the host
+supplies WHAT via the contract. **Additive and non-breaking** — no migrations, no
+config changes; when no `SkillLibrary` is bound the bridge is a silent no-op, so
+existing hosts are unaffected. Also folds in a cross-backend `builtin`
+subscription-auth fix. SDK pin unchanged (`^1.1.0`).
+
+```bash
+composer update forgeomni/superaicore
+# no migrations. Bind a host SkillLibrary (see below) then:
+php artisan superaicore:sync-cli            # skills + MCP → every installed CLI
+```
+
+### Added — generic CLI skill bridge (`src/Services/CliSkillBridge.php`)
+
+- **`SkillLibrary` contract** *(1.0.6)* — `src/Contracts/SkillLibrary.php`. A host
+  implements five methods — `skills()`, `agents()`, `skillWrapper($backend,$name)`,
+  `instructionsDigest($backend)`, `fingerprint()` — and binds it in the container
+  (`$this->app->singleton(SkillLibrary::class, MyLibrary::class)`). SuperAICore
+  carries zero host assumptions: when nothing is bound, the whole bridge no-ops.
+- **`CliSkillBridge` service** *(1.0.6)* — resolves the bound library and fans it
+  out per backend in one of three shapes: **`native_dir`** (codex `.codex/skills`,
+  gemini `.gemini/skills`, grok `.grok/skills`, cursor `.cursor/skills-cursor`,
+  qwen `.qwen/skills`) drops one prefixed wrapper dir per skill; **`instructions`**
+  (copilot / kimi / kiro) writes a single digest file telling the model how to
+  load any skill on demand; **`source`** (claude reads `.claude/skills` directly)
+  and **`none`** (superagent) install nothing.
+- **Symlink-safe writes** *(1.0.6)* — the fix for the write-through-symlink
+  incident that once clobbered 72 source skill bodies: the bridge **never writes
+  through a symlink**. Every wrapper dir, `SKILL.md`, digest file, and manifest is
+  `is_link()`-checked and the stale link unlinked (target left intact) before any
+  write, so a `~/.codex/skills/super-team-x -> …/.claude/skills/x` link can never
+  let a wrapper overwrite the source.
+- **Lazy on-dispatch sync** *(1.0.6)* — each sync stamps the library
+  `fingerprint()` into a per-backend manifest (`.superteam-skill-sync.json`).
+  `TaskRunner` calls `CliSkillBridge::ensureSynced($engine)` before every CLI
+  dispatch; it re-installs only when the fingerprint drifted, so the hot path
+  costs one hash compare. Pruning is manifest-scoped — only wrappers the bridge
+  installed before are removed, never the user's own skills.
+- **`superaicore:sync-cli` command** *(1.0.6)* — `php artisan superaicore:sync-cli`
+  propagates the whole capability surface — **skills via `CliSkillBridge`, MCP via
+  the existing `McpManager::syncAllBackends()`** — to every installed CLI in one
+  shot. Flags: `--skills-only`, `--mcp-only`, `--backends=codex,gemini`,
+  `--project-root=`. Best for manual / cron / git-hook full refreshes; the lazy
+  `TaskRunner` hook covers the per-dispatch case.
+
+### Fixed — `builtin` subscription auth across CLI backends
+
+- **Claude `builtin` OAuth token uses the right env var** *(1.0.6)* — the
+  Keychain-extracted subscription token (`sk-ant-oat01-…`) is now injected as
+  `CLAUDE_CODE_OAUTH_TOKEN` (OAuth/Bearer path), not `ANTHROPIC_API_KEY` — the
+  latter made `claude` send it as an `x-api-key` console key and 401 with
+  `apiKeySource:"ANTHROPIC_API_KEY"`, `api_error_status:401`.
+- **Stale inherited keys scrubbed on `builtin`** *(1.0.6)* — when a backend runs
+  on its subscription/OAuth login (no key supplied), a leftover/invalid console
+  key in the host env (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` +
+  `GOOGLE_API_KEY` / `CURSOR_API_KEY` / `XAI_API_KEY` + `GROK_API_KEY`) is unset in
+  the child process so it can't override the login and 401. Gemini additionally
+  flips `GOOGLE_GENAI_USE_GCA=true` so the CLI reaches for its OAuth login file.
+  Covers `ClaudeCliBackend`, `CodexCliBackend`, `GeminiCliBackend`,
+  `CursorCliBackend`, `GrokCliBackend`.
+
 ## [1.0.5] — 2026-06-02
 
 **SmartFlow lands in SuperAICore: cross-CLI dynamic workflows — the multi-CLI

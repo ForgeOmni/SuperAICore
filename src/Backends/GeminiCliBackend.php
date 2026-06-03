@@ -80,6 +80,16 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $env = [];
         if (!empty($providerConfig['api_key'])) {
             $env['GEMINI_API_KEY'] = $providerConfig['api_key'];
+        } elseif (($providerConfig['type'] ?? 'builtin') === 'builtin' && empty($providerConfig['extra_config']['project_id'])) {
+            // builtin = use the local `gemini` OAuth login (~/.gemini). The
+            // user supplied no key, so scrub any stale inherited GEMINI_API_KEY
+            // / GOOGLE_API_KEY (false = unset in child) and flip
+            // GOOGLE_GENAI_USE_GCA so the CLI reaches for the OAuth login file
+            // instead of an invalid/leftover console key (mirrors the same
+            // fallback in prepareScriptedProcess()).
+            $env['GEMINI_API_KEY'] = false;
+            $env['GOOGLE_API_KEY'] = false;
+            $env['GOOGLE_GENAI_USE_GCA'] = 'true';
         }
         // Vertex AI passthrough
         $extra = $providerConfig['extra_config'] ?? [];
@@ -150,6 +160,16 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $env = [];
         if (!empty($providerConfig['api_key'])) {
             $env['GEMINI_API_KEY'] = $providerConfig['api_key'];
+        } elseif (($providerConfig['type'] ?? 'builtin') === 'builtin' && empty($providerConfig['extra_config']['project_id'])) {
+            // builtin = use the local `gemini` OAuth login (~/.gemini). The
+            // user supplied no key, so scrub any stale inherited GEMINI_API_KEY
+            // / GOOGLE_API_KEY (false = unset in child) and flip
+            // GOOGLE_GENAI_USE_GCA so the CLI reaches for the OAuth login file
+            // instead of an invalid/leftover console key (mirrors the same
+            // fallback in prepareScriptedProcess()).
+            $env['GEMINI_API_KEY'] = false;
+            $env['GOOGLE_API_KEY'] = false;
+            $env['GOOGLE_GENAI_USE_GCA'] = 'true';
         }
         $extra = $providerConfig['extra_config'] ?? [];
         if (!empty($extra['project_id'])) {

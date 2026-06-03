@@ -439,34 +439,50 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
             case 'builtin':
             default:
-                // macOS fallback: extract the OAuth token from Keychain
-                // and inject it as ANTHROPIC_API_KEY when we can reach it.
+                // `builtin` means "use the user's Claude Code subscription
+                // login". The user explicitly did NOT supply an API key, so
+                // key validity must be irrelevant here — every other CLI
+                // backend (codex / gemini / copilot / cursor / grok / kiro)
+                // treats `builtin` as "inject nothing, rely on the binary's
+                // own login". Claude is the one exception only because its
+                // OAuth token lives in the macOS Keychain (not a readable
+                // dotfile), so we extract + re-inject it as a PHP-FPM
+                // fallback — but it MUST be injected via the correct env var.
                 //
-                // Why: claude's native `builtin` login talks to macOS
-                // Keychain via the native Security framework API, which
-                // respects audit-session boundaries. Processes spawned
-                // from PHP-FPM workers (web UI → nohup → task:execute
-                // → claude) live in a different audit session from the
-                // interactive shell where the user ran `claude login`;
-                // claude's native keychain call silently fails there and
-                // the CLI returns `"Not logged in · Please run /login"`
-                // with `apiKeySource:"none"`.
+                // CRITICAL: the Keychain token is an OAuth *subscription*
+                // token (`sk-ant-oat01-…`), NOT a console API key. It must be
+                // passed as CLAUDE_CODE_OAUTH_TOKEN (Bearer / OAuth auth path).
+                // Passing it as ANTHROPIC_API_KEY makes claude send it as an
+                // `x-api-key` console key → the API returns 401 "Invalid API
+                // key · Fix external API key" (init log shows
+                // `apiKeySource:"ANTHROPIC_API_KEY"`, `api_error_status:401`).
+                // That was the original bug. CLAUDE_CODE_OAUTH_TOKEN works.
                 //
-                // The `security` CLI escapes this restriction (it's a
-                // privileged macOS tool) and returns the same OAuth
-                // token claude stored. We read it here and pass it
-                // through as `ANTHROPIC_API_KEY` — claude honors that
-                // env var as an authenticated session.
+                // Also defensively REMOVE any inherited ANTHROPIC_API_KEY
+                // (false = unset in the child): if the host shell / .env has
+                // a stale or invalid console key, it must never bleed into a
+                // `builtin` (= subscription) run and 401 it. This is what
+                // makes "pick built-in → never worry about a key" actually
+                // hold.
+                $env['ANTHROPIC_API_KEY'] = false;
+
+                // Why the Keychain read: claude's native `builtin` login
+                // talks to the Keychain via the Security framework API, which
+                // respects audit-session boundaries. Processes spawned from
+                // PHP-FPM workers (web UI → nohup → task:execute → claude)
+                // live in a different audit session than the interactive
+                // shell where the user ran `claude login`; the native call
+                // silently fails there ("Not logged in · Please run /login",
+                // `apiKeySource:"none"`). The `security` CLI escapes that
+                // restriction and returns the same OAuth token.
                 //
-                // Silent fallback: if the keychain lookup fails (non-macOS,
-                // token not present, user never logged in), we leave env
-                // empty and let claude's native path handle it. In
-                // keychain-accessible contexts this is redundant but
-                // harmless; in PHP-FPM contexts it's the only path that
-                // works for OAuth-based builtin auth.
+                // Silent fallback: if the lookup fails (non-macOS, token not
+                // present, never logged in) we inject nothing and let claude's
+                // native path handle it — in a Terminal-spawned context that
+                // works (and auto-refreshes); only PHP-FPM needs this branch.
                 $oauthToken = $this->readBuiltinOauthToken();
                 if ($oauthToken) {
-                    $env['ANTHROPIC_API_KEY'] = $oauthToken;
+                    $env['CLAUDE_CODE_OAUTH_TOKEN'] = $oauthToken;
                 }
                 break;
         }

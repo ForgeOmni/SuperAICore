@@ -27,6 +27,7 @@
   - [Opus 4.8 + Grok + Cursor 波次（1.0.0 / SDK 1.0.9）](#opus-48--grok--cursor-波次100--sdk-109)
   - [kimi-cli + kimi-code 双轨波次（1.0.2 / SDK 1.0.10）](#kimi-cli--kimi-code-双轨波次102--sdk-1010)
   - [SmartFlow 跨 CLI 工作流波次（1.0.5 / SDK 1.1.0）](#smartflow-跨-cli-工作流波次105--sdk-110)
+  - [CLI skill 桥接波次（1.0.6）](#cli-skill-桥接波次106)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -101,6 +102,41 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### CLI skill 桥接波次（1.0.6）
+
+一座通用、symlink 安全、带指纹校验的桥,把宿主的 skill + agent 库
+fan-out 到每个 CLI backend 的原生形态 —— 跟 `McpManager::syncAllBackends()`
+已经给 MCP 的形态一模一样。1.0.6 之前每个宿主都各自手搓一套 per-CLI 的
+sync;1.0.6 用一个 contract + service + 命令把它们统一起来,再加一个
+按需的惰性 on-dispatch sync。纯增量、无破坏:没有绑定 `SkillLibrary` 时,
+这座桥就是个静默的 no-op。
+
+- **`SkillLibrary` contract**（1.0.6）—— 宿主实现五个方法
+  (`skills()`、`agents()`、`skillWrapper($backend,$name)`、
+  `instructionsDigest($backend)`、`fingerprint()`) 并绑定它
+  (`$this->app->singleton(SkillLibrary::class, MyLibrary::class)`)。SuperAICore
+  知道 WHERE / HOW / WHEN;宿主提供 WHAT。包里不烤任何宿主假设。
+- **三种安装形态**（1.0.6）—— `CliSkillBridge` 按 backend 把库 fan-out:
+  **`native_dir`**（codex / gemini / grok / cursor / qwen）为每个 skill 往
+  CLI 的 skills 目录里放一个带前缀的 wrapper 目录;**`instructions`**
+  （copilot / kimi / kiro）写一份摘要文件,告诉模型如何按需加载任意 skill;
+  **`source`**（claude）直接读 `.claude/skills`,什么都不装。
+- **symlink 安全**（1.0.6）—— 这座桥**绝不写穿 symlink**。每个 wrapper
+  目录 / `SKILL.md` / 摘要 / manifest 在写入前都先 `is_link()` 检查,把陈旧
+  的 link 先 unlink 掉(target 完好无损),从而堵上那个曾经把源 skill 正文
+  覆盖掉的"写穿 symlink"漏洞。
+- **惰性 on-dispatch sync**（1.0.6）—— 每次 sync 都把库的 `fingerprint()`
+  盖进一份 per-backend manifest(`.superteam-skill-sync.json`);只有指纹漂移
+  时,`TaskRunner` 才会在分发前重装某个 backend,所以热路径只是一次哈希比对。
+  剪枝是 manifest 范围内的 —— 绝不碰用户自己的 skill。
+- **`superaicore:sync-cli`**（1.0.6）—— 一条命令把整个能力面
+  (skills + MCP) 传播到每个已安装的 CLI:
+  `--skills-only` / `--mcp-only` / `--backends=codex,gemini` / `--project-root=`。
+- **顺带修的一处**（1.0.6）—— `builtin`（订阅 / OAuth）在
+  claude / codex / gemini / cursor / grok 这几个 backend 上运行时,现在会清掉
+  任何继承下来的陈旧 console key,免得它覆盖登录态导致 401;Claude 的 Keychain
+  OAuth token 现在注入为 `CLAUDE_CODE_OAUTH_TOKEN`,而不是 `ANTHROPIC_API_KEY`。
 
 ### SmartFlow 跨 CLI 工作流波次（1.0.5 / SDK 1.1.0）
 
@@ -823,6 +859,10 @@ superagent 联邦（`delegate` 的 named/spec 模式）详见
 ./vendor/bin/superaicore copilot:sync-hooks                   # 合并 Claude 风格 hooks 到 Copilot
 ./vendor/bin/superaicore kiro:sync --dry-run                  # ~/.kiro/agents/*.json（0.6.1+）
 ./vendor/bin/superaicore kimi:sync                            # ~/.kimi/agents/*.yaml + mcp.json（0.6.8+）
+
+# …或者,在绑定了 SkillLibrary 的 Laravel 宿主里,用一条命令通用地做完上面所有事（1.0.6+）:
+php artisan superaicore:sync-cli                              # skills + MCP → 每个已安装的 CLI
+php artisan superaicore:sync-cli --skills-only --backends=codex,gemini
 
 # 同一任务并发分发给 N 个 Copilot agent
 ./vendor/bin/superaicore copilot:fleet "重构 auth" --agents planner,reviewer,tester

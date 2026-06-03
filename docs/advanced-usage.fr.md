@@ -40,6 +40,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 30. [Opus 4.8 + Grok + Cursor (1.0.0 / SDK 1.0.9)](#30-opus-48--grok--cursor-100--sdk-109)
 31. [Support bi-CLI kimi-cli + kimi-code (1.0.2 / SDK 1.0.10)](#31-support-bi-cli-kimi-cli--kimi-code-102--sdk-1010)
 32. [SmartFlow — workflows dynamiques cross-CLI + fédération superagent (1.0.5 / SDK 1.1.0)](#32-smartflow--workflows-dynamiques-cross-cli--fédération-superagent-105--sdk-110)
+33. [Pont de skills CLI — `superaicore:sync-cli` + le contrat `SkillLibrary` (1.0.6)](#33-pont-de-skills-cli--superaicoresync-cli--le-contrat-skilllibrary-106)
 
 ---
 
@@ -3427,6 +3428,145 @@ contrôle multi-étapes *explicitement écrit* (fan-out, pipelines, gates, counc
 un routage CLI par étape, une sortie structurée, des budgets, de la répétition, du
 resume et la fédération superagent — la même forme que le `Workflow` de Claude
 Code, rendue cross-CLI.
+
+---
+
+## 33. Pont de skills CLI — `superaicore:sync-cli` + le contrat `SkillLibrary` (1.0.6)
+
+SuperAICore relie déjà le **MCP** à la config native de chaque CLI backend
+(`McpManager::syncAllBackends()`, §13). 1.0.6 offre aux **skills + agents** le même
+traitement avec un pont générique unique, de sorte qu'un hôte cesse de bricoler un
+sync séparé par CLI (un installateur de wrapper Codex, un sync de commande custom
+Gemini, un traducteur Kimi, …).
+
+Le partage des responsabilités est tout l'enjeu :
+
+- **SuperAICore sait OÙ / COMMENT / QUAND.** Où chaque CLI range ses skills,
+  comment y installer un wrapper *en sécurité* (jamais à travers un symlink), et
+  quand resynchroniser (uniquement quand l'empreinte a dérivé).
+- **L'hôte sait QUOI.** Il implémente `SuperAICore\Contracts\SkillLibrary` et la
+  bind. SuperAICore ne porte aucune hypothèse d'hôte — quand rien n'est bindé, le
+  pont est un no-op silencieux, de sorte que le package reste agnostique de
+  l'hôte.
+
+### Le contrat
+
+```php
+namespace SuperAICore\Contracts;
+
+interface SkillLibrary
+{
+    /** @return array<int,array{name:string,description:string}> */
+    public function skills(): array;
+
+    /** @return array<int,array{name:string,description?:string}> */
+    public function agents(): array;
+
+    /** Full SKILL.md for a backend's NATIVE skill dir (codex/gemini/…). */
+    public function skillWrapper(string $backend, string $skillName): string;
+
+    /** Markdown digest for backends with no skill dir (copilot/kimi/kiro). */
+    public function instructionsDigest(string $backend): string;
+
+    /** Stable hash of the whole library; drives the lazy re-sync. */
+    public function fingerprint(): string;
+}
+```
+
+Bindez-le dans un service provider :
+
+```php
+$this->app->singleton(
+    \SuperAICore\Contracts\SkillLibrary::class,
+    \App\Services\SuperTeamSkillLibrary::class,
+);
+```
+
+### Les wrappers fins gardent la source autoritaire
+
+Le corps `skillWrapper()` recommandé est un SKILL.md **fin** qui délègue au loader
+de l'hôte au lieu de dupliquer le vrai corps du skill — ainsi les éditions du
+`.claude/skills/<name>/SKILL.md` canonique ne nécessitent aucun resync, et le
+wrapper ne peut jamais dériver de (ou écraser) la source :
+
+```php
+public function skillWrapper(string $backend, string $skill): string
+{
+    return <<<MD
+    ---
+    name: super-team-{$skill}
+    description: Runtime wrapper for `{$skill}`; loads the latest definition from source.
+    ---
+    Load the canonical definition (do not duplicate it here):
+    ```bash
+    php /path/to/host/artisan super-team:skill {$skill} --format=markdown
+    ```
+    MD;
+}
+```
+
+### Trois formes d'installation
+
+`CliSkillBridge::BACKENDS` mappe chaque backend sur un mode — ajouter un CLI est un
+changement d'une ligne :
+
+| Mode | Backends | Ce qui est posé | Chemin $HOME |
+|------|----------|-----------|-----------|
+| `native_dir`  | codex, gemini, grok, cursor, qwen | un répertoire de wrapper préfixé par skill (`super-team-<name>/SKILL.md`) | `.codex/skills`, `.gemini/skills`, `.grok/skills`, `.cursor/skills-cursor`, `.qwen/skills` |
+| `instructions`| copilot, kimi, kiro | un fichier digest (comment charger n'importe quel skill à la demande + la liste) | `.copilot/super-team-skills.md`, `.kimi/…`, `.kiro/…` |
+| `source`      | claude | rien — lit le `.claude/skills` de l'hôte directement | — |
+| `none`        | superagent | rien | — |
+
+### Écritures sûres face aux symlinks (le correctif d'écrasement)
+
+Le pont **n'écrit jamais à travers un symlink**. Avant d'écrire un répertoire de
+wrapper, un `SKILL.md`, un digest ou un manifeste, il vérifie la cible via
+`is_link()` et délie d'abord un lien périmé (en laissant la *cible* du lien
+intacte). Cela ferme la faille d'écriture-à-travers-symlink où un lien résiduel
+`~/.codex/skills/super-team-x -> …/.claude/skills/x` laissait une écriture de
+wrapper écraser le vrai corps du skill source.
+
+### Sync paresseux au dispatch
+
+Chaque sync inscrit le `fingerprint()` dans un manifeste par backend
+(`.superteam-skill-sync.json`) à côté de la liste des wrappers qu'il a installés.
+`TaskRunner` appelle le pont avant chaque dispatch CLI :
+
+```php
+// TaskRunner::ensureCliSkillsSynced() — normalizes codex_cli → codex, best-effort
+(new \SuperAICore\Services\CliSkillBridge())->ensureSynced($engine);
+```
+
+`ensureSynced()` est peu coûteux : `needsSync()` compare un seul hash et retourne
+tôt quand la bibliothèque n'a pas changé, de sorte que le coût par dispatch est une
+seule comparaison. Le pruning est **borné au manifeste** — seuls les wrappers que
+ce pont a installés auparavant et qu'il ne veut plus sont retirés ; les skills
+propres à l'utilisateur ne sont jamais touchés. Tout échec est avalé pour qu'un
+raté de sync ne puisse jamais bloquer un dispatch.
+
+### `superaicore:sync-cli` — le refresh complet manuel / cron
+
+```bash
+php artisan superaicore:sync-cli                       # skills + MCP → every installed CLI
+php artisan superaicore:sync-cli --skills-only         # skip the MCP step
+php artisan superaicore:sync-cli --mcp-only            # only MCP (= mcp:sync-backends)
+php artisan superaicore:sync-cli --backends=codex,gemini
+php artisan superaicore:sync-cli --project-root=/path  # override .mcp.json discovery
+```
+
+Les skills passent par `CliSkillBridge` ; le MCP réutilise
+`McpManager::syncAllBackends()`. Le hook `TaskRunner` par dispatch garde les
+backends à jour pendant l'usage normal — recourez à cette commande pour un refresh
+ponctuel depuis un git hook, un cron, ou après avoir édité la bibliothèque.
+
+### Usage programmatique
+
+```php
+$bridge = new \SuperAICore\Services\CliSkillBridge();   // resolves the bound library
+if ($bridge->active()) {
+    $report = $bridge->syncAll(['codex', 'gemini']);    // [['backend'=>…,'installed'=>189,'pruned'=>0,'path'=>…], …]
+}
+```
 
 ---
 

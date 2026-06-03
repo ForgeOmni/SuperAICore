@@ -469,6 +469,7 @@ class SuperAICoreServiceProvider extends ServiceProvider
             $this->commands([
                 \SuperAICore\Console\Commands\ClaudeMcpSyncCommand::class,
                 \SuperAICore\Console\Commands\McpSyncBackendsCommand::class,
+                \SuperAICore\Console\Commands\CliSyncCommand::class,
 
                 // SmartFlow (1.0.5) — cross-CLI dynamic workflows. Exposed as
                 // `php artisan flow ...` inside a Laravel host, mirroring the

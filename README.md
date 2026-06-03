@@ -27,6 +27,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [Opus 4.8 + Grok + Cursor wave (1.0.0 / SDK 1.0.9)](#opus-48--grok--cursor-wave-100--sdk-109)
   - [kimi-cli + kimi-code dual-CLI wave (1.0.2 / SDK 1.0.10)](#kimi-cli--kimi-code-dual-cli-wave-102--sdk-1010)
   - [SmartFlow cross-CLI workflows wave (1.0.5 / SDK 1.1.0)](#smartflow-cross-cli-workflows-wave-105--sdk-110)
+  - [CLI skill bridge wave (1.0.6)](#cli-skill-bridge-wave-106)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -101,6 +102,43 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### CLI skill bridge wave (1.0.6)
+
+One generic, symlink-safe, fingerprinted bridge that fans a host's skill + agent
+library into every CLI backend's native surface — the same shape
+`McpManager::syncAllBackends()` already gives MCP. Before 1.0.6 each host
+hand-rolled a separate per-CLI sync; 1.0.6 unifies them behind a contract +
+service + command, plus a lazy on-dispatch sync. Additive and non-breaking: when
+no `SkillLibrary` is bound the bridge is a silent no-op.
+
+- **`SkillLibrary` contract** *(1.0.6)* — the host implements five methods
+  (`skills()`, `agents()`, `skillWrapper($backend,$name)`,
+  `instructionsDigest($backend)`, `fingerprint()`) and binds it
+  (`$this->app->singleton(SkillLibrary::class, MyLibrary::class)`). SuperAICore
+  knows WHERE / HOW / WHEN; the host supplies WHAT. No host assumptions baked in.
+- **Three install shapes** *(1.0.6)* — `CliSkillBridge` fans the library out per
+  backend: **`native_dir`** (codex / gemini / grok / cursor / qwen) drops one
+  prefixed wrapper dir per skill into the CLI's skills directory;
+  **`instructions`** (copilot / kimi / kiro) writes a single digest file that
+  tells the model how to load any skill on demand; **`source`** (claude) reads
+  `.claude/skills` directly and installs nothing.
+- **Symlink-safe** *(1.0.6)* — the bridge **never writes through a symlink**.
+  Every wrapper dir / `SKILL.md` / digest / manifest is `is_link()`-checked and the
+  stale link unlinked (target intact) before any write — closing the
+  write-through-symlink hole that once clobbered source skill bodies.
+- **Lazy on-dispatch sync** *(1.0.6)* — each sync stamps the library
+  `fingerprint()` into a per-backend manifest (`.superteam-skill-sync.json`);
+  `TaskRunner` re-installs a backend before a dispatch only when the fingerprint
+  drifted, so the hot path is one hash compare. Pruning is manifest-scoped —
+  never touches the user's own skills.
+- **`superaicore:sync-cli`** *(1.0.6)* — one command propagates the whole
+  capability surface (skills + MCP) to every installed CLI:
+  `--skills-only` / `--mcp-only` / `--backends=codex,gemini` / `--project-root=`.
+- **Folded-in fix** *(1.0.6)* — `builtin` (subscription/OAuth) runs across the
+  claude / codex / gemini / cursor / grok backends now scrub any stale inherited
+  console key so it can't override the login and 401; Claude's Keychain OAuth
+  token is injected as `CLAUDE_CODE_OAUTH_TOKEN`, not `ANTHROPIC_API_KEY`.
 
 ### SmartFlow cross-CLI workflows wave (1.0.5 / SDK 1.1.0)
 
@@ -882,6 +920,10 @@ the superagent federation (`delegate` named/spec modes).
 ./vendor/bin/superaicore copilot:sync-hooks                   # merge Claude-style hooks into Copilot
 ./vendor/bin/superaicore kiro:sync --dry-run                  # ~/.kiro/agents/*.json (0.6.1+)
 ./vendor/bin/superaicore kimi:sync                            # ~/.kimi/agents/*.yaml + mcp.json (0.6.8+)
+
+# …or, in a Laravel host with a SkillLibrary bound, do all of the above generically (1.0.6+):
+php artisan superaicore:sync-cli                              # skills + MCP → every installed CLI
+php artisan superaicore:sync-cli --skills-only --backends=codex,gemini
 
 # Run the same task across N Copilot agents in parallel
 ./vendor/bin/superaicore copilot:fleet "refactor auth" --agents planner,reviewer,tester

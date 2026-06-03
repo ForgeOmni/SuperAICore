@@ -239,6 +239,12 @@ class CursorCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $type = $providerConfig['type'] ?? 'builtin';
         if ($type !== 'builtin' && !empty($providerConfig['api_key'])) {
             $env['CURSOR_API_KEY'] = (string) $providerConfig['api_key'];
+        } else {
+            // builtin = use `cursor-agent login` (browser OAuth). The user
+            // supplied no key, so scrub any stale inherited CURSOR_API_KEY
+            // (false = unset in child) so a leftover/invalid key can't
+            // override the login and fail.
+            $env['CURSOR_API_KEY'] = false;
         }
         return $env;
     }

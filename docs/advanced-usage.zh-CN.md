@@ -40,6 +40,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 30. [Opus 4.8 + Grok + Cursor（1.0.0 / SDK 1.0.9）](#30-opus-48--grok--cursor100--sdk-109)
 31. [kimi-cli + kimi-code 双轨支持（1.0.2 / SDK 1.0.10）](#31-kimi-cli--kimi-code-双轨支持102--sdk-1010)
 32. [SmartFlow —— 跨 CLI 动态工作流 + superagent 联邦（1.0.5 / SDK 1.1.0）](#32-smartflow--跨-cli-动态工作流--superagent-联邦105--sdk-110)
+33. [CLI skill 桥接 —— `superaicore:sync-cli` + `SkillLibrary` contract（1.0.6）](#33-cli-skill-桥接--superaicoresync-cli--skilllibrary-contract106)
 
 ---
 
@@ -3271,6 +3272,140 @@ AgentSpawn 是给没有原生 Agent 工具的 CLI 用的 3 阶段 spawn-plan 协
 当你想要*显式编写*的多步控制流（fan-out、pipeline、gate、council）、
 按 step 的 CLI 路由、结构化输出、预算、彩排、resume 以及 superagent 联邦时,
 就该用 **SmartFlow** —— 与 Claude Code 的 `Workflow` 同一形态,做成跨 CLI 的。
+
+---
+
+## 33. CLI skill 桥接 —— `superaicore:sync-cli` + `SkillLibrary` contract（1.0.6）
+
+SuperAICore 早就把 **MCP** 桥接进了每个 CLI backend 的原生配置
+(`McpManager::syncAllBackends()`,见 §13)。1.0.6 用一座通用的桥给
+**skill + agent** 也做了同样的事,这样宿主就不必再为每个 CLI 手搓一套独立的
+sync（一个 Codex wrapper 安装器、一个 Gemini 自定义命令 sync、一个 Kimi
+翻译器……）。
+
+职责的切分正是关键所在:
+
+- **SuperAICore 知道 WHERE / HOW / WHEN。** 每个 CLI 把它的 skill 放在哪、
+  如何*安全地*在那里装一个 wrapper（绝不写穿 symlink）、以及何时该重新 sync
+  （仅当指纹漂移时）。
+- **宿主知道 WHAT。** 它实现 `SuperAICore\Contracts\SkillLibrary` 并绑定它。
+  SuperAICore 不携带任何宿主假设 —— 没有绑定时这座桥就是个静默的 no-op,
+  所以这个包保持宿主无关。
+
+### contract
+
+```php
+namespace SuperAICore\Contracts;
+
+interface SkillLibrary
+{
+    /** @return array<int,array{name:string,description:string}> */
+    public function skills(): array;
+
+    /** @return array<int,array{name:string,description?:string}> */
+    public function agents(): array;
+
+    /** Full SKILL.md for a backend's NATIVE skill dir (codex/gemini/…). */
+    public function skillWrapper(string $backend, string $skillName): string;
+
+    /** Markdown digest for backends with no skill dir (copilot/kimi/kiro). */
+    public function instructionsDigest(string $backend): string;
+
+    /** Stable hash of the whole library; drives the lazy re-sync. */
+    public function fingerprint(): string;
+}
+```
+
+在 service provider 里绑定它:
+
+```php
+$this->app->singleton(
+    \SuperAICore\Contracts\SkillLibrary::class,
+    \App\Services\SuperTeamSkillLibrary::class,
+);
+```
+
+### 薄 wrapper 让源保持权威
+
+推荐的 `skillWrapper()` 实现是一份**薄**的 SKILL.md,它 shell out 到宿主的
+loader,而不是把真正的 skill 正文复制一份 —— 这样对权威的
+`.claude/skills/<name>/SKILL.md` 的编辑无需重新 sync,wrapper 也永远不会
+漂移出(或覆盖掉)源:
+
+```php
+public function skillWrapper(string $backend, string $skill): string
+{
+    return <<<MD
+    ---
+    name: super-team-{$skill}
+    description: Runtime wrapper for `{$skill}`; loads the latest definition from source.
+    ---
+    Load the canonical definition (do not duplicate it here):
+    ```bash
+    php /path/to/host/artisan super-team:skill {$skill} --format=markdown
+    ```
+    MD;
+}
+```
+
+### 三种安装形态
+
+`CliSkillBridge::BACKENDS` 把每个 backend 映射到一种模式 —— 加一个 CLI 只是
+改一行:
+
+| Mode | Backends | What lands | $HOME path |
+|------|----------|-----------|-----------|
+| `native_dir`  | codex, gemini, grok, cursor, qwen | one prefixed wrapper dir per skill (`super-team-<name>/SKILL.md`) | `.codex/skills`, `.gemini/skills`, `.grok/skills`, `.cursor/skills-cursor`, `.qwen/skills` |
+| `instructions`| copilot, kimi, kiro | one digest file (how to load any skill on demand + the list) | `.copilot/super-team-skills.md`, `.kimi/…`, `.kiro/…` |
+| `source`      | claude | nothing — reads the host's `.claude/skills` directly | — |
+| `none`        | superagent | nothing | — |
+
+### symlink 安全的写入（覆盖问题的修复）
+
+这座桥**绝不写穿 symlink**。在写入任何 wrapper 目录、`SKILL.md`、摘要或
+manifest 之前,它先对目标做 `is_link()` 检查,把陈旧的 link 先 unlink
+（保留 link 的 *target* 完好无损）。这堵上了那个"写穿 symlink"的漏洞 ——
+一个残留的 `~/.codex/skills/super-team-x -> …/.claude/skills/x` link 曾让
+wrapper 的写入覆盖掉真正的源 skill 正文。
+
+### 惰性 on-dispatch sync
+
+每次 sync 都把 `fingerprint()` 盖进一份 per-backend manifest
+(`.superteam-skill-sync.json`),连同它装过的 wrapper 列表一起。
+`TaskRunner` 在每次 CLI 分发前都调用这座桥:
+
+```php
+// TaskRunner::ensureCliSkillsSynced() —— 把 codex_cli 归一化成 codex,尽力而为
+(new \SuperAICore\Services\CliSkillBridge())->ensureSynced($engine);
+```
+
+`ensureSynced()` 很便宜:`needsSync()` 比对一个哈希,库没变就提前返回,
+所以每次分发的开销只是一次比对。剪枝是 **manifest 范围内的** —— 只移除这座桥
+之前装过、如今不再需要的 wrapper;用户自己的 skill 绝不会被碰。任何失败都被
+吞掉,所以一次 sync 打嗝永远不会阻塞分发。
+
+### `superaicore:sync-cli` —— 手动 / cron 的全量刷新
+
+```bash
+php artisan superaicore:sync-cli                       # skills + MCP → 每个已安装的 CLI
+php artisan superaicore:sync-cli --skills-only         # 跳过 MCP 步骤
+php artisan superaicore:sync-cli --mcp-only            # 只做 MCP（= mcp:sync-backends）
+php artisan superaicore:sync-cli --backends=codex,gemini
+php artisan superaicore:sync-cli --project-root=/path  # 覆盖 .mcp.json 的发现路径
+```
+
+skill 走 `CliSkillBridge`;MCP 复用 `McpManager::syncAllBackends()`。正常使用时
+每次分发的 `TaskRunner` hook 已经把各 backend 保持新鲜 —— 在 git hook、cron
+里,或编辑库之后,想做一次性刷新时再用这条命令。
+
+### 编程式用法
+
+```php
+$bridge = new \SuperAICore\Services\CliSkillBridge();   // 解析已绑定的库
+if ($bridge->active()) {
+    $report = $bridge->syncAll(['codex', 'gemini']);    // [['backend'=>…,'installed'=>189,'pruned'=>0,'path'=>…], …]
+}
+```
 
 ---
 

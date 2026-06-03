@@ -196,6 +196,23 @@ Si des skills ou sous-agents Claude Code sont déjà installés (sous `./.claude
 ./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
+Dans un hôte Laravel qui bind une `SkillLibrary` (1.0.6+), une seule commande
+artisan diffuse toute votre bibliothèque de skills + agents vers la surface native
+de chaque CLI installé — les répertoires de skills codex/gemini/grok/cursor/qwen et
+les fichiers d'instructions copilot/kimi/kiro — et re-propage le MCP dans la même
+passe. Elle est sûre face aux symlinks et paresseuse par empreinte, de sorte que la
+relancer est peu coûteux et idempotent :
+
+```bash
+php artisan superaicore:sync-cli                         # skills + MCP → every installed CLI
+php artisan superaicore:sync-cli --skills-only --backends=codex,gemini
+```
+
+`TaskRunner` exécute aussi ce sync de skills de façon paresseuse avant chaque
+dispatch CLI (une seule comparaison d'empreinte), donc la commande sert aux
+refreshes manuels / cron / git-hook. Quand aucune `SkillLibrary` n'est bindée, elle
+affiche une ligne de skip et ne fait rien.
+
 Aucune configuration requise. Sans `--dry-run`, la commande passe la main aux CLI backends (`claude`, `codex`, `gemini`, `copilot`, `kiro-cli`, `cursor-agent`, `grok`) — installez ceux que vous comptez utiliser :
 
 ```bash

@@ -269,6 +269,13 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         if ($type !== 'builtin' && !empty($providerConfig['api_key'])) {
             $env['XAI_API_KEY']  = (string) $providerConfig['api_key'];
             $env['GROK_API_KEY'] = (string) $providerConfig['api_key'];
+        } else {
+            // builtin = use `grok login` (grok.com OAuth, cached in ~/.grok).
+            // The user supplied no key, so scrub any stale inherited
+            // XAI_API_KEY / GROK_API_KEY (false = unset in child) so a
+            // leftover/invalid key can't override the login and fail.
+            $env['XAI_API_KEY']  = false;
+            $env['GROK_API_KEY'] = false;
         }
         return $env;
     }

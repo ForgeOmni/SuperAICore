@@ -188,6 +188,20 @@ AI_CORE_PROCESS_MONITOR=false
 ./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
+在绑定了 `SkillLibrary` 的 Laravel 宿主里（1.0.6+），一条 artisan 命令就能把你
+整个 skill + agent 库 fan-out 到每个已安装 CLI 的原生形态 ——
+codex/gemini/grok/cursor/qwen 的 skill 目录,以及 copilot/kimi/kiro 的指令文件 ——
+并在同一趟里重新传播 MCP。它是 symlink 安全、指纹惰性的,所以重跑既便宜又幂等：
+
+```bash
+php artisan superaicore:sync-cli                         # skills + MCP → 每个已安装的 CLI
+php artisan superaicore:sync-cli --skills-only --backends=codex,gemini
+```
+
+`TaskRunner` 也会在每次 CLI 分发前惰性跑一次这个 skill sync（只比对一次指纹），
+所以这条命令是给手动 / cron / git-hook 刷新用的。没有绑定 `SkillLibrary` 时,
+它打印一行 skip 信息,什么都不做。
+
 不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`、`copilot`、`kiro-cli`、`cursor-agent`、`grok`）—— 按需装：
 
 ```bash

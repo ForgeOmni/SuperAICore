@@ -190,6 +190,21 @@ If you have any Claude Code skills or sub-agents installed (under `./.claude/ski
 ./vendor/bin/superaicore kiro:sync --dry-run
 ```
 
+In a Laravel host that binds a `SkillLibrary` (1.0.6+), one artisan command
+fans your whole skill + agent library out to every installed CLI's native
+surface — codex/gemini/grok/cursor/qwen skill dirs and copilot/kimi/kiro
+instruction files — and re-propagates MCP in the same pass. It is symlink-safe
+and fingerprint-lazy, so re-running it is cheap and idempotent:
+
+```bash
+php artisan superaicore:sync-cli                         # skills + MCP → every installed CLI
+php artisan superaicore:sync-cli --skills-only --backends=codex,gemini
+```
+
+`TaskRunner` also runs this skill sync lazily before each CLI dispatch (one
+fingerprint compare), so the command is for manual / cron / git-hook refreshes.
+When no `SkillLibrary` is bound it prints a skip line and does nothing.
+
 No config needed. Running without `--dry-run` shells out to the backend CLIs (`claude`, `codex`, `gemini`, `copilot`, `kiro-cli`, `cursor-agent`, `grok`) — install whichever ones you intend to target:
 
 ```bash
