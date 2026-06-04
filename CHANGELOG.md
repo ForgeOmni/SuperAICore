@@ -4,6 +4,43 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] — 2026-06-04
+
+**SuperAgent SDK bumped to 1.1.1 — MiniMax M3 lands as a native model and the
+DeepSeek V4 Pro / MiniMax catalog is repriced to live rates.** SDK pin moves
+`^1.1.0` → `^1.1.1` (the lock advances v1.0.0 → v1.1.1, also pulling in the
+1.1.0 SmartFlow engine the existing `SuperAgentFlowBridge` already targets).
+Additive and non-breaking — no migrations, no config changes required. The
+host mirrors the SDK's catalog corrections so cost dashboards and model
+pickers stay accurate offline, without waiting on a catalog round-trip.
+
+```bash
+composer update forgeomni/superagent
+# no migrations
+```
+
+### Added
+
+- **MiniMax M3 native pricing** (`config/super-ai-core.php` → `model_pricing`) —
+  M3 (MSA flagship: 1M context, 512K max output, native image/video input,
+  interleaved thinking) at the standard PAYG **$0.60 in / $2.40 out** per 1M,
+  alongside explicit `MiniMax-M2.7` / `M2.5` / `M2` rows ($0.30 / $1.20). The
+  bare `minimax` shorthand and the zero-config default resolve to M3 in the
+  SDK; M2.7 stays reachable by id. `CostCalculator` already falls back to the
+  SDK `ModelCatalog`, so these rows just keep accounting accurate offline.
+- **`MiniMax-M3` surfaced in the SuperAgent engine seed**
+  (`EngineCatalog::seed()` → `superagent.available_models`) so it shows up in
+  pickers even when the catalog probe can't run (offline / dependency missing
+  / catalog stale), matching the existing DeepSeek V4 treatment.
+
+### Changed
+
+- **DeepSeek V4 Pro repriced** to the current official rate to match SuperAgent
+  1.1.1 — **$0.435** in (cache-miss) / **$0.003625** in (cache-hit, carried as
+  `cache_read_input`) / **$0.87** out per 1M, down from the stale $0.55 / $2.20.
+  The deprecated `deepseek-reasoner` alias (routes to V4 Pro) follows suit.
+- **SDK pin** `forgeomni/superagent` `^1.1.0` → `^1.1.1` (`composer.json`).
+
 ## [1.0.6] — 2026-06-03
 
 **CLI skill bridge: one generic, symlink-safe, fingerprinted bridge that fans a

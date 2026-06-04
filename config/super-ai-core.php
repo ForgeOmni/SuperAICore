@@ -875,18 +875,36 @@ return [
         'gpt-4o'                      => ['input' => 2.50,  'output' => 10.00],
         'gpt-4o-mini'                 => ['input' => 0.15,  'output' => 0.60],
 
-        // ─── DeepSeek V4 (since SuperAgent 0.9.6) ───
+        // ─── DeepSeek V4 (since SuperAgent 0.9.6; repriced 1.1.1) ───
         // Both rows are 1M-context MoE models — V4-Pro 49B active / 1.6T
-        // total, V4-Flash 13B active / 284B total. Prices reflect the
-        // DeepSeek 2026-04-24 launch sheet. The deprecated `deepseek-chat`
-        // and `deepseek-reasoner` aliases retire 2026-07-24; route them to
-        // the V4 successors here so cost dashboards keep working past the
-        // hard cutover and the SDK's one-shot deprecation warning is the
-        // user's only nudge.
-        'deepseek-v4-pro'             => ['input' => 0.55,  'output' => 2.20],
+        // total, V4-Flash 13B active / 284B total. V4-Pro was repriced to
+        // the current official rate in SuperAgent 1.1.1 (down from the stale
+        // $0.55 / $2.20): $0.435 in (cache-miss) / $0.003625 in (cache-hit,
+        // carried as `cache_read_input`) / $0.87 out per 1M. The deprecated
+        // `deepseek-chat` and `deepseek-reasoner` aliases retire 2026-07-24;
+        // they route to the V4 successors here (chat → flash, reasoner →
+        // pro) so cost dashboards keep working past the hard cutover and the
+        // SDK's one-shot deprecation warning is the user's only nudge.
+        'deepseek-v4-pro'             => ['input' => 0.435, 'output' => 0.87, 'cache_read_input' => 0.003625],
         'deepseek-v4-flash'           => ['input' => 0.14,  'output' => 0.55],
         'deepseek-chat'               => ['input' => 0.14,  'output' => 0.55],
-        'deepseek-reasoner'           => ['input' => 0.55,  'output' => 2.20],
+        'deepseek-reasoner'           => ['input' => 0.435, 'output' => 0.87, 'cache_read_input' => 0.003625],
+
+        // ─── MiniMax (native, since SuperAgent 1.1.1) ───
+        // MiniMax shipped M3 on 2026-06-01 — an MSA-architecture flagship:
+        // 1M context, 512K max output, native image *and* video input,
+        // single-model interleaved thinking. The bare `minimax` shorthand
+        // and the zero-config default now resolve to M3; M2.7 stays
+        // reachable by id and the `m2` / `minimax-m2` aliases. Standard PAYG
+        // is $0.60 in / $2.40 out per 1M (a 7-day launch promo currently
+        // halves this to $0.30 / $1.20; image/video input billed $1.00/M).
+        // The SDK's ModelCatalog carries these rows too, so unlisted MiniMax
+        // SKUs still resolve — these explicit entries keep cost dashboards
+        // accurate offline without a catalog round-trip.
+        'MiniMax-M3'                  => ['input' => 0.60,  'output' => 2.40],
+        'MiniMax-M2.7'                => ['input' => 0.30,  'output' => 1.20],
+        'MiniMax-M2.5'                => ['input' => 0.30,  'output' => 1.20],
+        'MiniMax-M2'                  => ['input' => 0.30,  'output' => 1.20],
 
         // ─── Google Gemini ───
         'gemini-3-pro-preview'        => ['input' => 2.00,  'output' => 12.00],

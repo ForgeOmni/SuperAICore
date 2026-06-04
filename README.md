@@ -28,6 +28,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [kimi-cli + kimi-code dual-CLI wave (1.0.2 / SDK 1.0.10)](#kimi-cli--kimi-code-dual-cli-wave-102--sdk-1010)
   - [SmartFlow cross-CLI workflows wave (1.0.5 / SDK 1.1.0)](#smartflow-cross-cli-workflows-wave-105--sdk-110)
   - [CLI skill bridge wave (1.0.6)](#cli-skill-bridge-wave-106)
+  - [MiniMax M3 + catalog reprice wave (1.0.7 / SDK 1.1.1)](#minimax-m3--catalog-reprice-wave-107--sdk-111)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -102,6 +103,29 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### MiniMax M3 + catalog reprice wave (1.0.7 / SDK 1.1.1)
+
+SDK pin moves `^1.1.0` → `^1.1.1`. SuperAgent 1.1.1 lands **MiniMax M3** as a
+first-class native model and reprices the DeepSeek V4 Pro / MiniMax catalog to
+live vendor rates; SuperAICore mirrors those corrections into its own
+`model_pricing` table and engine seed so cost dashboards and pickers stay
+accurate offline. Additive and non-breaking — no migrations, no config changes.
+
+- **MiniMax M3 native pricing** *(1.0.7)* — `MiniMax-M3` (MSA flagship: 1M
+  context, 512K max output, native image/video input, interleaved thinking) at
+  the standard PAYG **$0.60 in / $2.40 out** per 1M, with explicit
+  `MiniMax-M2.7` / `M2.5` / `M2` rows ($0.30 / $1.20). `CostCalculator` already
+  falls back to the SDK `ModelCatalog`, so these rows simply keep accounting
+  accurate without a catalog round-trip; `MiniMax-M3` is also seeded into the
+  `superagent` engine's `available_models` so it shows in pickers offline.
+- **DeepSeek V4 Pro repriced** *(1.0.7)* — to the current official rate
+  **$0.435** in (cache-miss) / **$0.003625** in (cache-hit, `cache_read_input`)
+  / **$0.87** out per 1M, down from the stale $0.55 / $2.20. The deprecated
+  `deepseek-reasoner` alias (routes to V4 Pro) follows suit.
+- **SmartFlow carried forward** *(1.0.7)* — the 1.1.1 pin still includes the
+  1.1.0 SmartFlow engine the existing `SuperAgentFlowBridge` delegates to, so
+  cross-CLI flows that fan out to `superagent` are unchanged.
 
 ### CLI skill bridge wave (1.0.6)
 

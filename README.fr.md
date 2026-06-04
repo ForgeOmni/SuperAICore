@@ -28,6 +28,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague kimi-cli + kimi-code (1.0.2 / SDK 1.0.10)](#vague-kimi-cli--kimi-code-102--sdk-1010)
   - [Vague workflows cross-CLI SmartFlow (1.0.5 / SDK 1.1.0)](#vague-workflows-cross-cli-smartflow-105--sdk-110)
   - [Vague pont de skills CLI (1.0.6)](#vague-pont-de-skills-cli-106)
+  - [Vague MiniMax M3 + retarification du catalogue (1.0.7 / SDK 1.1.1)](#vague-minimax-m3--retarification-du-catalogue-107--sdk-111)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -102,6 +103,32 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague MiniMax M3 + retarification du catalogue (1.0.7 / SDK 1.1.1)
+
+Le pin SDK passe de `^1.1.0` à `^1.1.1`. SuperAgent 1.1.1 introduit **MiniMax
+M3** comme modèle natif de première classe et retarife le catalogue DeepSeek
+V4 Pro / MiniMax aux tarifs réels des fournisseurs ; SuperAICore reflète ces
+corrections dans sa propre table `model_pricing` et la graine du moteur, pour
+que les tableaux de bord de coûts et les sélecteurs restent exacts hors ligne.
+Additif et non cassant — aucune migration, aucun changement de config.
+
+- **Tarification native MiniMax M3** *(1.0.7)* — `MiniMax-M3` (vaisseau amiral
+  MSA : contexte 1M, sortie max 512K, entrée image/vidéo native, pensée
+  entrelacée) au tarif PAYG standard **0,60 $ en entrée / 2,40 $ en sortie**
+  par 1M, avec les lignes explicites `MiniMax-M2.7` / `M2.5` / `M2` (0,30 $ /
+  1,20 $). `CostCalculator` retombe déjà sur le `ModelCatalog` du SDK ; ces
+  lignes gardent simplement la comptabilité exacte hors ligne, et `MiniMax-M3`
+  est aussi semé dans les `available_models` du moteur `superagent` pour
+  apparaître dans les sélecteurs hors ligne.
+- **DeepSeek V4 Pro retarifé** *(1.0.7)* — au tarif officiel actuel **0,435 $**
+  en entrée (cache-miss) / **0,003625 $** en entrée (cache-hit,
+  `cache_read_input`) / **0,87 $** en sortie par 1M, en baisse depuis les
+  obsolètes 0,55 $ / 2,20 $. L'alias déprécié `deepseek-reasoner` (routé vers
+  V4 Pro) suit le mouvement.
+- **SmartFlow conservé** *(1.0.7)* — le pin 1.1.1 inclut toujours le moteur
+  SmartFlow 1.1.0 auquel délègue le `SuperAgentFlowBridge` existant ; les flux
+  cross-CLI qui se déploient vers `superagent` restent inchangés.
 
 ### Vague pont de skills CLI (1.0.6)
 

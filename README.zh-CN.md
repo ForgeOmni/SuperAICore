@@ -28,6 +28,7 @@
   - [kimi-cli + kimi-code 双轨波次（1.0.2 / SDK 1.0.10）](#kimi-cli--kimi-code-双轨波次102--sdk-1010)
   - [SmartFlow 跨 CLI 工作流波次（1.0.5 / SDK 1.1.0）](#smartflow-跨-cli-工作流波次105--sdk-110)
   - [CLI skill 桥接波次（1.0.6）](#cli-skill-桥接波次106)
+  - [MiniMax M3 + 目录重定价波次（1.0.7 / SDK 1.1.1）](#minimax-m3--目录重定价波次107--sdk-111)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -102,6 +103,27 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### MiniMax M3 + 目录重定价波次（1.0.7 / SDK 1.1.1）
+
+SDK 约束从 `^1.1.0` 移到 `^1.1.1`。SuperAgent 1.1.1 把 **MiniMax M3** 作为
+一等原生模型引入,并把 DeepSeek V4 Pro / MiniMax 目录重定价到厂商实时价；
+SuperAICore 把这些修正镜像进自己的 `model_pricing` 表与引擎种子,让成本看板
+与模型选择器在离线时也保持准确。纯增量、无破坏 —— 无迁移、无配置变更。
+
+- **MiniMax M3 原生定价**（1.0.7）—— `MiniMax-M3`（MSA 旗舰:1M 上下文、
+  512K 最大输出、原生图像/视频输入、交错思考）按标准 PAYG **$0.60 入 /
+  $2.40 出** 每 1M,并附 `MiniMax-M2.7` / `M2.5` / `M2` 显式行（$0.30 /
+  $1.20）。`CostCalculator` 本就回退到 SDK 的 `ModelCatalog`,这些行只是让
+  离线计费保持准确;`MiniMax-M3` 同时种入 `superagent` 引擎的
+  `available_models`,以便离线时也出现在选择器里。
+- **DeepSeek V4 Pro 重定价**（1.0.7）—— 改到当前官方价 **$0.435** 入
+  (cache-miss) / **$0.003625** 入 (cache-hit,`cache_read_input`) /
+  **$0.87** 出 每 1M,从过时的 $0.55 / $2.20 下调。已弃用的
+  `deepseek-reasoner` 别名（路由到 V4 Pro）一并跟进。
+- **SmartFlow 延续**（1.0.7）—— 1.1.1 的 pin 仍包含现有
+  `SuperAgentFlowBridge` 所委派的 1.1.0 SmartFlow 引擎,fan-out 到
+  `superagent` 的跨 CLI flow 行为不变。
 
 ### CLI skill 桥接波次（1.0.6）
 
