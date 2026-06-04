@@ -37,12 +37,18 @@ class CliSquadCrossModeTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        if (!class_exists(\SuperAgent\Modes\ModeRouterRegistry::class)
+            || !class_exists(\SuperAgent\Squad\SquadPlan::class)) {
+            $this->markTestSkipped('forgeomni/superagent not installed');
+        }
         ModeRouterRegistry::clear();
     }
 
     protected function tearDown(): void
     {
-        ModeRouterRegistry::clear();
+        if (class_exists(\SuperAgent\Modes\ModeRouterRegistry::class)) {
+            ModeRouterRegistry::clear();
+        }
         parent::tearDown();
     }
 
