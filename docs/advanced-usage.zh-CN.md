@@ -583,14 +583,20 @@ try {
 语义（Claude backend；其它 CLI 忽略这些键，与 `allowed_tools` 同约定）：
 
 - `'empty'`（默认）—— `--mcp-config '{"mcpServers":{}}' --strict-mcp-config`。
-- `'file'` —— `--mcp-config <mcp_config_file> --strict-mcp-config`。模型看到
+- `'file'` —— `--mcp-config <mcp_config_file> --strict-mcp-config`。模型加载
   所列 server 的 `mcp__<server>__<tool>` 工具。`--permission-mode
-  bypassPermissions`（始终传入）自动批准其调用；`--tools` 只收窄**内置**
-  工具集，所以只读默认值能干净组合。`'file'` 缺可用路径时回退 `'empty'`，
-  绝不静默继承用户的全部配置。
+  bypassPermissions`（始终传入）自动批准其调用。`'file'` 缺可用路径时回退
+  `'empty'`，绝不静默继承用户的全部配置。
 - `'inherit'` —— 不加 MCP flag；CLI 加载用户自己的配置。
-- `extra_cli_flags: string[]` —— 原样追加（逃生舱——例如某些 CLI 版本把 MCP
-  工具关在 allowlist 后面时传 `['--allowedTools', 'mcp__fetch__*']`）。
+- **ToolSearch 自动追加（1.0.9）**—— 当前 Claude CLI 把 MCP 工具延迟在
+  `ToolSearch` 元工具后面，且 `--tools` 限制的是**全部**工具面（help 文本
+  的 "built-in set" 措辞有误导性；`--tools` 里的 `mcp__x__*` 模式会被静默
+  忽略）。有效 MCP 面非空时，`ToolSearch` 会被保证加进 allowlist，模型才
+  真正够得到 MCP 工具。老版本 CLI 忽略未知 `--tools` 项——处处安全。
+- `extra_cli_flags: string[]` —— 原样追加（应对未来 CLI flag 变化的逃生舱）。
+- 配置 schema 注意：`env` 必须序列化成 JSON **对象**——PHP 空数组会变成
+  `[]`，`--strict-mcp-config` 会拒掉该 server。生成子集文件时把空 `env`
+  键删掉（或强转 object）。
 
 `buildChatArgs(string $cliPath, array $options): array` 是 `streamChat()`
 背后的公开纯 argv 构建器，需要检查或单测 flag 矩阵时无需拉起进程。

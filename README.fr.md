@@ -126,14 +126,17 @@ reste la surface vide verrouillée, aucune migration, pin SDK inchangé.
 - **`buildChatArgs()`** *(1.0.8)* — constructeur argv pur public extrait de
   `streamChat()` ; la matrice tools / MCP / modèle / flags extra est
   désormais testée unitairement sans spawn de processus.
-- Note de composition : `--tools` ne restreint que l'ensemble d'outils
-  **intégrés** ; les serveurs MCP passent par `--mcp-config` et
-  `--permission-mode bypassPermissions` approuve automatiquement leurs
-  appels — la liste lecture seule `Read,Glob,Grep` par défaut se compose donc
-  proprement avec les outils MCP. Côté hôte : écrire un fichier de config
-  sous-ensemble, passer `mcp_mode: 'file'`, et le modèle voit
-  `mcp__<serveur>__<outil>` pour exactement les serveurs choisis — voir
-  `docs/advanced-usage.fr.md` §12.
+- **Ajout automatique de ToolSearch** *(1.0.9)* — les CLI Claude actuels
+  diffèrent les outils MCP derrière le méta-outil `ToolSearch` (les serveurs
+  affichent « pending » à l'init et leurs outils sont absents de la liste
+  initiale), et `--tools` restreint **toute** la surface d'outils — une
+  allowlist sans ToolSearch rend donc chaque outil MCP inaccessible. Dès que
+  la surface MCP effective est non vide (`'file'` avec chemin, ou
+  `'inherit'`), `ToolSearch` est garanti dans l'allowlist ; les anciens CLI
+  ignorent les entrées `--tools` inconnues, c'est donc sûr partout. Côté
+  hôte : écrire un fichier de config sous-ensemble, passer
+  `mcp_mode: 'file'`, et le modèle charge `mcp__<serveur>__<outil>` pour
+  exactement les serveurs choisis — voir `docs/advanced-usage.fr.md` §12.
 
 ### Vague MiniMax M3 + retarification du catalogue (1.0.7 / SDK 1.1.1)
 

@@ -601,16 +601,21 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
      * One-shot chat — Claude CLI: stdin-pipe prompt, stream-json output,
      * read-only tool allowlist (Read/Glob/Grep), bypass permissions.
      *
-     * MCP (1.0.8): `mcp_mode` mirrors prepareScriptedProcess()'s contract
-     * but defaults to `'empty'` — chat historically ran with a locked-empty
-     * MCP surface and that stays the default:
+     * MCP (1.0.8; ToolSearch fix 1.0.9): `mcp_mode` mirrors
+     * prepareScriptedProcess()'s contract but defaults to `'empty'` — chat
+     * historically ran with a locked-empty MCP surface and that stays the
+     * default:
      *   - 'empty'   — inline empty config + --strict-mcp-config (default)
      *   - 'file'    — caller-supplied `mcp_config_file` path, so a chat
      *                 turn can expose MCP servers' tools to the model
      *                 (--permission-mode bypassPermissions auto-approves
-     *                 their calls; `--tools` only narrows the BUILT-IN set)
+     *                 their calls)
      *   - 'inherit' — no MCP flags; the CLI loads the user's own config
-     * `extra_cli_flags` (string[]) appends verbatim as an escape hatch.
+     * When the effective MCP surface is non-empty, `ToolSearch` is
+     * guaranteed onto the --tools allowlist: current Claude CLIs defer MCP
+     * tools behind the ToolSearch meta-tool, and `--tools` restricts the
+     * WHOLE tool surface — without ToolSearch the model can never reach
+     * any MCP tool. `extra_cli_flags` (string[]) appends verbatim.
      */
     public function streamChat(string $prompt, callable $onChunk, array $options = []): string
     {
@@ -660,25 +665,43 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
     public function buildChatArgs(string $cliPath, array $options = []): array
     {
         $allowedTools = $options['allowed_tools'] ?? ['Read', 'Glob', 'Grep'];
-        if (is_array($allowedTools)) {
-            $allowedTools = implode(',', $allowedTools);
+        if (is_string($allowedTools)) {
+            $allowedTools = array_values(array_filter(array_map('trim', explode(',', $allowedTools))));
         }
-
-        $args = [
-            $cliPath, '-p',
-            '--output-format', 'stream-json', '--verbose',
-            '--permission-mode', 'bypassPermissions',
-            '--tools', (string) $allowedTools,
-        ];
 
         // Same contract as prepareScriptedProcess(), but chat defaults to
         // 'empty' (pre-1.0.8 behaviour hardcoded an empty config). A 'file'
         // request without a usable path falls back to 'empty' rather than
         // silently inheriting the user's whole MCP surface.
         $mcpMode = (string) ($options['mcp_mode'] ?? 'empty');
-        if ($mcpMode === 'file' && !empty($options['mcp_config_file'])) {
+        $mcpFile = ($mcpMode === 'file' && !empty($options['mcp_config_file']))
+            ? (string) $options['mcp_config_file']
+            : null;
+
+        // Current Claude CLI versions DEFER MCP tools behind the ToolSearch
+        // meta-tool: at init MCP servers report "pending" and their tools
+        // are absent from the upfront tool list — the model must load them
+        // via ToolSearch. `--tools` restricts the WHOLE surface (verified
+        // empirically; the help text's "built-in set" wording is misleading
+        // and `mcp__x__*` patterns inside --tools are silently ignored), so
+        // an allowlist without ToolSearch makes every MCP tool unreachable.
+        // Whenever the effective MCP surface is non-empty, guarantee
+        // ToolSearch is allowed. Older CLIs ignore unknown --tools entries,
+        // so this is safe to append unconditionally.
+        if (($mcpFile !== null || $mcpMode === 'inherit') && !in_array('ToolSearch', $allowedTools, true)) {
+            $allowedTools[] = 'ToolSearch';
+        }
+
+        $args = [
+            $cliPath, '-p',
+            '--output-format', 'stream-json', '--verbose',
+            '--permission-mode', 'bypassPermissions',
+            '--tools', implode(',', $allowedTools),
+        ];
+
+        if ($mcpFile !== null) {
             $args[] = '--mcp-config';
-            $args[] = (string) $options['mcp_config_file'];
+            $args[] = $mcpFile;
             $args[] = '--strict-mcp-config';
         } elseif ($mcpMode !== 'inherit') {
             $args[] = '--mcp-config';

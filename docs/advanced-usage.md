@@ -586,15 +586,23 @@ Semantics (Claude backend; other CLIs ignore these keys, same convention as
 
 - `'empty'` (default) — `--mcp-config '{"mcpServers":{}}' --strict-mcp-config`.
 - `'file'` — `--mcp-config <mcp_config_file> --strict-mcp-config`. The model
-  sees `mcp__<server>__<tool>` tools for exactly the listed servers.
+  loads `mcp__<server>__<tool>` tools for exactly the listed servers.
   `--permission-mode bypassPermissions` (always passed) auto-approves their
-  calls; `--tools` only narrows the *built-in* set, so the read-only default
-  composes cleanly. A `'file'` request without a usable path falls back to
-  `'empty'` rather than silently inheriting the user's whole config.
+  calls. A `'file'` request without a usable path falls back to `'empty'`
+  rather than silently inheriting the user's whole config.
 - `'inherit'` — no MCP flags; the CLI loads the user's own configuration.
-- `extra_cli_flags: string[]` — appended verbatim (escape hatch — e.g.
-  `['--allowedTools', 'mcp__fetch__*']` for CLI versions that gate MCP tools
-  behind the allowlist).
+- **ToolSearch auto-append (1.0.9)** — current Claude CLIs defer MCP tools
+  behind the `ToolSearch` meta-tool, and `--tools` restricts the *whole*
+  tool surface (the help text's "built-in set" wording is misleading;
+  `mcp__x__*` patterns inside `--tools` are silently ignored). When the
+  effective MCP surface is non-empty, `ToolSearch` is guaranteed onto the
+  allowlist so the model can actually reach the MCP tools. Older CLIs
+  ignore unknown `--tools` entries — safe everywhere.
+- `extra_cli_flags: string[]` — appended verbatim (escape hatch for future
+  CLI flag changes).
+- Config schema note: `env` must serialize as a JSON **object** — a PHP
+  empty array becomes `[]` and `--strict-mcp-config` rejects the server.
+  Drop empty `env` keys (or cast to object) when generating subset files.
 
 `buildChatArgs(string $cliPath, array $options): array` is the public pure
 argv builder behind `streamChat()` if you need to inspect or unit-test the

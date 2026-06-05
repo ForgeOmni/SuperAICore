@@ -126,12 +126,16 @@ surface, no migrations, SDK pin unchanged.
 - **`buildChatArgs()`** *(1.0.8)* — public pure argv builder extracted from
   `streamChat()`; the tools / MCP / model / extra-flags matrix is now
   unit-tested without process spawns.
-- Composition note: `--tools` narrows only the **built-in** tool set; MCP
-  servers ride `--mcp-config` and `--permission-mode bypassPermissions`
-  auto-approves their calls, so the read-only `Read,Glob,Grep` default
-  composes cleanly with MCP tools. Hosts: write a subset config file, pass
-  `mcp_mode: 'file'`, and the model sees `mcp__<server>__<tool>` for exactly
-  the selected servers — see `docs/advanced-usage.md` §12.
+- **ToolSearch auto-append** *(1.0.9)* — current Claude CLIs defer MCP tools
+  behind the `ToolSearch` meta-tool (servers report "pending" at init and
+  their tools are absent from the upfront list), and `--tools` restricts the
+  **whole** tool surface — so an allowlist without ToolSearch makes every
+  MCP tool unreachable. Whenever the effective MCP surface is non-empty
+  (`'file'` with a path, or `'inherit'`), `ToolSearch` is guaranteed onto
+  the allowlist; older CLIs ignore unknown `--tools` entries, so this is
+  safe everywhere. Hosts: write a subset config file, pass
+  `mcp_mode: 'file'`, and the model loads `mcp__<server>__<tool>` for
+  exactly the selected servers — see `docs/advanced-usage.md` §12.
 
 ### MiniMax M3 + catalog reprice wave (1.0.7 / SDK 1.1.1)
 

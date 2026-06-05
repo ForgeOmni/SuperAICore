@@ -4,6 +4,38 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] — 2026-06-05
+
+**ToolSearch fix for `streamChat()` MCP — without it, 1.0.8's `mcp_mode:
+'file'` produced a chat turn where the model could never reach any MCP
+tool.** Live-verified against the current Claude CLI: MCP servers from
+`--mcp-config` report `"pending"` at init and their tools are absent from
+the upfront tool list — they are **deferred behind the `ToolSearch`
+meta-tool**. Meanwhile `--tools` restricts the WHOLE tool surface (the help
+text's "built-in set" wording is misleading, and `mcp__x__*` patterns inside
+`--tools` are silently ignored), so 1.0.8's default `Read,Glob,Grep`
+allowlist locked ToolSearch out and with it every MCP tool. Additive,
+non-breaking; the locked-empty default argv is unchanged.
+
+### Fixed
+
+- **`buildChatArgs()` guarantees `ToolSearch` on the allowlist whenever the
+  effective MCP surface is non-empty** (`mcp_mode: 'file'` with a usable
+  path, or `'inherit'`). Explicit `allowed_tools` lists are respected — the
+  entry is appended only when missing. Older CLI versions ignore unknown
+  `--tools` entries, so the append is safe everywhere. Five new tests lock
+  the behavior (file/inherit append, empty-mode no-append, no duplicates).
+
+### Docs
+
+- Corrected the 1.0.8 composition note in README (EN/CN/FR) and
+  `docs/advanced-usage.*` §12 — the "`--tools` only narrows the built-in
+  set, composes cleanly with MCP" claim was wrong; replaced with the
+  ToolSearch-deferral explanation.
+- Added a config-schema warning to §12: `env` must serialize as a JSON
+  **object** — a PHP empty array becomes `[]` and `--strict-mcp-config`
+  rejects the server. Drop empty `env` keys when generating subset files.
+
 ## [1.0.8] — 2026-06-05
 
 **`streamChat()` learns MCP — a one-shot chat turn can now expose a

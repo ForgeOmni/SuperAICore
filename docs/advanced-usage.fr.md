@@ -588,16 +588,26 @@ convention que `allowed_tools`) :
 
 - `'empty'` (défaut) — `--mcp-config '{"mcpServers":{}}' --strict-mcp-config`.
 - `'file'` — `--mcp-config <mcp_config_file> --strict-mcp-config`. Le modèle
-  voit les outils `mcp__<serveur>__<outil>` des serveurs listés.
+  charge les outils `mcp__<serveur>__<outil>` des serveurs listés.
   `--permission-mode bypassPermissions` (toujours passé) approuve
-  automatiquement leurs appels ; `--tools` ne restreint que l'ensemble
-  *intégré*, le défaut lecture seule se compose donc proprement. Un `'file'`
-  sans chemin utilisable retombe sur `'empty'` — n'hérite jamais
-  silencieusement de toute la config utilisateur.
+  automatiquement leurs appels. Un `'file'` sans chemin utilisable retombe
+  sur `'empty'` — n'hérite jamais silencieusement de toute la config
+  utilisateur.
 - `'inherit'` — aucun flag MCP ; le CLI charge la config de l'utilisateur.
-- `extra_cli_flags: string[]` — ajoutés tels quels (échappatoire — p. ex.
-  `['--allowedTools', 'mcp__fetch__*']` pour les versions CLI qui gardent les
-  outils MCP derrière l'allowlist).
+- **Ajout automatique de ToolSearch (1.0.9)** — les CLI Claude actuels
+  diffèrent les outils MCP derrière le méta-outil `ToolSearch`, et `--tools`
+  restreint **toute** la surface d'outils (le libellé « built-in set » de
+  l'aide est trompeur ; les motifs `mcp__x__*` dans `--tools` sont ignorés
+  silencieusement). Quand la surface MCP effective est non vide,
+  `ToolSearch` est garanti dans l'allowlist pour que le modèle atteigne
+  réellement les outils MCP. Les anciens CLI ignorent les entrées `--tools`
+  inconnues — sûr partout.
+- `extra_cli_flags: string[]` — ajoutés tels quels (échappatoire pour les
+  futurs changements de flags CLI).
+- Note schéma config : `env` doit se sérialiser en **objet** JSON — un
+  tableau PHP vide devient `[]` et `--strict-mcp-config` rejette le serveur.
+  Supprimer les clés `env` vides (ou caster en objet) lors de la génération
+  des fichiers sous-ensemble.
 
 `buildChatArgs(string $cliPath, array $options): array` est le constructeur
 argv pur public derrière `streamChat()` pour inspecter ou tester la matrice

@@ -126,6 +126,44 @@ final class ClaudeCliBackendTest extends TestCase
         $this->assertNotContains('{"mcpServers":{}}', $args);
     }
 
+    public function test_chat_args_mcp_file_mode_appends_toolsearch(): void
+    {
+        // Current Claude CLI defers MCP tools behind ToolSearch; without it
+        // in --tools the model can never reach any MCP tool (verified live:
+        // servers stay "pending" and the model reports file tools only).
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude', [
+            'mcp_mode'        => 'file',
+            'mcp_config_file' => '/tmp/subset.json',
+        ]);
+
+        $this->assertSame('Read,Glob,Grep,ToolSearch', $args[array_search('--tools', $args, true) + 1]);
+    }
+
+    public function test_chat_args_mcp_inherit_mode_appends_toolsearch(): void
+    {
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude', ['mcp_mode' => 'inherit']);
+
+        $this->assertSame('Read,Glob,Grep,ToolSearch', $args[array_search('--tools', $args, true) + 1]);
+    }
+
+    public function test_chat_args_empty_mcp_mode_does_not_append_toolsearch(): void
+    {
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude');
+
+        $this->assertSame('Read,Glob,Grep', $args[array_search('--tools', $args, true) + 1]);
+    }
+
+    public function test_chat_args_no_duplicate_toolsearch(): void
+    {
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude', [
+            'mcp_mode'        => 'file',
+            'mcp_config_file' => '/tmp/subset.json',
+            'allowed_tools'   => ['Read', 'ToolSearch'],
+        ]);
+
+        $this->assertSame('Read,ToolSearch', $args[array_search('--tools', $args, true) + 1]);
+    }
+
     public function test_chat_args_mcp_mode_file_without_path_falls_back_to_empty(): void
     {
         $args = (new ClaudeCliBackend())->buildChatArgs('claude', ['mcp_mode' => 'file']);

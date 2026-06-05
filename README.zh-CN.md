@@ -121,10 +121,13 @@ chat 兄弟方法上。增量、不破坏——默认仍是锁空面，无迁移
   `prepareScriptedProcess()` 的逃生舱。
 - **`buildChatArgs()`**（1.0.8）—— 从 `streamChat()` 抽出的公开纯 argv
   构建器；tools / MCP / model / extra-flags 矩阵现在无需拉进程即可单测。
-- 组合说明：`--tools` 只收窄**内置**工具集；MCP server 走 `--mcp-config`
-  独立面，`--permission-mode bypassPermissions` 自动批准其调用，因此只读的
-  `Read,Glob,Grep` 默认值与 MCP 工具干净组合。Host 侧：写一个子集配置文件、
-  传 `mcp_mode: 'file'`，模型就能看到所选 server 的
+- **ToolSearch 自动追加**（1.0.9）—— 当前版本的 Claude CLI 把 MCP 工具
+  延迟在 `ToolSearch` 元工具后面（init 时 server 显示 "pending"，工具不在
+  前置列表里），而 `--tools` 限制的是**全部**工具面——allowlist 里没有
+  ToolSearch 时模型永远够不到任何 MCP 工具。因此只要有效 MCP 面非空
+  （`'file'` 带路径或 `'inherit'`），`ToolSearch` 就会被保证加进 allowlist；
+  老版本 CLI 忽略未知的 `--tools` 项，所以处处安全。Host 侧：写一个子集
+  配置文件、传 `mcp_mode: 'file'`，模型就能加载所选 server 的
   `mcp__<server>__<tool>` 工具——见 `docs/advanced-usage.zh-CN.md` §12。
 
 ### MiniMax M3 + 目录重定价波次（1.0.7 / SDK 1.1.1）
