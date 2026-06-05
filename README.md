@@ -29,6 +29,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [SmartFlow cross-CLI workflows wave (1.0.5 / SDK 1.1.0)](#smartflow-cross-cli-workflows-wave-105--sdk-110)
   - [CLI skill bridge wave (1.0.6)](#cli-skill-bridge-wave-106)
   - [MiniMax M3 + catalog reprice wave (1.0.7 / SDK 1.1.1)](#minimax-m3--catalog-reprice-wave-107--sdk-111)
+  - [streamChat MCP wave (1.0.8)](#streamchat-mcp-wave-108)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -103,6 +104,34 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### streamChat MCP wave (1.0.8)
+
+`ClaudeCliBackend::streamChat()` can now expose a caller-scoped set of MCP
+servers' tools to a one-shot chat turn. Pre-1.0.8 the chat sibling hardcoded a
+locked-empty MCP config even though the dispatch path
+(`prepareScriptedProcess()`) already supported `mcp_mode`; 1.0.8 mirrors that
+contract. Additive and non-breaking — the default stays the locked-empty
+surface, no migrations, SDK pin unchanged.
+
+- **`mcp_mode: 'empty'|'file'|'inherit'`** *(1.0.8)* — default `'empty'` (the
+  pre-1.0.8 behaviour, byte-identical argv). `'file'` passes
+  `mcp_config_file` (a `{"mcpServers":{...}}` JSON path) as
+  `--mcp-config <path> --strict-mcp-config`, exposing exactly that server
+  subset to the turn; `'inherit'` adds no MCP flags. `'file'` without a
+  usable path falls back to `'empty'` — never silently inherits the user's
+  whole MCP surface.
+- **`extra_cli_flags: string[]`** *(1.0.8)* — appended verbatim; escape hatch
+  mirroring `prepareScriptedProcess()`.
+- **`buildChatArgs()`** *(1.0.8)* — public pure argv builder extracted from
+  `streamChat()`; the tools / MCP / model / extra-flags matrix is now
+  unit-tested without process spawns.
+- Composition note: `--tools` narrows only the **built-in** tool set; MCP
+  servers ride `--mcp-config` and `--permission-mode bypassPermissions`
+  auto-approves their calls, so the read-only `Read,Glob,Grep` default
+  composes cleanly with MCP tools. Hosts: write a subset config file, pass
+  `mcp_mode: 'file'`, and the model sees `mcp__<server>__<tool>` for exactly
+  the selected servers — see `docs/advanced-usage.md` §12.
 
 ### MiniMax M3 + catalog reprice wave (1.0.7 / SDK 1.1.1)
 

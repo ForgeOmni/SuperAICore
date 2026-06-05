@@ -98,4 +98,59 @@ final class ClaudeCliBackendTest extends TestCase
         $backend = new ClaudeCliBackend(binary: '__definitely_not_a_real_binary__');
         $this->assertFalse($backend->isAvailable());
     }
+
+    // ── buildChatArgs() flag matrix (streamChat argv, 1.0.8) ──
+
+    public function test_chat_args_default_to_empty_mcp_surface(): void
+    {
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude');
+
+        // Back-compat lock: pre-1.0.8 streamChat always pinned an empty
+        // MCP config; the default must stay byte-identical.
+        $this->assertContains('--mcp-config', $args);
+        $this->assertContains('{"mcpServers":{}}', $args);
+        $this->assertContains('--strict-mcp-config', $args);
+        $this->assertContains('--permission-mode', $args);
+        $this->assertSame('Read,Glob,Grep', $args[array_search('--tools', $args, true) + 1]);
+    }
+
+    public function test_chat_args_mcp_mode_file_passes_config_path(): void
+    {
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude', [
+            'mcp_mode'        => 'file',
+            'mcp_config_file' => '/tmp/subset.json',
+        ]);
+
+        $this->assertSame('/tmp/subset.json', $args[array_search('--mcp-config', $args, true) + 1]);
+        $this->assertContains('--strict-mcp-config', $args);
+        $this->assertNotContains('{"mcpServers":{}}', $args);
+    }
+
+    public function test_chat_args_mcp_mode_file_without_path_falls_back_to_empty(): void
+    {
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude', ['mcp_mode' => 'file']);
+
+        // Never silently inherit the user's whole MCP surface.
+        $this->assertContains('{"mcpServers":{}}', $args);
+        $this->assertContains('--strict-mcp-config', $args);
+    }
+
+    public function test_chat_args_mcp_mode_inherit_adds_no_mcp_flags(): void
+    {
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude', ['mcp_mode' => 'inherit']);
+
+        $this->assertNotContains('--mcp-config', $args);
+        $this->assertNotContains('--strict-mcp-config', $args);
+    }
+
+    public function test_chat_args_appends_extra_cli_flags_in_order(): void
+    {
+        $args = (new ClaudeCliBackend())->buildChatArgs('claude', [
+            'allowed_tools'   => ['Read', 'WebFetch'],
+            'extra_cli_flags' => ['--allowedTools', 'mcp__fetch__*'],
+        ]);
+
+        $this->assertSame('Read,WebFetch', $args[array_search('--tools', $args, true) + 1]);
+        $this->assertSame(['--allowedTools', 'mcp__fetch__*'], array_slice($args, -2));
+    }
 }

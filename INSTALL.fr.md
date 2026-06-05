@@ -569,6 +569,14 @@ $process->start();
 $response = $backend->streamChat($prompt, function (string $chunk) {
     echo $chunk;
 });
+
+// 1.0.8+ — exposer un sous-ensemble délimité de serveurs MCP au tour de chat
+// (Claude uniquement ; le défaut reste une surface MCP vide verrouillée).
+// Voir docs/advanced-usage.fr.md §12.
+$response = $backend->streamChat($prompt, $onChunk, [
+    'mcp_mode'        => 'file',
+    'mcp_config_file' => $subsetJsonPath,   // {"mcpServers": {...}}
+]);
 ```
 
 Après la migration, les futurs engines qui ship une implémentation `ScriptedSpawnBackend` s'allument automatiquement dans chaque code path hôte — aucune branche `match` à ajouter. `Support\CliBinaryLocator` est enregistré en singleton par le service provider pour que la résolution des binaires CLI côté hôte utilise les mêmes sondes (`~/.npm-global/bin` / `/opt/homebrew/bin` / chemins nvm / `%APPDATA%/npm` Windows) que les backends du package. `ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS` est exposé en constante publique pour que les hôtes qui composent encore leurs propres processus `claude` partagent la liste canonique des 5 marqueurs à scrub.

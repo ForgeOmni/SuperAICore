@@ -4,6 +4,58 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] — 2026-06-05
+
+**`streamChat()` learns MCP — a one-shot chat turn can now expose a
+caller-scoped set of MCP servers' tools to the model.** Before 1.0.8,
+`ClaudeCliBackend::streamChat()` hardcoded a locked-empty MCP config
+(`--mcp-config '{"mcpServers":{}}' --strict-mcp-config`), so host chat
+surfaces could never reach MCP tools even when the dispatch path
+(`prepareScriptedProcess()`) already supported `mcp_mode`. 1.0.8 mirrors that
+existing contract onto the chat sibling. **Additive and non-breaking** — the
+default stays the locked-empty surface (byte-identical argv), no migrations,
+no config changes, SDK pin unchanged (`^1.1.1`).
+
+```bash
+composer update forgeomni/superaicore
+# no migrations
+```
+
+### Added
+
+- **`streamChat()` MCP options** (`Backends\ClaudeCliBackend`) —
+  - `mcp_mode: 'empty'|'file'|'inherit'` (default `'empty'`, the pre-1.0.8
+    behaviour). `'file'` passes a caller-supplied `mcp_config_file`
+    (`{"mcpServers":{...}}` JSON) as `--mcp-config <path> --strict-mcp-config`,
+    exposing exactly that server subset to the chat turn; `'inherit'` adds no
+    MCP flags so the CLI loads the user's own config. A `'file'` request
+    without a usable path falls back to `'empty'` rather than silently
+    inheriting the user's whole MCP surface.
+  - `extra_cli_flags: string[]` — appended verbatim (escape hatch, mirrors
+    `prepareScriptedProcess()`); covers e.g. `--allowedTools "mcp__x__*"` on
+    CLI versions that gate MCP tools behind the allowlist.
+  - Note: `--tools` only narrows the **built-in** tool set; MCP servers from
+    `--mcp-config` are a separate surface and `--permission-mode
+    bypassPermissions` (always passed by `streamChat`) auto-approves their
+    calls — so the default read-only `Read,Glob,Grep` allowlist composes
+    cleanly with MCP tools.
+- **`buildChatArgs(string $cliPath, array $options): array`**
+  (`Backends\ClaudeCliBackend`, public) — pure argv builder extracted from
+  `streamChat()` so the flag matrix (tools / MCP modes / model / extra flags)
+  is unit-testable without spawning a process. Five new tests lock the
+  matrix, including the back-compat default.
+- **`Contracts\ScriptedSpawnBackend::streamChat()` docblock** — documents the
+  three new options (`mcp_mode` / `mcp_config_file` / `extra_cli_flags`,
+  "Claude; other CLIs ignore", same convention as `allowed_tools`).
+
+### Why
+
+Host chat features that want per-conversation MCP tool access (e.g. a "chat
+with selected MCP servers" UI) can now ride the subscription-OAuth CLI path
+instead of being limited to API-key SDK dispatches: write a subset
+`{"mcpServers":{...}}` file, pass `mcp_mode: 'file'` + `mcp_config_file`, and
+the model sees `mcp__<server>__<tool>` tools for exactly the selected servers.
+
 ## [1.0.7] — 2026-06-04
 
 **SuperAgent SDK bumped to 1.1.1 — MiniMax M3 lands as a native model and the

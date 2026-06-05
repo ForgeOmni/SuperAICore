@@ -599,34 +599,23 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
     /**
      * One-shot chat — Claude CLI: stdin-pipe prompt, stream-json output,
-     * read-only tool allowlist (Read/Glob/Grep), empty MCP config,
-     * bypass permissions.
+     * read-only tool allowlist (Read/Glob/Grep), bypass permissions.
+     *
+     * MCP (1.0.8): `mcp_mode` mirrors prepareScriptedProcess()'s contract
+     * but defaults to `'empty'` — chat historically ran with a locked-empty
+     * MCP surface and that stays the default:
+     *   - 'empty'   — inline empty config + --strict-mcp-config (default)
+     *   - 'file'    — caller-supplied `mcp_config_file` path, so a chat
+     *                 turn can expose MCP servers' tools to the model
+     *                 (--permission-mode bypassPermissions auto-approves
+     *                 their calls; `--tools` only narrows the BUILT-IN set)
+     *   - 'inherit' — no MCP flags; the CLI loads the user's own config
+     * `extra_cli_flags` (string[]) appends verbatim as an escape hatch.
      */
     public function streamChat(string $prompt, callable $onChunk, array $options = []): string
     {
         $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_CLAUDE);
-        $allowedTools = $options['allowed_tools'] ?? ['Read', 'Glob', 'Grep'];
-        if (is_array($allowedTools)) {
-            $allowedTools = implode(',', $allowedTools);
-        }
-
-        $args = [
-            $cliPath, '-p',
-            '--output-format', 'stream-json', '--verbose',
-            '--permission-mode', 'bypassPermissions',
-            '--tools', (string) $allowedTools,
-            '--mcp-config', '{"mcpServers":{}}',
-            '--strict-mcp-config',
-        ];
-
-        $resolvedModel = null;
-        if (!empty($options['model']) && class_exists(\SuperAICore\Services\ClaudeModelResolver::class)) {
-            $resolvedModel = \SuperAICore\Services\ClaudeModelResolver::resolve($options['model']);
-        }
-        if ($resolvedModel) {
-            $args[] = '--model';
-            $args[] = $resolvedModel;
-        }
+        $args = $this->buildChatArgs($cliPath, $options);
 
         $env = (array) ($options['env'] ?? []);
         foreach (self::CLAUDE_SESSION_ENV_MARKERS as $marker) {
@@ -658,6 +647,59 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
         $this->assertChatExit($process, $fullResponse, 'Claude');
         return $fullResponse;
+    }
+
+    /**
+     * Pure argv builder for {@see streamChat()} — extracted so the flag
+     * matrix (tools / MCP modes / model / extra flags) is unit-testable
+     * without spawning a process.
+     *
+     * @param array $options  See streamChat()'s docblock.
+     * @return string[]
+     */
+    public function buildChatArgs(string $cliPath, array $options = []): array
+    {
+        $allowedTools = $options['allowed_tools'] ?? ['Read', 'Glob', 'Grep'];
+        if (is_array($allowedTools)) {
+            $allowedTools = implode(',', $allowedTools);
+        }
+
+        $args = [
+            $cliPath, '-p',
+            '--output-format', 'stream-json', '--verbose',
+            '--permission-mode', 'bypassPermissions',
+            '--tools', (string) $allowedTools,
+        ];
+
+        // Same contract as prepareScriptedProcess(), but chat defaults to
+        // 'empty' (pre-1.0.8 behaviour hardcoded an empty config). A 'file'
+        // request without a usable path falls back to 'empty' rather than
+        // silently inheriting the user's whole MCP surface.
+        $mcpMode = (string) ($options['mcp_mode'] ?? 'empty');
+        if ($mcpMode === 'file' && !empty($options['mcp_config_file'])) {
+            $args[] = '--mcp-config';
+            $args[] = (string) $options['mcp_config_file'];
+            $args[] = '--strict-mcp-config';
+        } elseif ($mcpMode !== 'inherit') {
+            $args[] = '--mcp-config';
+            $args[] = '{"mcpServers":{}}';
+            $args[] = '--strict-mcp-config';
+        }
+
+        $resolvedModel = null;
+        if (!empty($options['model']) && class_exists(\SuperAICore\Services\ClaudeModelResolver::class)) {
+            $resolvedModel = \SuperAICore\Services\ClaudeModelResolver::resolve($options['model']);
+        }
+        if ($resolvedModel) {
+            $args[] = '--model';
+            $args[] = $resolvedModel;
+        }
+
+        foreach ((array) ($options['extra_cli_flags'] ?? []) as $f) {
+            $args[] = (string) $f;
+        }
+
+        return $args;
     }
 
     /**

@@ -554,6 +554,55 @@ $response = $backend->streamChat(
 );
 ```
 
+#### Serveurs MCP dans un tour de chat (1.0.8)
+
+Par défaut un tour de chat s'exécute avec une **surface MCP vide verrouillée**
+(`mcp_mode: 'empty'` — le comportement codé en dur pré-1.0.8). Depuis 1.0.8
+l'appelant peut exposer au modèle un ensemble délimité de serveurs MCP — la
+brique de base pour des fonctionnalités hôtes « chat avec les serveurs MCP
+sélectionnés » :
+
+```php
+// 1. Écrire une config sous-ensemble — seulement les serveurs sélectionnés.
+$configFile = storage_path('app/chat-mcp-' . uniqid() . '.json');
+file_put_contents($configFile, json_encode([
+    'mcpServers' => [
+        'fetch'  => ['type' => 'stdio', 'command' => 'uvx', 'args' => ['mcp-server-fetch']],
+        'sqlite' => ['type' => 'stdio', 'command' => 'uvx', 'args' => ['mcp-server-sqlite']],
+    ],
+]));
+
+try {
+    $response = $backend->streamChat($prompt, $onChunk, [
+        'mcp_mode'        => 'file',        // n'expose que le sous-ensemble
+        'mcp_config_file' => $configFile,
+        'idle_timeout'    => 600,           // démarrage à froid stdio lent
+    ]);
+} finally {
+    @unlink($configFile);
+}
+```
+
+Sémantique (backend Claude ; les autres CLI ignorent ces clés, même
+convention que `allowed_tools`) :
+
+- `'empty'` (défaut) — `--mcp-config '{"mcpServers":{}}' --strict-mcp-config`.
+- `'file'` — `--mcp-config <mcp_config_file> --strict-mcp-config`. Le modèle
+  voit les outils `mcp__<serveur>__<outil>` des serveurs listés.
+  `--permission-mode bypassPermissions` (toujours passé) approuve
+  automatiquement leurs appels ; `--tools` ne restreint que l'ensemble
+  *intégré*, le défaut lecture seule se compose donc proprement. Un `'file'`
+  sans chemin utilisable retombe sur `'empty'` — n'hérite jamais
+  silencieusement de toute la config utilisateur.
+- `'inherit'` — aucun flag MCP ; le CLI charge la config de l'utilisateur.
+- `extra_cli_flags: string[]` — ajoutés tels quels (échappatoire — p. ex.
+  `['--allowedTools', 'mcp__fetch__*']` pour les versions CLI qui gardent les
+  outils MCP derrière l'allowlist).
+
+`buildChatArgs(string $cliPath, array $options): array` est le constructeur
+argv pur public derrière `streamChat()` pour inspecter ou tester la matrice
+de flags sans spawn de processus.
+
 ### Helpers wrapper-script pour les implémenteurs
 
 Si vous implémentez `ScriptedSpawnBackend` pour un nouveau CLI engine, le trait `Backends\Concerns\BuildsScriptedProcess` fournit la plomberie partagée :

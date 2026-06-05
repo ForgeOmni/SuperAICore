@@ -106,6 +106,19 @@ interface ScriptedSpawnBackend extends Backend
      *                                - `idle_timeout: ?int` (default 300)
      *                                - `allowed_tools: string|string[]`
      *                                  (Claude; other CLIs ignore)
+     *                                - `mcp_mode: 'empty'|'file'|'inherit'`
+     *                                  (Claude; other CLIs ignore; 1.0.8).
+     *                                  Default 'empty' — locked-empty MCP
+     *                                  surface, the pre-1.0.8 behaviour.
+     *                                  'file' exposes the servers in
+     *                                  `mcp_config_file` to the chat turn;
+     *                                  'inherit' loads the user's own config.
+     *                                - `mcp_config_file: ?string` — path to a
+     *                                  `{"mcpServers":{...}}` JSON; required
+     *                                  for mcp_mode='file' (falls back to
+     *                                  'empty' when missing).
+     *                                - `extra_cli_flags: string[]` — appended
+     *                                  verbatim (Claude; escape hatch).
      * @return string  The full assistant response after the subprocess exits.
      * @throws \RuntimeException on non-zero exit with empty output.
      */

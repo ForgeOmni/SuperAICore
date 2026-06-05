@@ -555,6 +555,13 @@ $process->start();
 $response = $backend->streamChat($prompt, function (string $chunk) {
     echo $chunk;
 });
+
+// 1.0.8+ —— 把限定的 MCP server 子集暴露给本轮 chat（仅 Claude；
+// 默认仍是锁死的空 MCP 面）。详见 docs/advanced-usage.zh-CN.md §12。
+$response = $backend->streamChat($prompt, $onChunk, [
+    'mcp_mode'        => 'file',
+    'mcp_config_file' => $subsetJsonPath,   // {"mcpServers": {...}}
+]);
 ```
 
 迁移完成后，未来新增的 CLI 引擎只要实现 `ScriptedSpawnBackend` 契约，就会在宿主每条代码路径里自动出现 —— 再无需要加新 `match` 分支。`Support\CliBinaryLocator` 在 service provider 注册为单例，宿主侧 CLI 路径探测与包内各 backend 走一套（`~/.npm-global/bin` / `/opt/homebrew/bin` / nvm 路径 / Windows `%APPDATA%/npm`）。`ClaudeCliBackend::CLAUDE_SESSION_ENV_MARKERS` 现在是公开常量，仍自行组装 `claude` 进程的宿主可以直接拿规范的五标记 scrub 列表。

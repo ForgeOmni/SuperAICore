@@ -29,6 +29,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague workflows cross-CLI SmartFlow (1.0.5 / SDK 1.1.0)](#vague-workflows-cross-cli-smartflow-105--sdk-110)
   - [Vague pont de skills CLI (1.0.6)](#vague-pont-de-skills-cli-106)
   - [Vague MiniMax M3 + retarification du catalogue (1.0.7 / SDK 1.1.1)](#vague-minimax-m3--retarification-du-catalogue-107--sdk-111)
+  - [Vague streamChat MCP (1.0.8)](#vague-streamchat-mcp-108)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -103,6 +104,36 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague streamChat MCP (1.0.8)
+
+`ClaudeCliBackend::streamChat()` peut désormais exposer à un tour de chat un
+ensemble de serveurs MCP délimité par l'appelant. Avant 1.0.8, le chemin chat
+codait en dur une config MCP vide verrouillée — alors que le chemin de
+dispatch (`prepareScriptedProcess()`) supportait déjà `mcp_mode` ; 1.0.8
+reflète ce contrat sur la méthode sœur. Additif et non cassant — le défaut
+reste la surface vide verrouillée, aucune migration, pin SDK inchangé.
+
+- **`mcp_mode: 'empty'|'file'|'inherit'`** *(1.0.8)* — défaut `'empty'` (le
+  comportement pré-1.0.8, argv identique à l'octet près). `'file'` passe
+  `mcp_config_file` (chemin JSON `{"mcpServers":{...}}`) en
+  `--mcp-config <path> --strict-mcp-config`, exposant exactement ce
+  sous-ensemble au tour ; `'inherit'` n'ajoute aucun flag MCP. `'file'` sans
+  chemin utilisable retombe sur `'empty'` — n'hérite jamais silencieusement
+  de toute la surface MCP de l'utilisateur.
+- **`extra_cli_flags: string[]`** *(1.0.8)* — ajoutés tels quels ; échappatoire
+  reflétant `prepareScriptedProcess()`.
+- **`buildChatArgs()`** *(1.0.8)* — constructeur argv pur public extrait de
+  `streamChat()` ; la matrice tools / MCP / modèle / flags extra est
+  désormais testée unitairement sans spawn de processus.
+- Note de composition : `--tools` ne restreint que l'ensemble d'outils
+  **intégrés** ; les serveurs MCP passent par `--mcp-config` et
+  `--permission-mode bypassPermissions` approuve automatiquement leurs
+  appels — la liste lecture seule `Read,Glob,Grep` par défaut se compose donc
+  proprement avec les outils MCP. Côté hôte : écrire un fichier de config
+  sous-ensemble, passer `mcp_mode: 'file'`, et le modèle voit
+  `mcp__<serveur>__<outil>` pour exactement les serveurs choisis — voir
+  `docs/advanced-usage.fr.md` §12.
 
 ### Vague MiniMax M3 + retarification du catalogue (1.0.7 / SDK 1.1.1)
 

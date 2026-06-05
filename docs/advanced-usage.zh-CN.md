@@ -553,6 +553,48 @@ $response = $backend->streamChat(
 );
 ```
 
+#### 在 chat 轮次里挂 MCP server（1.0.8）
+
+默认 chat 轮次运行在**锁死的空 MCP 面**上（`mcp_mode: 'empty'`——1.0.8 之前
+的硬编码行为）。1.0.8 起调用方可以把限定的一组 MCP server 工具暴露给模型——
+这是宿主做"与所选 MCP server 对话"功能的积木：
+
+```php
+// 1. 写一个子集配置——只含本会话勾选的 server。
+$configFile = storage_path('app/chat-mcp-' . uniqid() . '.json');
+file_put_contents($configFile, json_encode([
+    'mcpServers' => [
+        'fetch'  => ['type' => 'stdio', 'command' => 'uvx', 'args' => ['mcp-server-fetch']],
+        'sqlite' => ['type' => 'stdio', 'command' => 'uvx', 'args' => ['mcp-server-sqlite']],
+    ],
+]));
+
+try {
+    $response = $backend->streamChat($prompt, $onChunk, [
+        'mcp_mode'        => 'file',        // 只暴露下面这个子集
+        'mcp_config_file' => $configFile,
+        'idle_timeout'    => 600,           // stdio server 冷启动慢
+    ]);
+} finally {
+    @unlink($configFile);
+}
+```
+
+语义（Claude backend；其它 CLI 忽略这些键，与 `allowed_tools` 同约定）：
+
+- `'empty'`（默认）—— `--mcp-config '{"mcpServers":{}}' --strict-mcp-config`。
+- `'file'` —— `--mcp-config <mcp_config_file> --strict-mcp-config`。模型看到
+  所列 server 的 `mcp__<server>__<tool>` 工具。`--permission-mode
+  bypassPermissions`（始终传入）自动批准其调用；`--tools` 只收窄**内置**
+  工具集，所以只读默认值能干净组合。`'file'` 缺可用路径时回退 `'empty'`，
+  绝不静默继承用户的全部配置。
+- `'inherit'` —— 不加 MCP flag；CLI 加载用户自己的配置。
+- `extra_cli_flags: string[]` —— 原样追加（逃生舱——例如某些 CLI 版本把 MCP
+  工具关在 allowlist 后面时传 `['--allowedTools', 'mcp__fetch__*']`）。
+
+`buildChatArgs(string $cliPath, array $options): array` 是 `streamChat()`
+背后的公开纯 argv 构建器，需要检查或单测 flag 矩阵时无需拉起进程。
+
 ### 实现新 backend 时的 wrapper-script 助手
 
 要给新 CLI 引擎实现 `ScriptedSpawnBackend`，`Backends\Concerns\BuildsScriptedProcess` trait 提供共享的底座:
