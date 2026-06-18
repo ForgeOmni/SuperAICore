@@ -30,6 +30,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [CLI skill bridge wave (1.0.6)](#cli-skill-bridge-wave-106)
   - [MiniMax M3 + catalog reprice wave (1.0.7 / SDK 1.1.1)](#minimax-m3--catalog-reprice-wave-107--sdk-111)
   - [streamChat MCP wave (1.0.8)](#streamchat-mcp-wave-108)
+  - [GLM-5.2 native flagship wave (1.0.10 / SDK 1.1.2)](#glm-52-native-flagship-wave-1010--sdk-112)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -104,6 +105,32 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### GLM-5.2 native flagship wave (1.0.10 / SDK 1.1.2)
+
+SDK pin moves `^1.1.1` → `^1.1.2`. SuperAgent 1.1.2 promotes **GLM-5.2** to the
+native `glm` flagship and gives `GlmProvider` a `reasoning_effort` dial;
+SuperAICore mirrors Z.ai's official rates into its own `model_pricing` table and
+seeds the new id into the `superagent` engine so cost dashboards and pickers stay
+accurate offline. Additive and non-breaking — no migrations, no config changes.
+
+- **GLM-5.2 native pricing** *(1.0.10)* — `glm-5.2` (Z.ai's coding-first
+  agentic flagship: 1M context, 128K max output, text-only) and `glm-5.1` (200K
+  context) at the official PAYG **$1.40 in / $4.40 out** per 1M, with a **$0.26
+  cache-hit input** tier (carried as `cache_read_input`); `glm-5` keeps its
+  earlier $1.00 / $3.20. `CostCalculator` already falls back to the SDK
+  `ModelCatalog`, so these rows simply keep accounting accurate without a
+  catalog round-trip; `glm-5.2` is also seeded into the `superagent` engine's
+  `available_models` so it shows in pickers offline.
+- **GLM-5.2 `reasoning_effort` dial** *(1.0.10)* — SDK 1.1.2 makes `GlmProvider`
+  implement `SupportsReasoningEffort`, joining MiniMax M3. The per-call
+  `reasoning_effort` option (`off` → thinking disabled; `low…high` →
+  `reasoning_effort high`; `max` → `reasoning_effort max`) and the bare
+  `thinking` toggle both route through `SuperAgentBackend` untouched — they were
+  already forwarded generically, so the dial works the moment the SDK lands.
+- **Catalog carried forward** *(1.0.10)* — GLM-5.1 (long-horizon, 200K context)
+  and the earlier `glm-5` line stay reachable by id; only the bare `glm`
+  shorthand and the zero-config default now resolve to GLM-5.2.
 
 ### streamChat MCP wave (1.0.8)
 

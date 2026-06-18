@@ -1263,6 +1263,44 @@ See [docs/advanced-usage.md §32](docs/advanced-usage.md) and
 YAML authoring, the structured-output ladder, resume, and the superagent
 federation recipe.
 
+**1.0.10 — GLM-5.2 native flagship; no migration; SDK pin moves to `^1.1.2`.**
+Additive across the board — no schema changes; publish the config only if you
+want the refreshed `model_pricing` table (`php artisan vendor:publish
+--tag=super-ai-core-config`). Two things worth knowing:
+
+1. **GLM-5.2 is the new `glm` default.** SDK 1.1.2 promotes `glm-5.2` (Z.ai's
+   coding-first agentic flagship: 1M context, 128K max output, text-only) to the
+   native `glm` flagship and adds `glm-5.1` (200K context). SuperAICore mirrors
+   Z.ai's official rates into its `model_pricing` table — `glm-5.2` / `glm-5.1`
+   at **$1.40 in / $4.40 out** per 1M with a **$0.26 cache-hit** input tier,
+   `glm-5` at $1.00 / $3.20 — and seeds `glm-5.2` into the `superagent` engine's
+   `available_models` so it shows in pickers offline. `CostCalculator` already
+   falls back to the SDK `ModelCatalog`, so unlisted GLM SKUs still resolve; the
+   explicit rows just keep dashboards accurate without a catalog round-trip. The
+   bare `glm` shorthand and the zero-config default now resolve to GLM-5.2;
+   `glm-5` / `glm-4.x` stay reachable by id.
+
+2. **`GlmProvider` gains a `reasoning_effort` dial — transparently.** SDK 1.1.2
+   makes `GlmProvider` implement `SupportsReasoningEffort` (joining MiniMax M3),
+   so the existing per-call option already routes to it:
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => 'Refactor this module for testability.',
+       'provider_config'  => ['provider' => 'glm'],   // → glm-5.2
+       'reasoning_effort' => 'max',   // off | high | max (off ⇒ thinking disabled)
+   ]);
+   ```
+
+   No call-site change required — `SuperAgentBackend` forwarded
+   `reasoning_effort` / `thinking` generically already, so the dial works the
+   moment the SDK lands. Nothing to undo — pre-1.0.10 callers see identical
+   behaviour.
+
+See [docs/advanced-usage.md §28](docs/advanced-usage.md) (the `reasoning_effort`
+three-tier dial) for the wire shapes per provider.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

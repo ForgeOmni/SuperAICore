@@ -2590,6 +2590,11 @@ $result = $dispatcher->dispatch([
 Route vers la bonne forme de body selon l'upstream :
 - La plupart des providers : champ top-level `reasoning_effort`.
 - NVIDIA NIM : `chat_template_kwargs.thinking`.
+- GLM-5.2 *(SDK 1.1.2)* et MiniMax M3 *(SDK 1.1.1)* implémentent
+  `SupportsReasoningEffort` nativement — `off` envoie `thinking: {type: disabled}`,
+  `low…high` → `reasoning_effort high` + thinking activé, `max` →
+  `reasoning_effort max`. Le simple interrupteur `thinking` (`true` / `'enabled'`
+  / `'disabled'`) et `features.thinking` routent au même endroit.
 - Providers sans la capability : silencieusement ignoré.
 
 Nourrit aussi l'heuristique d'escalation `AutoModelRouter` quand

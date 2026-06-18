@@ -4,6 +4,49 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.10] — 2026-06-18
+
+**SuperAgent SDK bumped to 1.1.2 — GLM-5.2 lands as the native `glm`
+flagship and the cost catalog is taught its official Z.ai rates.** SDK 1.1.2
+adds GLM-5.2 (Z.ai's coding-first agentic flagship — 1M context, 128K max
+output, text-only) and GLM-5.1 (200K context) to its `ModelCatalog`,
+promotes `glm-5.2` to the `glm` provider default, and gives `GlmProvider` a
+`reasoning_effort` dial on top of the binary thinking toggle. This release
+mirrors that into SuperAICore so cost dashboards and model pickers stay
+accurate without a live catalog probe. **Additive and non-breaking** — the
+SDK pin moves from `^1.1.1` to `^1.1.2`, no migrations, no config changes for
+existing callers. The new `reasoning_effort` dial routes through
+`SuperAgentBackend` untouched (it was already forwarded generically and is
+silently ignored by providers that don't implement `SupportsReasoningEffort`).
+
+```bash
+composer update forgeomni/superaicore
+# no migrations
+```
+
+### Added
+
+- **Native GLM pricing** (`config/super-ai-core.php` → `model_pricing`) —
+  `glm-5.2` and `glm-5.1` at Z.ai's official PAYG rate **$1.40 in / $4.40
+  out** per 1M with a **$0.26 cache-hit input** tier (carried as
+  `cache_read_input`), plus `glm-5` at its earlier $1.00 / $3.20. The SDK's
+  `ModelCatalog` carries these rows too, so unlisted GLM SKUs still resolve —
+  these explicit entries keep `CostCalculator` accurate offline without a
+  catalog round-trip (mirroring the DeepSeek / MiniMax / Qwen / Grok blocks).
+- **`glm-5.2` surfaced in the SuperAgent engine seed**
+  (`EngineCatalog::seed()` → `superagent.available_models`) so Z.ai's new
+  flagship shows up in model pickers even when the catalog probe can't run
+  (offline / composer dependency missing / catalog stale), alongside the
+  existing DeepSeek V4 + MiniMax M3 fallback ids.
+
+### Changed
+
+- **SDK pin `forgeomni/superagent: ^1.1.1` → `^1.1.2`** (`composer.json`).
+- **`SuperAgentBackend` reasoning-effort doc** notes the
+  `SupportsReasoningEffort` set grew in SDK 1.1.2 to include GLM-5.2
+  (`off` → thinking disabled; `low…high` → `reasoning_effort high`;
+  `max` → `reasoning_effort max`), alongside MiniMax M3.
+
 ## [1.0.9] — 2026-06-05
 
 **ToolSearch fix for `streamChat()` MCP — without it, 1.0.8's `mcp_mode:

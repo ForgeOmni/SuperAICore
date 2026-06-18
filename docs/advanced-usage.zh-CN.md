@@ -2492,6 +2492,10 @@ $result = $dispatcher->dispatch([
 按 upstream 路由到正确的 body shape：
 - 多数 provider：顶层 `reasoning_effort` 字段。
 - NVIDIA NIM：`chat_template_kwargs.thinking`。
+- GLM-5.2（SDK 1.1.2）与 MiniMax M3（SDK 1.1.1）原生实现 `SupportsReasoningEffort`
+  —— `off` 发送 `thinking: {type: disabled}`,`low…high` → `reasoning_effort high`
+  并开启 thinking,`max` → `reasoning_effort max`。裸 `thinking` 开关
+  （`true` / `'enabled'` / `'disabled'`）与 `features.thinking` 路由到同一处。
 - 不实现该能力的 provider：静默忽略。
 
 设为 `max` 时同时喂给 `AutoModelRouter` 的升级启发式。

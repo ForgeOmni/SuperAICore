@@ -1312,6 +1312,46 @@ Voir [docs/advanced-usage.fr.md §32](docs/advanced-usage.fr.md) et
 primitives, écriture YAML, l'échelle de sortie structurée, resume et la recette de
 fédération superagent.
 
+**1.0.10 — vaisseau amiral natif GLM-5.2 ; aucune migration ; le pin SDK passe à
+`^1.1.2`.** Additif sur toute la ligne — aucun changement de schéma ; ne publiez
+la config que si vous voulez la table `model_pricing` rafraîchie
+(`php artisan vendor:publish --tag=super-ai-core-config`). Deux choses à savoir :
+
+1. **GLM-5.2 est le nouveau défaut `glm`.** Le SDK 1.1.2 promeut `glm-5.2`
+   (vaisseau amiral agentique orienté code de Z.ai : contexte 1M, sortie max
+   128K, texte uniquement) au rang de vaisseau amiral natif `glm` et ajoute
+   `glm-5.1` (contexte 200K). SuperAICore reflète les tarifs officiels de Z.ai
+   dans sa table `model_pricing` — `glm-5.2` / `glm-5.1` à **1,40 $ en entrée /
+   4,40 $ en sortie** par 1M avec un palier **0,26 $ en entrée cache-hit**,
+   `glm-5` à 1,00 $ / 3,20 $ — et sème `glm-5.2` dans les `available_models` du
+   moteur `superagent` pour qu'il apparaisse dans les sélecteurs hors ligne.
+   `CostCalculator` retombe déjà sur le `ModelCatalog` du SDK, donc les SKU GLM
+   non listés se résolvent toujours ; les lignes explicites gardent simplement
+   les tableaux de bord exacts sans aller-retour catalogue. Le raccourci `glm`
+   nu et le défaut zéro-config résolvent désormais vers GLM-5.2 ; `glm-5` /
+   `glm-4.x` restent joignables par id.
+
+2. **`GlmProvider` gagne un cadran `reasoning_effort` — de façon transparente.**
+   Le SDK 1.1.2 fait implémenter `SupportsReasoningEffort` à `GlmProvider`
+   (rejoignant MiniMax M3), donc l'option par appel existante y est déjà routée :
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => 'Refactore ce module pour le rendre testable.',
+       'provider_config'  => ['provider' => 'glm'],   // → glm-5.2
+       'reasoning_effort' => 'max',   // off | high | max (off ⇒ pensée désactivée)
+   ]);
+   ```
+
+   Aucun changement de site d'appel requis — `SuperAgentBackend` transmettait
+   déjà `reasoning_effort` / `thinking` de façon générique, donc le cadran
+   fonctionne dès que le SDK est en place. Rien à défaire — les appelants
+   pré-1.0.10 voient un comportement identique.
+
+Voir [docs/advanced-usage.fr.md §28](docs/advanced-usage.fr.md) (le cadran
+`reasoning_effort` à trois niveaux) pour les formes wire par fournisseur.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.
