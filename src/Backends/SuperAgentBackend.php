@@ -441,7 +441,9 @@ class SuperAgentBackend implements Backend
         // Routes to the right body shape per upstream inside the provider
         // (top-level `reasoning_effort` for most, `chat_template_kwargs` for
         // NVIDIA NIM, etc.). Silently ignored by providers that don't
-        // implement `SupportsReasoningEffort`.
+        // implement `SupportsReasoningEffort` — that set grew in SDK 1.1.2 to
+        // include GLM-5.2 (off → thinking disabled; low…high → reasoning_effort
+        // high; max → reasoning_effort max), alongside MiniMax M3.
         if (isset($options['reasoning_effort']) && is_string($options['reasoning_effort']) && $options['reasoning_effort'] !== '') {
             $perCall['reasoning_effort'] = strtolower(trim($options['reasoning_effort']));
         }

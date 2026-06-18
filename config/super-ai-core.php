@@ -906,6 +906,22 @@ return [
         'MiniMax-M2.5'                => ['input' => 0.30,  'output' => 1.20],
         'MiniMax-M2'                  => ['input' => 0.30,  'output' => 1.20],
 
+        // ─── Z.ai GLM (native, GLM-5.2 since SuperAgent 1.1.2) ───
+        // GLM-5.2 is Z.ai's coding-first agentic flagship — 1M context, 128K
+        // max output, text-only, with a new `reasoning_effort` dial on top of
+        // the binary thinking toggle (drive both via the SDK's generic
+        // `reasoning_effort` / `thinking` options; they route through
+        // SuperAgentBackend untouched). GLM-5.1 is the 200K-context
+        // long-horizon sibling; both bill the same official Z.ai PAYG rate of
+        // $1.40 in / $4.40 out, with a $0.26 cache-hit input tier (cache
+        // storage currently limited-time free). GLM-5 stays reachable by id at
+        // its earlier $1.00 / $3.20 rate. The SDK's ModelCatalog carries these
+        // rows too, so unlisted GLM SKUs still resolve — these explicit entries
+        // keep cost dashboards accurate offline without a catalog round-trip.
+        'glm-5.2'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
+        'glm-5.1'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
+        'glm-5'                       => ['input' => 1.00,  'output' => 3.20],
+
         // ─── Google Gemini ───
         'gemini-3-pro-preview'        => ['input' => 2.00,  'output' => 12.00],
         'gemini-2.5-pro'              => ['input' => 1.25,  'output' => 10.00],

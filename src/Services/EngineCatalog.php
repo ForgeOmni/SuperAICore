@@ -671,11 +671,13 @@ class EngineCatalog
                 // populate everything else. The DeepSeek V4 + MiniMax M3 ids
                 // are surfaced explicitly so they show up in pickers without
                 // requiring the catalog probe to succeed (offline /
-                // composer dependency missing / catalog stale).
+                // composer dependency missing / catalog stale). GLM-5.2 is
+                // Z.ai's coding-first flagship surfaced in SuperAgent 1.1.2.
                 'available_models'    => [
                     'deepseek-v4-pro',
                     'deepseek-v4-flash',
                     'MiniMax-M3',
+                    'glm-5.2',
                 ],
                 'process_spec'        => null,
             ],

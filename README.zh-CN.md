@@ -30,6 +30,7 @@
   - [CLI skill 桥接波次（1.0.6）](#cli-skill-桥接波次106)
   - [MiniMax M3 + 目录重定价波次（1.0.7 / SDK 1.1.1）](#minimax-m3--目录重定价波次107--sdk-111)
   - [streamChat MCP 波次（1.0.8）](#streamchat-mcp-波次108)
+  - [GLM-5.2 原生旗舰波次（1.0.10 / SDK 1.1.2）](#glm-52-原生旗舰波次1010--sdk-112)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -104,6 +105,30 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### GLM-5.2 原生旗舰波次（1.0.10 / SDK 1.1.2）
+
+SDK 约束从 `^1.1.1` 移到 `^1.1.2`。SuperAgent 1.1.2 把 **GLM-5.2** 提升为原生
+`glm` 旗舰,并给 `GlmProvider` 加上 `reasoning_effort` 档位；SuperAICore 把
+Z.ai 的官方价镜像进自己的 `model_pricing` 表,并把新 id 种入 `superagent`
+引擎,让成本看板与模型选择器在离线时也保持准确。纯增量、无破坏 —— 无迁移、无
+配置变更。
+
+- **GLM-5.2 原生定价**（1.0.10）—— `glm-5.2`（Z.ai 编码优先的智能体旗舰:1M
+  上下文、128K 最大输出、纯文本）与 `glm-5.1`（200K 上下文）按官方 PAYG
+  **$1.40 入 / $4.40 出** 每 1M,并附 **$0.26 cache-hit 入** 档位（以
+  `cache_read_input` 承载）；`glm-5` 保留其早先的 $1.00 / $3.20。
+  `CostCalculator` 本就回退到 SDK 的 `ModelCatalog`,这些行只是让离线计费保持
+  准确;`glm-5.2` 同时种入 `superagent` 引擎的 `available_models`,以便离线时
+  也出现在选择器里。
+- **GLM-5.2 `reasoning_effort` 档位**（1.0.10）—— SDK 1.1.2 让 `GlmProvider`
+  实现 `SupportsReasoningEffort`,与 MiniMax M3 并列。逐调用的
+  `reasoning_effort` 选项（`off` → 关闭思考;`low…high` →
+  `reasoning_effort high`;`max` → `reasoning_effort max`）与裸 `thinking`
+  开关都原样经 `SuperAgentBackend` 透传 —— 它们本就是通用转发,所以 SDK 一落地
+  档位即可用。
+- **目录延续**（1.0.10）—— GLM-5.1（长时程,200K 上下文）与早先的 `glm-5`
+  系列仍可按 id 访问;只有裸 `glm` 简写与零配置默认值现在解析到 GLM-5.2。
 
 ### streamChat MCP 波次（1.0.8）
 

@@ -30,6 +30,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague pont de skills CLI (1.0.6)](#vague-pont-de-skills-cli-106)
   - [Vague MiniMax M3 + retarification du catalogue (1.0.7 / SDK 1.1.1)](#vague-minimax-m3--retarification-du-catalogue-107--sdk-111)
   - [Vague streamChat MCP (1.0.8)](#vague-streamchat-mcp-108)
+  - [Vague vaisseau amiral natif GLM-5.2 (1.0.10 / SDK 1.1.2)](#vague-vaisseau-amiral-natif-glm-52-1010--sdk-112)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -104,6 +105,35 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague vaisseau amiral natif GLM-5.2 (1.0.10 / SDK 1.1.2)
+
+Le pin SDK passe de `^1.1.1` à `^1.1.2`. SuperAgent 1.1.2 promeut **GLM-5.2** au
+rang de vaisseau amiral natif `glm` et dote `GlmProvider` d'un cadran
+`reasoning_effort` ; SuperAICore reflète les tarifs officiels de Z.ai dans sa
+propre table `model_pricing` et sème le nouvel id dans le moteur `superagent`,
+pour que les tableaux de bord de coûts et les sélecteurs restent exacts hors
+ligne. Additif et non cassant — aucune migration, aucun changement de config.
+
+- **Tarification native GLM-5.2** *(1.0.10)* — `glm-5.2` (vaisseau amiral
+  agentique orienté code de Z.ai : contexte 1M, sortie max 128K, texte
+  uniquement) et `glm-5.1` (contexte 200K) au tarif PAYG officiel **1,40 $ en
+  entrée / 4,40 $ en sortie** par 1M, avec un palier **0,26 $ en entrée
+  cache-hit** (porté par `cache_read_input`) ; `glm-5` garde son ancien tarif
+  1,00 $ / 3,20 $. `CostCalculator` retombe déjà sur le `ModelCatalog` du SDK ;
+  ces lignes gardent simplement la comptabilité exacte hors ligne, et `glm-5.2`
+  est aussi semé dans les `available_models` du moteur `superagent` pour
+  apparaître dans les sélecteurs hors ligne.
+- **Cadran `reasoning_effort` GLM-5.2** *(1.0.10)* — le SDK 1.1.2 fait
+  implémenter `SupportsReasoningEffort` à `GlmProvider`, rejoignant MiniMax M3.
+  L'option par appel `reasoning_effort` (`off` → pensée désactivée ; `low…high`
+  → `reasoning_effort high` ; `max` → `reasoning_effort max`) et le simple
+  interrupteur `thinking` transitent tels quels par `SuperAgentBackend` — ils
+  étaient déjà transmis de façon générique, donc le cadran fonctionne dès que le
+  SDK est en place.
+- **Catalogue conservé** *(1.0.10)* — GLM-5.1 (longue portée, contexte 200K) et
+  l'ancienne ligne `glm-5` restent joignables par id ; seuls le raccourci `glm`
+  nu et le défaut zéro-config résolvent désormais vers GLM-5.2.
 
 ### Vague streamChat MCP (1.0.8)
 

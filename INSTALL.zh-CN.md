@@ -1232,6 +1232,40 @@ Cursor / Grok CLI 上手菜谱、Opus 4.8 路由，以及 Grok API 与 CLI
 superagent 联邦菜谱）见 [docs/advanced-usage.zh-CN.md §32](docs/advanced-usage.zh-CN.md)
 与 [docs/smartflow.md](docs/smartflow.md)。
 
+**1.0.10 —— GLM-5.2 原生旗舰;无迁移;SDK pin 移到 `^1.1.2`。** 全面纯增量
+—— 无 schema 变更;仅当你想要刷新后的 `model_pricing` 表时才需发布配置
+（`php artisan vendor:publish --tag=super-ai-core-config`）。两点值得了解:
+
+1. **GLM-5.2 是新的 `glm` 默认值。** SDK 1.1.2 把 `glm-5.2`（Z.ai 编码优先的
+   智能体旗舰:1M 上下文、128K 最大输出、纯文本）提升为原生 `glm` 旗舰,并新增
+   `glm-5.1`（200K 上下文）。SuperAICore 把 Z.ai 官方价镜像进 `model_pricing`
+   表 —— `glm-5.2` / `glm-5.1` 为 **$1.40 入 / $4.40 出** 每 1M,并附 **$0.26
+   cache-hit** 入档位,`glm-5` 为 $1.00 / $3.20 —— 并把 `glm-5.2` 种入
+   `superagent` 引擎的 `available_models`,使其离线时也出现在选择器里。
+   `CostCalculator` 本就回退到 SDK 的 `ModelCatalog`,故未列出的 GLM SKU 仍可
+   解析;显式行只是让看板在无需目录往返时保持准确。裸 `glm` 简写与零配置默认值
+   现在解析到 GLM-5.2;`glm-5` / `glm-4.x` 仍可按 id 访问。
+
+2. **`GlmProvider` 获得 `reasoning_effort` 档位 —— 透传式。** SDK 1.1.2 让
+   `GlmProvider` 实现 `SupportsReasoningEffort`（与 MiniMax M3 并列）,因此现有
+   的逐调用选项已直接路由到它:
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => '把这个模块重构得更易测试。',
+       'provider_config'  => ['provider' => 'glm'],   // → glm-5.2
+       'reasoning_effort' => 'max',   // off | high | max（off ⇒ 关闭思考）
+   ]);
+   ```
+
+   无需改调用点 —— `SuperAgentBackend` 本就通用转发 `reasoning_effort` /
+   `thinking`,所以 SDK 一落地档位即可用。无需回退 —— 1.0.10 之前的调用方行为
+   一致。
+
+各 provider 的 wire 形态见 [docs/advanced-usage.zh-CN.md §28](docs/advanced-usage.zh-CN.md)
+（`reasoning_effort` 三档拨盘）。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。
