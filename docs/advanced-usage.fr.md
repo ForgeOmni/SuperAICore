@@ -2590,6 +2590,8 @@ $result = $dispatcher->dispatch([
 Route vers la bonne forme de body selon l'upstream :
 - La plupart des providers : champ top-level `reasoning_effort`.
 - NVIDIA NIM : `chat_template_kwargs.thinking`.
+- Anthropic (SDK 1.1.5+) : `output_config.effort` sur Fable 5 / Sonnet 5 /
+  Opus 4.5+ / Sonnet 4.6 — voir §34.
 - Providers sans la capability : silencieusement ignoré.
 
 Nourrit aussi l'heuristique d'escalation `AutoModelRouter` quand
@@ -3626,6 +3628,91 @@ if ($bridge->active()) {
     $report = $bridge->syncAll(['codex', 'gemini']);    // [['backend'=>…,'installed'=>189,'pruned'=>0,'path'=>…], …]
 }
 ```
+
+---
+
+## 34. Fable 5 & Sonnet 5 — la surface adaptative et le cadran d'effort Anthropic (1.0.11 / SDK 1.1.5)
+
+Le SDK 1.1.5 fait atterrir **Claude Fable 5** (`claude-fable-5`) et **Claude
+Sonnet 5** (`claude-sonnet-5`) comme modèles `anthropic` de première classe.
+Fable 5 est le modèle le plus capable d'Anthropic — contexte 1M, sortie max
+128K, vision haute résolution — au-dessus du palier Opus à **10 $/50 $** par
+1M ; Sonnet 5 est le nouveau vaisseau amiral `sonnet` sur la même surface de
+génération Claude 5, à **3 $/15 $** (tarif de lancement 2 $/10 $ jusqu'au
+2026-08-31). SuperAICore 1.0.11 reflète les deux dans `model_pricing` et le
+seed du moteur `superagent` ; rien d'autre ne change côté hôte.
+
+### Sélectionner les modèles
+
+```php
+$result = $dispatcher->dispatch([
+    'backend'         => 'superagent',
+    'prompt'          => 'Conçois le plan de migration pour ce changement de schéma.',
+    'provider_config' => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+]);
+```
+
+Alias côté SDK : `fable` / `claude-fable` / `claude-fable-5` résolvent vers
+Fable 5 (sa propre famille — aucune collision avec `opus`) ; `sonnet` et tous
+les alias sonnet-esques résolvent désormais vers Sonnet 5. Le `anthropic`
+zéro-config résout vers `claude-opus-4-8`. Chaque id Claude antérieur continue
+de fonctionner.
+
+### La surface de requête adaptative-seule (gérée pour vous)
+
+La génération Claude 5 n'accepte que la **pensée adaptative**. Le
+`AnthropicProvider` du SDK ajuste automatiquement la forme de la requête pour
+Fable 5, Sonnet 5 et Opus 4.6+ :
+
+- `thinking: {type: "adaptive"}` est émis — jamais `budget_tokens`. Un
+  raccourci `thinking_budget_tokens` configuré est rerouté vers la forme
+  adaptative au lieu de provoquer un 400.
+- `temperature` / `top_p` / `top_k` sont abandonnés (Fable 5 / Sonnet 5 /
+  Opus 4.7 / 4.8 les rejettent).
+- Les prefills assistant finaux sont sautés pour la famille 4.6+ et la paire
+  Claude 5.
+
+Ces garde-fous corrigent aussi des 400 latents qu'Opus 4.7/4.8 rencontrait
+déjà sur `budget_tokens` et les paramètres d'échantillonnage — un bugfix
+hérité, aucune action requise.
+
+### Le cadran `reasoning_effort` Anthropic
+
+`AnthropicProvider` implémente désormais `SupportsReasoningEffort` (rejoignant
+MiniMax M3 et GLM-5.2), mappant l'option par appel vers le
+`output_config.effort` GA d'Anthropic :
+
+```php
+$result = $dispatcher->dispatch([
+    'backend'          => 'superagent',
+    'prompt'           => 'Audite cette migration pour les race conditions.',
+    'provider_config'  => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+    'reasoning_effort' => 'max',   // off | low | medium | high | xhigh | max
+]);
+```
+
+- Modèles pris en charge : Fable 5, Sonnet 5, Opus 4.5+, Sonnet 4.6.
+- `off` / valeurs inconnues / modèles non pris en charge → aucun
+  `output_config` du tout, donc un effort égaré ne provoque jamais de 400.
+- Comme pour GLM et MiniMax, l'option transite telle quelle par
+  `SuperAgentBackend` — elle était déjà transmise génériquement (§28).
+
+### Comptabilité des coûts
+
+`model_pricing` porte les tarifs officiels : Fable 5 10 $/50 $, Sonnet 5
+3 $/15 $, Opus courant (`4-5`→`4-8`) **5 $/25 $** (retarifé depuis le périmé
+15 $/75 $ — seul l'instantané daté `claude-opus-4-20250514` garde le tarif
+historique), Haiku 4.5 1 $/5 $. Si votre hôte a publié une copie de config
+plus ancienne, republiez-la (`php artisan vendor:publish
+--tag=super-ai-core-config`), sinon le tableau de bord continue de compter
+Opus 3× trop cher. La carte `squad.tiers` de SuperAICore est volontairement
+inchangée (`expert` reste sur `claude-opus-4-8`) ; le palier EXPERT du Squad
+du SDK route vers `claude-fable-5` — pointez votre config vers
+`claude-fable-5` si vous voulez ce palier côté hôte.
+
+Note de rétention des données : le trafic API de Fable 5 porte actuellement
+une fenêtre de rétention de 30 jours côté Anthropic — vérifiez vos exigences
+de conformité avant d'y router des charges de travail réglementées.
 
 ---
 

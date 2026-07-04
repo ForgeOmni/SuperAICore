@@ -109,6 +109,16 @@ class KiroModelResolver
     }
 
     /**
+     * Drop the in-process memoized catalog so the next `catalog()` call
+     * re-reads cache/CLI/fallback. Without this, whichever test touches
+     * the resolver first pins the catalog for the whole PHPUnit process.
+     */
+    public static function resetMemo(): void
+    {
+        self::$memoCatalog = null;
+    }
+
+    /**
      * Resolve a family alias or foreign model name to the concrete ID
      * `kiro-cli chat --model` accepts.
      *

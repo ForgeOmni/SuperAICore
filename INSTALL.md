@@ -1301,6 +1301,57 @@ want the refreshed `model_pricing` table (`php artisan vendor:publish
 See [docs/advanced-usage.md §28](docs/advanced-usage.md) (the `reasoning_effort`
 three-tier dial) for the wire shapes per provider.
 
+**1.0.11 — Fable 5 & Sonnet 5; no migration; SDK pin moves to `^1.1.5`.**
+Additive across the board — no schema changes; publish the config only if you
+want the refreshed `model_pricing` table (`php artisan vendor:publish
+--tag=super-ai-core-config`). Three things worth knowing:
+
+1. **Fable 5 and Sonnet 5 are native `anthropic` models now.** SDK 1.1.5 adds
+   `claude-fable-5` (Anthropic's most capable model: 1M context, 128K max
+   output, always-on adaptive thinking, effort dial) and `claude-sonnet-5`
+   (the new `sonnet` flagship on the same Claude-5-generation surface).
+   SuperAICore mirrors the official rates into `model_pricing` — Fable 5
+   **$10 in / $50 out** per 1M, Sonnet 5 **$3 / $15** (intro $2/$10 through
+   2026-08-31; the table carries the official rate) — and seeds both ids into
+   the `superagent` engine's `available_models` so they show in pickers
+   offline. The `sonnet` alias now resolves to Sonnet 5 SDK-side; every prior
+   Claude id stays reachable.
+
+2. **The Opus line got 3× cheaper — dashboards need the new table.** SDK 1.1.5
+   corrects stale pricing: current Opus (`claude-opus-4-5`→`4-8`) is **$5/$25**
+   per 1M (was $15/$75); Haiku 4.5 is $1/$5. SuperAICore's `model_pricing`
+   follows suit (only the dated `claude-opus-4-20250514` snapshot keeps the
+   historical $15/$75). If your host published an older config copy, re-publish
+   or hand-edit — otherwise `CostCalculator` keeps billing Opus at the old
+   rate. Zero-config `anthropic` now resolves to `claude-opus-4-8` SDK-side;
+   the SDK Squad EXPERT tier routes to `claude-fable-5`, while SuperAICore's
+   own `squad.tiers` config is left unchanged (point `expert` at
+   `claude-fable-5` yourself if you want the SDK's tiering).
+
+3. **The `reasoning_effort` dial now reaches Anthropic models —
+   transparently.** SDK 1.1.5 makes `AnthropicProvider` implement
+   `SupportsReasoningEffort`, mapping the existing per-call option to
+   Anthropic's GA `output_config.effort` (Fable 5 / Sonnet 5 / Opus 4.5+ /
+   Sonnet 4.6; unsupported models never 400):
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => 'Audit this migration for race conditions.',
+       'provider_config'  => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+       'reasoning_effort' => 'max',   // off | low…high | max
+   ]);
+   ```
+
+   No call-site change required — `SuperAgentBackend` forwarded
+   `reasoning_effort` / `thinking` generically already. The SDK also handles
+   the Claude-5 adaptive-only request surface for you (no `budget_tokens`, no
+   sampling params, no trailing prefills), which fixes latent 400s on
+   Opus 4.7/4.8 as a side effect.
+
+See [docs/advanced-usage.md §34](docs/advanced-usage.md) (Fable 5 & Sonnet 5 —
+the adaptive surface and the Anthropic effort dial).
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

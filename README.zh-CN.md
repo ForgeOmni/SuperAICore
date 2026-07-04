@@ -31,6 +31,7 @@
   - [MiniMax M3 + 目录重定价波次（1.0.7 / SDK 1.1.1）](#minimax-m3--目录重定价波次107--sdk-111)
   - [streamChat MCP 波次（1.0.8）](#streamchat-mcp-波次108)
   - [GLM-5.2 原生旗舰波次（1.0.10 / SDK 1.1.2）](#glm-52-原生旗舰波次1010--sdk-112)
+  - [Fable 5 与 Sonnet 5 波次（1.0.11 / SDK 1.1.5）](#fable-5-与-sonnet-5-波次1011--sdk-115)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -105,6 +106,44 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### Fable 5 与 Sonnet 5 波次（1.0.11 / SDK 1.1.5）
+
+SDK 约束从 `^1.1.2` 移到 `^1.1.5`。SuperAgent 1.1.5 把 **Claude Fable 5**
+（`claude-fable-5`,Anthropic 最强模型）与 **Claude Sonnet 5**
+（`claude-sonnet-5`,新的 `sonnet` 旗舰）落地为一等 `anthropic` 模型,给
+`AnthropicProvider` 加上 `reasoning_effort` 档位,并修正过期的 Anthropic
+定价;SuperAICore 把官方价镜像进自己的 `model_pricing` 表,并把新 id 种入
+`superagent` 引擎,让成本看板与模型选择器在离线时也保持准确。纯增量、无破坏
+—— 无迁移、无配置变更。
+
+- **Fable 5 + Sonnet 5 原生定价**（1.0.11）—— `claude-fable-5`（1M 上下文、
+  128K 最大输出、高清视觉、常驻自适应思考）按官方 **$10 入 / $50 出** 每 1M
+  —— 高于 Opus 档;`claude-sonnet-5`（同属 Claude 5 代自适应请求面,能力逼近
+  Opus 4.8 但价格在 Sonnet 档）按 **$3 / $15**（2026-08-31 前有 $2/$10 的
+  首发价;表内保留官方价）。两个 id 都种入 `superagent` 引擎的
+  `available_models`,以便离线时也出现在选择器里。
+- **Opus 系按官方价重定价**（1.0.11）—— 现役 Opus（`claude-opus-4-5`→`4-8`）
+  从过期的 $15/$75 降到 **$5/$25** 每 1M;仅带日期的 `claude-opus-4-20250514`
+  快照保留历史价 $15/$75。若宿主还留着旧配置副本,请重新发布 —— 否则
+  `CostCalculator` 会继续把 Opus 按 3 倍价计费。
+- **Anthropic `reasoning_effort` 档位**（1.0.11）—— SDK 1.1.5 让
+  `AnthropicProvider` 实现 `SupportsReasoningEffort`,把逐调用选项映射到
+  Anthropic GA 的 `output_config.effort`（`low`/`medium`/`high`/`xhigh`/
+  `max`),覆盖 Fable 5 / Sonnet 5 / Opus 4.5+ / Sonnet 4.6 —— 不支持的模型与
+  `off` 不产生 `output_config`,杂散的 effort 绝不 400。原样经
+  `SuperAgentBackend` 透传。
+- **仅自适应请求面由 SDK 侧处理**（1.0.11）—— Fable 5 / Sonnet 5 发送
+  `thinking: {type: "adaptive"}`（绝不发 `budget_tokens`）,并丢弃
+  `temperature`/`top_p`/`top_k` 与尾部 assistant prefill;同一套防护顺带修复
+  了 Opus 4.7/4.8 已存在的潜在 400。SDK 侧零配置 `anthropic` 现在解析到
+  `claude-opus-4-8`;SDK Squad 的 EXPERT 档路由到 `claude-fable-5`
+  （SuperAICore 自己的 `squad.tiers` 配置保持不变）。
+- **Kiro 测试封闭化**（1.0.11）—— `KiroModelResolverTest` 与
+  `EngineCatalogTest` 的 kiro 用例不再读取开发机的
+  `~/.cache/superaicore/kiro-models.json`、也不再实测 `kiro-cli`;新增
+  `IsolatesKiroCatalog` 测试 trait 加 `KiroModelResolver::resetMemo()`,把
+  它们钉在确定性的静态 fallback 上。生产行为不变。
 
 ### GLM-5.2 原生旗舰波次（1.0.10 / SDK 1.1.2）
 

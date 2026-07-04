@@ -850,13 +850,22 @@ return [
     // Override via config publish. Hosts can add unlisted models.
     'model_pricing' => [
         // ─── Anthropic Claude ───
-        // Opus 4.8 is the flagship since SDK 1.0.8 (carries the `opus`
-        // alias). Native 1M context + interleaved thinking + fast mode +
-        // dynamic workflow orchestration. $15/$75 per 1M, same Opus tier.
-        'claude-opus-4-8'             => ['input' => 15.00, 'output' => 75.00],
-        'claude-opus-4-7'             => ['input' => 15.00, 'output' => 75.00],
-        'claude-opus-4-6'             => ['input' => 15.00, 'output' => 75.00],
-        'claude-opus-4-5'             => ['input' => 15.00, 'output' => 75.00],
+        // Fable 5 (`claude-fable-5`) is Anthropic's most capable model
+        // (since SDK 1.1.5) — 1M context, 128K max output, always-on
+        // adaptive thinking, `output_config.effort` dial — priced above the
+        // Opus tier at the official $10/$50 per 1M. Sonnet 5 ships alongside
+        // on the same Claude-5-generation adaptive surface at the Sonnet
+        // $3/$15 tier (intro $2/$10 through 2026-08-31 — keep the official
+        // rate here; override per host if you want the promo reflected).
+        // The current Opus line (4.5→4.8) is repriced to Anthropic's
+        // official $5/$25 (SDK 1.1.5 corrected the stale $15/$75); only the
+        // dated Opus 4.0 snapshot keeps the historical $15/$75.
+        'claude-fable-5'              => ['input' => 10.00, 'output' => 50.00],
+        'claude-sonnet-5'             => ['input' => 3.00,  'output' => 15.00],
+        'claude-opus-4-8'             => ['input' => 5.00,  'output' => 25.00],
+        'claude-opus-4-7'             => ['input' => 5.00,  'output' => 25.00],
+        'claude-opus-4-6'             => ['input' => 5.00,  'output' => 25.00],
+        'claude-opus-4-5'             => ['input' => 5.00,  'output' => 25.00],
         'claude-opus-4-20250514'      => ['input' => 15.00, 'output' => 75.00],
         'claude-sonnet-4-6'           => ['input' => 3.00,  'output' => 15.00],
         'claude-sonnet-4-5'           => ['input' => 3.00,  'output' => 15.00],

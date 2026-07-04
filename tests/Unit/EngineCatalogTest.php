@@ -5,9 +5,24 @@ namespace SuperAICore\Tests\Unit;
 use PHPUnit\Framework\TestCase;
 use SuperAICore\Models\AiProvider;
 use SuperAICore\Services\EngineCatalog;
+use SuperAICore\Tests\Support\IsolatesKiroCatalog;
 
 final class EngineCatalogTest extends TestCase
 {
+    use IsolatesKiroCatalog;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->isolateKiroCatalog();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->restoreKiroCatalog();
+        parent::tearDown();
+    }
+
     public function test_seeds_canonical_engines(): void
     {
         $catalog = new EngineCatalog([]);

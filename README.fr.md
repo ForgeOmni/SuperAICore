@@ -31,6 +31,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague MiniMax M3 + retarification du catalogue (1.0.7 / SDK 1.1.1)](#vague-minimax-m3--retarification-du-catalogue-107--sdk-111)
   - [Vague streamChat MCP (1.0.8)](#vague-streamchat-mcp-108)
   - [Vague vaisseau amiral natif GLM-5.2 (1.0.10 / SDK 1.1.2)](#vague-vaisseau-amiral-natif-glm-52-1010--sdk-112)
+  - [Vague Fable 5 & Sonnet 5 (1.0.11 / SDK 1.1.5)](#vague-fable-5--sonnet-5-1011--sdk-115)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -105,6 +106,53 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague Fable 5 & Sonnet 5 (1.0.11 / SDK 1.1.5)
+
+Le pin SDK passe de `^1.1.2` à `^1.1.5`. SuperAgent 1.1.5 fait atterrir
+**Claude Fable 5** (`claude-fable-5`, le modèle le plus capable d'Anthropic) et
+**Claude Sonnet 5** (`claude-sonnet-5`, le nouveau vaisseau amiral `sonnet`)
+comme modèles `anthropic` de première classe, dote `AnthropicProvider` d'un
+cadran `reasoning_effort` et corrige des tarifs Anthropic périmés ; SuperAICore
+reflète les tarifs officiels dans sa propre table `model_pricing` et sème les
+nouveaux ids dans le moteur `superagent`, pour que les tableaux de bord de
+coûts et les sélecteurs restent exacts hors ligne. Additif et non cassant —
+aucune migration, aucun changement de config.
+
+- **Tarification native Fable 5 + Sonnet 5** *(1.0.11)* — `claude-fable-5`
+  (contexte 1M, sortie max 128K, vision haute résolution, pensée adaptative
+  permanente) au tarif officiel **10 $ en entrée / 50 $ en sortie** par 1M —
+  au-dessus du palier Opus — et `claude-sonnet-5` (même surface adaptative de
+  génération Claude 5, proche d'Opus 4.8 au prix Sonnet) à **3 $ / 15 $**
+  (tarif de lancement 2 $/10 $ jusqu'au 2026-08-31 ; la table porte le tarif
+  officiel). Les deux ids sont semés dans les `available_models` du moteur
+  `superagent` pour apparaître dans les sélecteurs hors ligne.
+- **Gamme Opus retarifée aux tarifs officiels** *(1.0.11)* — l'Opus courant
+  (`claude-opus-4-5`→`4-8`) passe du périmé 15 $/75 $ à **5 $/25 $** par 1M ;
+  seul l'instantané daté `claude-opus-4-20250514` garde l'historique
+  15 $/75 $. Republiez la config si votre hôte en porte une copie plus
+  ancienne, sinon `CostCalculator` continue de facturer Opus 3× trop cher.
+- **Cadran `reasoning_effort` Anthropic** *(1.0.11)* — le SDK 1.1.5 fait
+  implémenter `SupportsReasoningEffort` à `AnthropicProvider`, mappant
+  l'option par appel vers le `output_config.effort` GA d'Anthropic
+  (`low`/`medium`/`high`/`xhigh`/`max`) sur Fable 5 / Sonnet 5 / Opus 4.5+ /
+  Sonnet 4.6 — les modèles non pris en charge et `off` ne produisent aucun
+  `output_config`, donc un effort égaré ne provoque jamais de 400. Transite
+  tel quel par `SuperAgentBackend`.
+- **Surface adaptative-seule gérée côté SDK** *(1.0.11)* — Fable 5 / Sonnet 5
+  émettent `thinking: {type: "adaptive"}` (jamais `budget_tokens`) et
+  abandonnent `temperature`/`top_p`/`top_k` ainsi que les prefills assistant
+  finaux ; les mêmes garde-fous corrigent des 400 latents qu'Opus 4.7/4.8
+  rencontrait déjà. Le `anthropic` zéro-config résout désormais vers
+  `claude-opus-4-8` ; le palier EXPERT du Squad SDK route vers
+  `claude-fable-5` (la config `squad.tiers` propre à SuperAICore reste
+  inchangée).
+- **Tests Kiro rendus hermétiques** *(1.0.11)* — `KiroModelResolverTest` et le
+  cas kiro d'`EngineCatalogTest` ne lisent plus le
+  `~/.cache/superaicore/kiro-models.json` de la machine du développeur et ne
+  sondent plus `kiro-cli` en direct ; un nouveau trait de test
+  `IsolatesKiroCatalog` plus `KiroModelResolver::resetMemo()` les épinglent
+  sur le fallback statique déterministe. Comportement en production inchangé.
 
 ### Vague vaisseau amiral natif GLM-5.2 (1.0.10 / SDK 1.1.2)
 

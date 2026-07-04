@@ -1266,6 +1266,50 @@ superagent 联邦菜谱）见 [docs/advanced-usage.zh-CN.md §32](docs/advanced-
 各 provider 的 wire 形态见 [docs/advanced-usage.zh-CN.md §28](docs/advanced-usage.zh-CN.md)
 （`reasoning_effort` 三档拨盘）。
 
+**1.0.11 —— Fable 5 与 Sonnet 5;无迁移;SDK pin 移到 `^1.1.5`。** 全面纯增量
+—— 无 schema 变更;仅当你想要刷新后的 `model_pricing` 表时才需发布配置
+（`php artisan vendor:publish --tag=super-ai-core-config`）。三点值得了解:
+
+1. **Fable 5 与 Sonnet 5 成为原生 `anthropic` 模型。** SDK 1.1.5 新增
+   `claude-fable-5`（Anthropic 最强模型:1M 上下文、128K 最大输出、常驻
+   自适应思考、effort 档位）与 `claude-sonnet-5`（新的 `sonnet` 旗舰,同属
+   Claude 5 代自适应请求面）。SuperAICore 把官方价镜像进 `model_pricing` ——
+   Fable 5 **$10 入 / $50 出** 每 1M,Sonnet 5 **$3 / $15**（2026-08-31 前有
+   $2/$10 的首发价;表内保留官方价）—— 并把两个 id 种入 `superagent` 引擎的
+   `available_models`,使其离线时也出现在选择器里。SDK 侧 `sonnet` 别名现在
+   解析到 Sonnet 5;先前所有 Claude id 仍可访问。
+
+2. **Opus 系降价 3 倍 —— 看板需要新价格表。** SDK 1.1.5 修正过期定价:现役
+   Opus（`claude-opus-4-5`→`4-8`）为 **$5/$25** 每 1M（原 $15/$75）;Haiku 4.5
+   为 $1/$5。SuperAICore 的 `model_pricing` 同步跟进（仅带日期的
+   `claude-opus-4-20250514` 快照保留历史价 $15/$75）。若宿主早前发布过旧配置
+   副本,请重新发布或手动修改 —— 否则 `CostCalculator` 会继续按旧价计费。
+   SDK 侧零配置 `anthropic` 现在解析到 `claude-opus-4-8`;SDK Squad 的 EXPERT
+   档路由到 `claude-fable-5`,而 SuperAICore 自己的 `squad.tiers` 配置保持不变
+   （想要 SDK 的分档,自行把 `expert` 指向 `claude-fable-5`）。
+
+3. **`reasoning_effort` 档位现在也能触达 Anthropic 模型 —— 透传式。**
+   SDK 1.1.5 让 `AnthropicProvider` 实现 `SupportsReasoningEffort`,把现有的
+   逐调用选项映射到 Anthropic GA 的 `output_config.effort`（Fable 5 /
+   Sonnet 5 / Opus 4.5+ / Sonnet 4.6;不支持的模型绝不 400）:
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => '审计这个迁移的竞态条件。',
+       'provider_config'  => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+       'reasoning_effort' => 'max',   // off | low…high | max
+   ]);
+   ```
+
+   无需改调用点 —— `SuperAgentBackend` 本就通用转发 `reasoning_effort` /
+   `thinking`。SDK 还会替你处理 Claude 5 代仅自适应的请求面（不发
+   `budget_tokens`、不发采样参数、不发尾部 prefill）,顺带修复了 Opus 4.7/4.8
+   上的潜在 400。
+
+Fable 5 与 Sonnet 5 的自适应请求面与 Anthropic effort 档位详见
+[docs/advanced-usage.zh-CN.md §34](docs/advanced-usage.zh-CN.md)。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

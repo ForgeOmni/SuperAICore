@@ -4,9 +4,24 @@ namespace SuperAICore\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
 use SuperAICore\Services\KiroModelResolver;
+use SuperAICore\Tests\Support\IsolatesKiroCatalog;
 
 final class KiroModelResolverTest extends TestCase
 {
+    use IsolatesKiroCatalog;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->isolateKiroCatalog();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->restoreKiroCatalog();
+        parent::tearDown();
+    }
+
     /**
      * Real shape returned by `kiro-cli chat --list-models --format
      * json-pretty` (captured 2026-04-21 against Kiro CLI 2.x). Any field

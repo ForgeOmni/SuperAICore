@@ -2629,6 +2629,8 @@ $result = $dispatcher->dispatch([
 Routes to the right body shape per upstream:
 - Most providers: top-level `reasoning_effort` field.
 - NVIDIA NIM: `chat_template_kwargs.thinking`.
+- Anthropic (SDK 1.1.5+): `output_config.effort` on Fable 5 / Sonnet 5 /
+  Opus 4.5+ / Sonnet 4.6 — see §34.
 - Providers without the capability: silently ignored.
 
 Also feeds the `AutoModelRouter` escalation heuristic when set to
@@ -3634,6 +3636,87 @@ if ($bridge->active()) {
     $report = $bridge->syncAll(['codex', 'gemini']);    // [['backend'=>…,'installed'=>189,'pruned'=>0,'path'=>…], …]
 }
 ```
+
+---
+
+## 34. Fable 5 & Sonnet 5 — the adaptive surface and the Anthropic effort dial (1.0.11 / SDK 1.1.5)
+
+SDK 1.1.5 lands **Claude Fable 5** (`claude-fable-5`) and **Claude Sonnet 5**
+(`claude-sonnet-5`) as first-class `anthropic` models. Fable 5 is Anthropic's
+most capable model — 1M context, 128K max output, high-res vision — and sits
+above the Opus tier at **$10/$50** per 1M; Sonnet 5 is the new `sonnet`
+flagship on the same Claude-5-generation surface at **$3/$15** (intro $2/$10
+through 2026-08-31). SuperAICore 1.0.11 mirrors both into `model_pricing` and
+the `superagent` engine seed; nothing else changes host-side.
+
+### Selecting the models
+
+```php
+$result = $dispatcher->dispatch([
+    'backend'         => 'superagent',
+    'prompt'          => 'Design the migration plan for this schema change.',
+    'provider_config' => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+]);
+```
+
+SDK-side aliases: `fable` / `claude-fable` / `claude-fable-5` resolve to
+Fable 5 (its own family — no collision with `opus`); `sonnet` and every
+`sonnet`-ish alias now resolve to Sonnet 5. Zero-config `anthropic` resolves
+to `claude-opus-4-8`. Every prior Claude id keeps working.
+
+### The adaptive-only request surface (handled for you)
+
+The Claude-5 generation only accepts **adaptive thinking**. The SDK's
+`AnthropicProvider` adjusts the request shape automatically for Fable 5,
+Sonnet 5, and Opus 4.6+:
+
+- `thinking: {type: "adaptive"}` is emitted — never `budget_tokens`. A
+  configured `thinking_budget_tokens` shorthand is rerouted to the adaptive
+  shape instead of 400ing.
+- `temperature` / `top_p` / `top_k` are dropped (Fable 5 / Sonnet 5 /
+  Opus 4.7 / 4.8 reject them).
+- Trailing assistant prefills are skipped for the 4.6+ family and the
+  Claude-5 pair.
+
+These guards also fix latent 400s that Opus 4.7/4.8 already hit on
+`budget_tokens` and sampling params — an inherited bugfix, no action needed.
+
+### The Anthropic `reasoning_effort` dial
+
+`AnthropicProvider` now implements `SupportsReasoningEffort` (joining
+MiniMax M3 and GLM-5.2), mapping the per-call option to Anthropic's GA
+`output_config.effort`:
+
+```php
+$result = $dispatcher->dispatch([
+    'backend'          => 'superagent',
+    'prompt'           => 'Audit this migration for race conditions.',
+    'provider_config'  => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+    'reasoning_effort' => 'max',   // off | low | medium | high | xhigh | max
+]);
+```
+
+- Supported models: Fable 5, Sonnet 5, Opus 4.5+, Sonnet 4.6.
+- `off` / unknown values / unsupported models → no `output_config` at all, so
+  a stray effort never 400s a request.
+- As with GLM and MiniMax, the option routes through `SuperAgentBackend`
+  untouched — it was already forwarded generically (§28).
+
+### Cost accounting
+
+`model_pricing` carries the official rates: Fable 5 $10/$50, Sonnet 5 $3/$15,
+current Opus (`4-5`→`4-8`) **$5/$25** (repriced from the stale $15/$75 — only
+the dated `claude-opus-4-20250514` snapshot keeps the historical rate), Haiku
+4.5 $1/$5. If your host published an older config copy, re-publish
+(`php artisan vendor:publish --tag=super-ai-core-config`) or Opus dispatches
+keep costing 3× too much on the dashboard. SuperAICore's `squad.tiers` map is
+intentionally unchanged (`expert` stays on `claude-opus-4-8`); the SDK's own
+Squad EXPERT tier routes to `claude-fable-5` — point your config at
+`claude-fable-5` if you want that tiering host-side.
+
+Data-retention note: Fable 5 API traffic currently carries a 30-day retention
+window on Anthropic's side — check your compliance requirements before
+routing regulated workloads to it.
 
 ---
 

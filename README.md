@@ -31,6 +31,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [MiniMax M3 + catalog reprice wave (1.0.7 / SDK 1.1.1)](#minimax-m3--catalog-reprice-wave-107--sdk-111)
   - [streamChat MCP wave (1.0.8)](#streamchat-mcp-wave-108)
   - [GLM-5.2 native flagship wave (1.0.10 / SDK 1.1.2)](#glm-52-native-flagship-wave-1010--sdk-112)
+  - [Fable 5 & Sonnet 5 wave (1.0.11 / SDK 1.1.5)](#fable-5--sonnet-5-wave-1011--sdk-115)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -105,6 +106,49 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### Fable 5 & Sonnet 5 wave (1.0.11 / SDK 1.1.5)
+
+SDK pin moves `^1.1.2` → `^1.1.5`. SuperAgent 1.1.5 lands **Claude Fable 5**
+(`claude-fable-5`, Anthropic's most capable model) and **Claude Sonnet 5**
+(`claude-sonnet-5`, the new `sonnet` flagship) as first-class `anthropic`
+models, gives `AnthropicProvider` a `reasoning_effort` dial, and corrects
+stale Anthropic pricing; SuperAICore mirrors the official rates into its own
+`model_pricing` table and seeds the new ids into the `superagent` engine so
+cost dashboards and pickers stay accurate offline. Additive and non-breaking —
+no migrations, no config changes.
+
+- **Fable 5 + Sonnet 5 native pricing** *(1.0.11)* — `claude-fable-5` (1M
+  context, 128K max output, high-res vision, always-on adaptive thinking) at
+  the official **$10 in / $50 out** per 1M — above the Opus tier — and
+  `claude-sonnet-5` (same Claude-5-generation adaptive surface, close to
+  Opus 4.8 at the Sonnet price) at **$3 / $15** (intro $2/$10 through
+  2026-08-31; the table carries the official rate). Both ids are seeded into
+  the `superagent` engine's `available_models` so they show in pickers
+  offline.
+- **Opus line repriced to official rates** *(1.0.11)* — current Opus
+  (`claude-opus-4-5`→`4-8`) drops from the stale $15/$75 to **$5/$25** per 1M;
+  only the dated `claude-opus-4-20250514` snapshot keeps the historical
+  $15/$75. Re-publish the config if your host carries an older copy, or
+  `CostCalculator` keeps billing Opus 3× too high.
+- **Anthropic `reasoning_effort` dial** *(1.0.11)* — SDK 1.1.5 makes
+  `AnthropicProvider` implement `SupportsReasoningEffort`, mapping the
+  per-call option to Anthropic's GA `output_config.effort`
+  (`low`/`medium`/`high`/`xhigh`/`max`) on Fable 5 / Sonnet 5 / Opus 4.5+ /
+  Sonnet 4.6 — unsupported models and `off` yield no `output_config`, so a
+  stray effort never 400s. Routes through `SuperAgentBackend` untouched.
+- **Adaptive-only surface handled SDK-side** *(1.0.11)* — Fable 5 / Sonnet 5
+  emit `thinking: {type: "adaptive"}` (never `budget_tokens`) and drop
+  `temperature`/`top_p`/`top_k` and trailing assistant prefills; the same
+  guards fix latent 400s that Opus 4.7/4.8 already hit. Zero-config
+  `anthropic` now resolves to `claude-opus-4-8`; the SDK Squad EXPERT tier
+  routes to `claude-fable-5` (SuperAICore's own `squad.tiers` config is
+  unchanged).
+- **Kiro tests made hermetic** *(1.0.11)* — `KiroModelResolverTest` and the
+  kiro `EngineCatalogTest` case no longer read the developer machine's
+  `~/.cache/superaicore/kiro-models.json` or live-probe `kiro-cli`; a new
+  `IsolatesKiroCatalog` test trait plus `KiroModelResolver::resetMemo()` pin
+  them to the deterministic static fallback. Production behaviour unchanged.
 
 ### GLM-5.2 native flagship wave (1.0.10 / SDK 1.1.2)
 

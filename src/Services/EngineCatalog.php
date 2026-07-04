@@ -672,8 +672,12 @@ class EngineCatalog
                 // are surfaced explicitly so they show up in pickers without
                 // requiring the catalog probe to succeed (offline /
                 // composer dependency missing / catalog stale). GLM-5.2 is
-                // Z.ai's coding-first flagship surfaced in SuperAgent 1.1.2.
+                // Z.ai's coding-first flagship surfaced in SuperAgent 1.1.2;
+                // Fable 5 / Sonnet 5 are Anthropic's Claude-5-generation
+                // pair surfaced in SuperAgent 1.1.5.
                 'available_models'    => [
+                    'claude-fable-5',
+                    'claude-sonnet-5',
                     'deepseek-v4-pro',
                     'deepseek-v4-flash',
                     'MiniMax-M3',

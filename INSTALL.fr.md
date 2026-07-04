@@ -1312,6 +1312,82 @@ Voir [docs/advanced-usage.fr.md §32](docs/advanced-usage.fr.md) et
 primitives, écriture YAML, l'échelle de sortie structurée, resume et la recette de
 fédération superagent.
 
+**1.0.10 — GLM-5.2 vaisseau amiral natif ; aucune migration ; le pin SDK passe à
+`^1.1.2`.** Additif partout — aucun changement de schéma ; publiez la config
+seulement si vous voulez la table `model_pricing` rafraîchie (`php artisan
+vendor:publish --tag=super-ai-core-config`). Deux points à connaître :
+
+1. **GLM-5.2 est le nouveau défaut `glm`.** Le SDK 1.1.2 promeut `glm-5.2`
+   (vaisseau amiral agentique orienté code de Z.ai : contexte 1M, sortie max
+   128K, texte seul) au rang de vaisseau amiral natif `glm` et ajoute `glm-5.1`
+   (contexte 200K). SuperAICore reflète les tarifs officiels Z.ai dans sa table
+   `model_pricing` — `glm-5.2` / `glm-5.1` à **$1.40 entrée / $4.40 sortie** par
+   1M avec un palier **$0.26 cache-hit**, `glm-5` à $1.00 / $3.20 — et sème
+   `glm-5.2` dans les `available_models` du moteur `superagent` pour qu'il
+   apparaisse dans les sélecteurs même hors ligne. Le raccourci nu `glm` et le
+   défaut zéro-config résolvent désormais vers GLM-5.2 ; `glm-5` / `glm-4.x`
+   restent joignables par id.
+
+2. **`GlmProvider` gagne un cadran `reasoning_effort` — de façon transparente.**
+   Le SDK 1.1.2 fait implémenter `SupportsReasoningEffort` à `GlmProvider`
+   (rejoignant MiniMax M3) ; l'option par appel existante y route déjà. Aucun
+   changement de site d'appel requis — `SuperAgentBackend` transférait déjà
+   `reasoning_effort` / `thinking` génériquement.
+
+**1.0.11 — Fable 5 & Sonnet 5 ; aucune migration ; le pin SDK passe à
+`^1.1.5`.** Additif partout — aucun changement de schéma ; publiez la config
+seulement si vous voulez la table `model_pricing` rafraîchie (`php artisan
+vendor:publish --tag=super-ai-core-config`). Trois points à connaître :
+
+1. **Fable 5 et Sonnet 5 sont désormais des modèles `anthropic` natifs.** Le
+   SDK 1.1.5 ajoute `claude-fable-5` (le modèle le plus capable d'Anthropic :
+   contexte 1M, sortie max 128K, pensée adaptative permanente, cadran d'effort)
+   et `claude-sonnet-5` (le nouveau vaisseau amiral `sonnet`, sur la même
+   surface adaptative de génération Claude 5). SuperAICore reflète les tarifs
+   officiels dans `model_pricing` — Fable 5 **$10 entrée / $50 sortie** par 1M,
+   Sonnet 5 **$3 / $15** (tarif de lancement $2/$10 jusqu'au 2026-08-31 ; la
+   table porte le tarif officiel) — et sème les deux ids dans les
+   `available_models` du moteur `superagent` pour les sélecteurs hors ligne.
+   L'alias `sonnet` résout désormais vers Sonnet 5 côté SDK ; chaque id Claude
+   antérieur reste joignable.
+
+2. **La gamme Opus devient 3× moins chère — les tableaux de bord ont besoin de
+   la nouvelle table.** Le SDK 1.1.5 corrige des tarifs périmés : l'Opus
+   courant (`claude-opus-4-5`→`4-8`) est à **$5/$25** par 1M (au lieu de
+   $15/$75) ; Haiku 4.5 à $1/$5. Le `model_pricing` de SuperAICore suit (seul
+   l'instantané daté `claude-opus-4-20250514` garde l'historique $15/$75). Si
+   votre hôte a publié une copie de config plus ancienne, republiez-la ou
+   éditez-la — sinon `CostCalculator` continue de facturer Opus à l'ancien
+   tarif. Le `anthropic` zéro-config résout désormais vers `claude-opus-4-8`
+   côté SDK ; le palier EXPERT du Squad SDK route vers `claude-fable-5`, tandis
+   que la config `squad.tiers` propre à SuperAICore reste inchangée (pointez
+   `expert` vers `claude-fable-5` vous-même si vous voulez le palier du SDK).
+
+3. **Le cadran `reasoning_effort` atteint désormais les modèles Anthropic — de
+   façon transparente.** Le SDK 1.1.5 fait implémenter
+   `SupportsReasoningEffort` à `AnthropicProvider`, mappant l'option par appel
+   existante vers le `output_config.effort` GA d'Anthropic (Fable 5 /
+   Sonnet 5 / Opus 4.5+ / Sonnet 4.6 ; les modèles non pris en charge ne
+   renvoient jamais de 400) :
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => 'Audite cette migration pour les race conditions.',
+       'provider_config'  => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+       'reasoning_effort' => 'max',   // off | low…high | max
+   ]);
+   ```
+
+   Aucun changement de site d'appel requis — `SuperAgentBackend` transférait
+   déjà `reasoning_effort` / `thinking` génériquement. Le SDK gère aussi pour
+   vous la surface de requête adaptative-seule de la génération Claude 5 (pas
+   de `budget_tokens`, pas de paramètres d'échantillonnage, pas de prefill
+   final), ce qui corrige au passage des 400 latents sur Opus 4.7/4.8.
+
+Voir [docs/advanced-usage.fr.md §34](docs/advanced-usage.fr.md) (Fable 5 &
+Sonnet 5 — la surface adaptative et le cadran d'effort Anthropic).
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

@@ -2492,6 +2492,8 @@ $result = $dispatcher->dispatch([
 按 upstream 路由到正确的 body shape：
 - 多数 provider：顶层 `reasoning_effort` 字段。
 - NVIDIA NIM：`chat_template_kwargs.thinking`。
+- Anthropic（SDK 1.1.5+）：`output_config.effort`,覆盖 Fable 5 / Sonnet 5 /
+  Opus 4.5+ / Sonnet 4.6 —— 见 §34。
 - 不实现该能力的 provider：静默忽略。
 
 设为 `max` 时同时喂给 `AutoModelRouter` 的升级启发式。
@@ -3454,6 +3456,80 @@ if ($bridge->active()) {
     $report = $bridge->syncAll(['codex', 'gemini']);    // [['backend'=>…,'installed'=>189,'pruned'=>0,'path'=>…], …]
 }
 ```
+
+---
+
+## 34. Fable 5 与 Sonnet 5 —— 自适应请求面与 Anthropic effort 档位（1.0.11 / SDK 1.1.5）
+
+SDK 1.1.5 把 **Claude Fable 5**（`claude-fable-5`）与 **Claude Sonnet 5**
+（`claude-sonnet-5`）落地为一等 `anthropic` 模型。Fable 5 是 Anthropic 最强
+模型 —— 1M 上下文、128K 最大输出、高清视觉 —— 定价高于 Opus 档,为每 1M
+**$10/$50**;Sonnet 5 是新的 `sonnet` 旗舰,同属 Claude 5 代请求面,定价
+**$3/$15**（2026-08-31 前首发价 $2/$10）。SuperAICore 1.0.11 把两者镜像进
+`model_pricing` 与 `superagent` 引擎 seed;宿主侧无其他变化。
+
+### 选择模型
+
+```php
+$result = $dispatcher->dispatch([
+    'backend'         => 'superagent',
+    'prompt'          => '为这次 schema 变更设计迁移方案。',
+    'provider_config' => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+]);
+```
+
+SDK 侧别名:`fable` / `claude-fable` / `claude-fable-5` 解析到 Fable 5
+（独立 family,与 `opus` 不冲突）;`sonnet` 及所有 sonnet 系别名现在解析到
+Sonnet 5。零配置 `anthropic` 解析到 `claude-opus-4-8`。先前所有 Claude id
+继续可用。
+
+### 仅自适应的请求面（SDK 替你处理）
+
+Claude 5 代只接受**自适应思考**。SDK 的 `AnthropicProvider` 会为 Fable 5、
+Sonnet 5 与 Opus 4.6+ 自动调整请求形态:
+
+- 发送 `thinking: {type: "adaptive"}` —— 绝不发 `budget_tokens`。配置了
+  `thinking_budget_tokens` 简写时会被改道到自适应形态,而不是 400。
+- 丢弃 `temperature` / `top_p` / `top_k`（Fable 5 / Sonnet 5 / Opus 4.7 /
+  4.8 会拒绝它们）。
+- 对 4.6+ 家族与 Claude 5 代跳过尾部 assistant prefill。
+
+这些防护顺带修复了 Opus 4.7/4.8 在 `budget_tokens` 与采样参数上已存在的
+潜在 400 —— 继承的 bugfix,无需任何操作。
+
+### Anthropic `reasoning_effort` 档位
+
+`AnthropicProvider` 现在实现 `SupportsReasoningEffort`（与 MiniMax M3、
+GLM-5.2 并列）,把逐调用选项映射到 Anthropic GA 的 `output_config.effort`:
+
+```php
+$result = $dispatcher->dispatch([
+    'backend'          => 'superagent',
+    'prompt'           => '审计这个迁移的竞态条件。',
+    'provider_config'  => ['provider' => 'anthropic', 'model' => 'claude-fable-5'],
+    'reasoning_effort' => 'max',   // off | low | medium | high | xhigh | max
+]);
+```
+
+- 支持的模型:Fable 5、Sonnet 5、Opus 4.5+、Sonnet 4.6。
+- `off` / 未知值 / 不支持的模型 → 完全不产生 `output_config`,杂散的 effort
+  绝不 400。
+- 与 GLM、MiniMax 一样,该选项原样经 `SuperAgentBackend` 透传 —— 本就是
+  通用转发（§28）。
+
+### 成本核算
+
+`model_pricing` 按官方价承载:Fable 5 $10/$50、Sonnet 5 $3/$15、现役 Opus
+（`4-5`→`4-8`）**$5/$25**（从过期的 $15/$75 重定价 —— 仅带日期的
+`claude-opus-4-20250514` 快照保留历史价）、Haiku 4.5 $1/$5。若宿主发布过旧的
+配置副本,请重新发布（`php artisan vendor:publish --tag=super-ai-core-config`）,
+否则看板会继续把 Opus 的成本算高 3 倍。SuperAICore 的 `squad.tiers` 映射有意
+保持不变（`expert` 仍指向 `claude-opus-4-8`）;SDK 自己的 Squad EXPERT 档
+路由到 `claude-fable-5` —— 想要宿主侧同样分档,自行把配置指向
+`claude-fable-5`。
+
+数据保留提示:Fable 5 的 API 流量目前在 Anthropic 侧带 30 天保留窗口 ——
+把受监管的工作负载路由过去之前,先核对你的合规要求。
 
 ---
 

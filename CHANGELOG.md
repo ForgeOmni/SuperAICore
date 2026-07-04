@@ -4,6 +4,85 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.11] — 2026-07-03
+
+**SuperAgent SDK bumped to 1.1.5 — Fable 5 and Sonnet 5 land as native
+`anthropic` models, the Opus line is repriced to official rates, and the
+Kiro unit tests stop depending on the developer's machine.** SDK 1.1.5 adds
+**Claude Fable 5** (`claude-fable-5`, Anthropic's most capable model — 1M
+context, 128K max output, always-on adaptive thinking, `output_config.effort`
+dial) and **Claude Sonnet 5** (`claude-sonnet-5`, the new `sonnet` flagship on
+the same Claude-5-generation adaptive surface), makes `AnthropicProvider`
+implement `SupportsReasoningEffort`, promotes the zero-config `anthropic`
+default to **Opus 4.8**, and corrects stale Anthropic pricing (current Opus
+$15/$75 → **$5/$25**; Haiku 4.5 → **$1/$5**). This release mirrors the new
+rates into SuperAICore's `model_pricing` table and seeds the new ids into the
+`superagent` engine so cost dashboards and model pickers stay accurate without
+a live catalog probe. **Additive and non-breaking** — the SDK pin moves from
+`^1.1.2` to `^1.1.5`, no migrations, no config changes for existing callers.
+The `reasoning_effort` dial keeps routing through `SuperAgentBackend`
+untouched — it now simply reaches Anthropic models too.
+
+```bash
+composer update forgeomni/superaicore
+# no migrations
+```
+
+### Added
+
+- **Fable 5 + Sonnet 5 native pricing** (`config/super-ai-core.php` →
+  `model_pricing`) — `claude-fable-5` at Anthropic's official **$10 in /
+  $50 out** per 1M (above the Opus tier) and `claude-sonnet-5` at the Sonnet
+  **$3 / $15** tier (an intro $2/$10 runs through 2026-08-31 — the table
+  carries the official rate; override per host to reflect the promo). The
+  SDK's `ModelCatalog` carries these rows too, so unlisted Claude SKUs still
+  resolve — the explicit entries keep `CostCalculator` accurate offline
+  without a catalog round-trip.
+- **`claude-fable-5` / `claude-sonnet-5` surfaced in the SuperAgent engine
+  seed** (`EngineCatalog::seed()` → `superagent.available_models`) so the
+  Claude-5 pair shows up in model pickers even when the catalog probe can't
+  run (offline / composer dependency missing / catalog stale), alongside the
+  existing DeepSeek V4 + MiniMax M3 + GLM-5.2 fallback ids.
+- **`KiroModelResolver::resetMemo()`** — drops the in-process memoized
+  catalog so the next `catalog()` call re-reads cache/CLI/fallback. Without
+  it, whichever test touched the resolver first pinned the catalog for the
+  whole PHPUnit process.
+- **`tests/Support/IsolatesKiroCatalog`** (new trait) — sandboxes `HOME`
+  (empty temp dir, so no on-disk cache) and `KIRO_CLI_BIN` (nonexistent
+  binary, so the live probe fails) around each test, forcing
+  `KiroModelResolver::catalog()` onto its deterministic static fallback.
+
+### Changed
+
+- **SDK pin `forgeomni/superagent: ^1.1.2` → `^1.1.5`** (`composer.json`).
+  Highlights inherited transparently: `AnthropicProvider` gains the
+  `reasoning_effort` dial (`output_config.effort` on Fable 5 / Sonnet 5 /
+  Opus 4.5+ / Sonnet 4.6 — unsupported models never 400); the adaptive-only
+  request surface (bare `thinking: {type: "adaptive"}`, no `budget_tokens`,
+  dropped sampling params / trailing prefills) fixes latent 400s on
+  Opus 4.7/4.8; zero-config `anthropic` resolves to `claude-opus-4-8`; the
+  SDK Squad **EXPERT** tier routes to `claude-fable-5`. SuperAICore's own
+  squad tier map (`squad.tiers`) is host-side config and is intentionally
+  left unchanged (`expert` stays on `claude-opus-4-8` — now 3× cheaper;
+  point it at `claude-fable-5` if you want the SDK's tiering).
+- **Anthropic `model_pricing` repriced to official rates** — the current
+  Opus line (`claude-opus-4-5` / `4-6` / `4-7` / `4-8`) drops from the stale
+  $15/$75 to **$5/$25** per 1M; the dated `claude-opus-4-20250514` snapshot
+  keeps its historical $15/$75; Haiku 4.5 was already carried at the correct
+  $1/$5.
+
+### Fixed
+
+- **Kiro unit tests no longer drift with the local machine**
+  (`KiroModelResolverTest`, the kiro `EngineCatalogTest` case). They
+  previously hit the real `~/.cache/superaicore/kiro-models.json` or
+  live-probed the developer's `kiro-cli`, so assertions tracked whatever
+  model lineup that machine's Kiro account exposed (subscription tiers
+  differ — some accounts get no Opus at all). Both test classes now use
+  `IsolatesKiroCatalog` in `setUp()`/`tearDown()` and assert against the
+  static fallback. Runtime behaviour is unchanged — the cache → probe →
+  fallback chain still runs exactly as before in production.
+
 ## [1.0.10] — 2026-06-18
 
 **SuperAgent SDK bumped to 1.1.2 — GLM-5.2 lands as the native `glm`
