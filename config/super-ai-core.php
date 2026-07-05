@@ -765,6 +765,41 @@ return [
         'threshold_seconds' => (int) env('AI_CORE_CACHE_COLD_THRESHOLD', 270),
     ],
 
+    // ─── Alias dispatch (ai-dispatch parity wave) ───
+    // Powers `superaicore send/resume/runs/aliases/preferences/doctor`.
+    'dispatch' => [
+        // User alias pool merged over AliasRouter::BUILTIN — one alias maps
+        // to an ordered candidate list `send` walks with transparent
+        // degradation. Accepts full maps, compact 'backend:model' strings,
+        // or a single string:
+        //
+        //   'aliases' => [
+        //       'reviewer' => [
+        //           ['backend' => 'claude_cli', 'model' => 'opus'],
+        //           'gemini_cli:pro',
+        //       ],
+        //       'mimo' => 'superagent:mimo-v2.5-pro',
+        //   ],
+        'aliases' => [],
+
+        // Failure classes (see task_fallback.failure_classes taxonomy)
+        // that let `send` fall through to the next alias candidate.
+        // Anything else — tool_policy, validation, unmatched runtime
+        // errors — fails closed so fallback never hides a broken task.
+        'retry_on_classes' => ['quota', 'rate_limit', 'auth', 'network'],
+
+        // Run archive directory for `send`/`resume` results
+        // (`runs list/show`). Null → AI_CORE_RUNS_PATH env, then
+        // ~/.superaicore/runs.
+        'runs_path' => env('AI_CORE_RUNS_PATH', null),
+
+        // Natural-language scenario preferences the CALLING agent reads
+        // before picking a send target (`superaicore preferences`).
+        // Null → AI_CORE_PREFERENCES_PATH env, then
+        // ~/.superaicore/preferences.md.
+        'preferences_path' => env('AI_CORE_PREFERENCES_PATH', null),
+    ],
+
     // ─── MCP server management ───
     'mcp' => [
         'enabled' => env('AI_CORE_MCP_ENABLED', true),

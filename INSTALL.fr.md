@@ -170,6 +170,25 @@ AI_CORE_PROCESS_MONITOR=false
 
 Attendu : une courte réponse texte et un bloc d'usage.
 
+### Test de dispatch (1.1.0)
+
+```bash
+# Diagnostic agrégé : moteurs, auth, backends, alias, préférences, archive
+./vendor/bin/superaicore doctor
+
+# Envoi one-shot par alias avec le contrat de routage JSON complet
+./vendor/bin/superaicore send sonnet "ping" --json-result
+
+# Inspecter le pool de routage et l'archive des runs
+./vendor/bin/superaicore aliases
+./vendor/bin/superaicore runs list
+```
+
+Attendu : `doctor` se termine par un résumé du type `N ok, 0 warn, 0 fail`
+(les warns sont bénins — ils signalent des moteurs non installés), et `send`
+renvoie un contrat JSON dont le champ `ok` vaut `true`. Voir
+[docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md).
+
 ### Test CLI skills & sous-agents
 
 Si des skills ou sous-agents Claude Code sont déjà installés (sous `./.claude/skills/` dans le projet, `~/.claude/plugins/*/skills/`, ou `~/.claude/skills/` / `~/.claude/agents/`), ils sont détectés automatiquement :
@@ -1387,6 +1406,19 @@ vendor:publish --tag=super-ai-core-config`). Trois points à connaître :
 
 Voir [docs/advanced-usage.fr.md §34](docs/advanced-usage.fr.md) (Fable 5 &
 Sonnet 5 — la surface adaptative et le cadran d'effort Anthropic).
+
+**1.1.0 — vague parité ai-dispatch ; aucune migration ; pin SDK inchangé.**
+Additif : nouvelles commandes standalone + artisan `send`, `resume`, `runs`,
+`aliases`, `preferences`, `doctor` et `skill:install-dispatch`, plus un
+nouveau bloc de config `dispatch` (`aliases` / `retry_on_classes` /
+`runs_path` / `preferences_path` — republiez la config pour le voir, ou
+pilotez-le via `AI_CORE_RUNS_PATH` / `AI_CORE_PREFERENCES_PATH`). Les tables
+de modèles Claude rattrapent la génération Claude 5 (famille `fable` ;
+`sonnet` cible désormais `claude-sonnet-5`). Le durcissement conteneur-safe
+de la console standalone (`Support\ConfigValue`) corrige `bin/superaicore`
+dans les checkouts de dev. Voir
+[docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md) et
+[docs/advanced-usage.fr.md §35](docs/advanced-usage.fr.md).
 
 ## Dépannage
 

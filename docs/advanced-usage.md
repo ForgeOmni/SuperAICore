@@ -41,6 +41,8 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 31. [kimi-cli + kimi-code dual-CLI support (1.0.2 / SDK 1.0.10)](#31-kimi-cli--kimi-code-dual-cli-support-102--sdk-1010)
 32. [SmartFlow — cross-CLI dynamic workflows + superagent federation (1.0.5 / SDK 1.1.0)](#32-smartflow--cross-cli-dynamic-workflows--superagent-federation-105--sdk-110)
 33. [CLI skill bridge — `superaicore:sync-cli` + the `SkillLibrary` contract (1.0.6)](#33-cli-skill-bridge--superaicoresync-cli--the-skilllibrary-contract-106)
+34. [Fable 5 & Sonnet 5 — the adaptive surface and the Anthropic effort dial (1.0.11 / SDK 1.1.5)](#34-fable-5--sonnet-5--the-adaptive-surface-and-the-anthropic-effort-dial-1011--sdk-115)
+35. [ai-dispatch parity — alias send, session resume, run archive (1.1.0)](#35-ai-dispatch-parity--alias-send-session-resume-run-archive-110)
 
 ---
 
@@ -3720,8 +3722,94 @@ routing regulated workloads to it.
 
 ---
 
+## 35. ai-dispatch parity — alias send, session resume, run archive (1.1.0)
+
+Borrowed from [rennzhang/ai-dispatch](https://github.com/rennzhang/ai-dispatch);
+full design notes in [docs/ai-dispatch-parity.md](ai-dispatch-parity.md). One
+short token resolves to an ordered `{backend, model}` candidate pool that
+`superaicore send` walks with transparent degradation; sessions genuinely
+resume; every dispatch is archived.
+
+### Custom alias pools
+
+`AliasRouter` precedence: `super-ai-core.dispatch.aliases` (user config) →
+built-in registry (`fable`/`opus`/`sonnet`/`haiku`, `codex`, `gemini-pro`, …)
+→ backend-name passthrough → model-id inference → default backend. Config
+accepts full maps, compact `backend:model` strings, or a single string:
+
+```php
+'dispatch' => [
+    'aliases' => [
+        'reviewer' => [
+            ['backend' => 'claude_cli', 'model' => 'opus'],
+            'gemini_cli:pro',                        // tried second
+        ],
+        'mimo' => 'superagent:mimo-v2.5-pro',
+    ],
+    // Failure classes allowed to fall through to the next candidate.
+    // Shares the task_fallback.failure_classes taxonomy; anything else
+    // (tool_policy / validation / unmatched runtime) FAILS CLOSED.
+    'retry_on_classes' => ['quota', 'rate_limit', 'auth', 'network'],
+],
+```
+
+### The result contract
+
+`send`/`resume --json-result` return one flat, agent-consumable object —
+never assume the requested target answered; read `backend_used` /
+`model_used` / `route_trace[]` (per-candidate status, reason,
+failure_class, duration) / `degraded` + `degrade_reason` / `failure_class`
+/ `session_id` / `run_id`. Dispatches ride the normal Dispatcher streaming
+path, so usage rows (`usage_source: dispatch_send`), cost attribution,
+tracing, and the process monitor all see them.
+
+### Session resume mechanics
+
+- `ClaudeCliBackend` — pass `resume_session_id` and it swaps `--session-id`
+  for `--resume <id>`; `generate()`/`stream()` envelopes surface `session_id`.
+- `CodexCliBackend` — captures `thread.started` → `thread_id` off the JSONL
+  stream (surfaced as `session_id`) and resumes via `codex exec resume <id>`.
+- `superaicore resume --session-id <id> "<delta>"` looks the owning
+  backend/model up in the run store; resume never falls back to a different
+  engine. Engines may fork a fresh id per resume — always chain follow-ups
+  off the latest result's `session_id`.
+
+From PHP (a Laravel host), the same loop is a service:
+
+```php
+use SuperAICore\Services\{AliasRouter, BackendRegistry, CostCalculator,
+    Dispatcher, DispatchSender, RunStore};
+
+$backends = new BackendRegistry();
+$sender   = new DispatchSender(new Dispatcher($backends, new CostCalculator()), $backends, new RunStore());
+$route    = (new AliasRouter($backends))->resolve('reviewer');
+
+$result = $sender->send($route['requested'], $route['source'], $route['candidates'],
+    'Review the diff in HEAD~1', ['cwd' => base_path(), 'task_name' => 'review']);
+// $result['ok'], $result['route_trace'], $result['session_id'], …
+```
+
+### Run archive, preferences, delegate-in SKILL, doctor
+
+- `~/.superaicore/runs` (config `dispatch.runs_path` / env
+  `AI_CORE_RUNS_PATH`) — one JSON per dispatch; `superaicore runs
+  list|show <id>`; `RunStore::findBySession()` powers resume.
+- `~/.superaicore/preferences.md` (config `dispatch.preferences_path` /
+  env `AI_CORE_PREFERENCES_PATH`) — natural-language scenario→model
+  preferences the CALLING agent reads; SuperAICore never parses it.
+  `superaicore preferences init|show|path`.
+- `superaicore skill:install-dispatch --agent claude|codex|gemini` — installs
+  `resources/skills/superaicore-dispatch/SKILL.md` into the agents' skill
+  dirs so external agents delegate INTO SuperAICore (reverse of
+  `superaicore:sync-cli`).
+- `superaicore doctor [--json]` — engines + auth, registered backends, alias
+  resolvability, preferences file, run-store writability in one pass.
+
+---
+
 ## See also
 
+- [docs/ai-dispatch-parity.md](ai-dispatch-parity.md) — alias send / session resume / run archive / preferences / doctor (1.1.0)
 - [docs/smartflow.md](smartflow.md) — SmartFlow cross-CLI workflows + superagent federation (1.0.5)
 - [docs/idempotency.md](idempotency.md) — 60s dedup window, repository-level contract
 - [docs/streaming-backends.md](streaming-backends.md) — per-CLI stream formats

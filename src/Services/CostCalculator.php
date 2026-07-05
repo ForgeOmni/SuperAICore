@@ -12,7 +12,7 @@ class CostCalculator
 
     public function __construct(array $pricing = [])
     {
-        $this->pricing = $pricing ?: (function_exists('config') ? (config('super-ai-core.model_pricing') ?? []) : []);
+        $this->pricing = $pricing ?: (\SuperAICore\Support\ConfigValue::get('super-ai-core.model_pricing') ?? []);
     }
 
     /**

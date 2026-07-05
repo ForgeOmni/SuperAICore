@@ -164,6 +164,24 @@ AI_CORE_PROCESS_MONITOR=false
 
 预期：返回一段短文本以及用量信息。
 
+### 派单冒烟测试（1.1.0）
+
+```bash
+# 聚合体检：引擎、认证、backend、别名、偏好文件、运行存档
+./vendor/bin/superaicore doctor
+
+# 短名一步派单，返回完整 JSON 路由契约
+./vendor/bin/superaicore send sonnet "ping" --json-result
+
+# 查看路由池与运行存档
+./vendor/bin/superaicore aliases
+./vendor/bin/superaicore runs list
+```
+
+预期：`doctor` 以 `N ok, 0 warn, 0 fail` 之类的汇总结尾（warn 无碍——只是
+标记你没装的引擎）；`send` 返回的 JSON 契约中 `ok` 为 `true`。详见
+[docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md)。
+
 ### Skill 与 sub-agent CLI 冒烟
 
 如果本机已经装过 Claude Code 的 skill 或 sub-agent（项目 `./.claude/skills/`、`~/.claude/plugins/*/skills/`、用户 `~/.claude/skills/` 或 `~/.claude/agents/`），它们会被自动拾取：
@@ -1309,6 +1327,18 @@ superagent 联邦菜谱）见 [docs/advanced-usage.zh-CN.md §32](docs/advanced-
 
 Fable 5 与 Sonnet 5 的自适应请求面与 Anthropic effort 档位详见
 [docs/advanced-usage.zh-CN.md §34](docs/advanced-usage.zh-CN.md)。
+
+**1.1.0 —— ai-dispatch 对齐波次；无迁移；SDK pin 不变。** 纯增量：新增
+standalone + artisan 命令 `send`、`resume`、`runs`、`aliases`、
+`preferences`、`doctor`、`skill:install-dispatch`，以及新的 `dispatch`
+配置块（`aliases` / `retry_on_classes` / `runs_path` / `preferences_path`
+—— 重新发布 config 才能看到，或直接用 `AI_CORE_RUNS_PATH` /
+`AI_CORE_PREFERENCES_PATH` 环境变量）。Claude 模型表跟上 Claude 5 代
+（新增 `fable` 家族；`sonnet` 现指向 `claude-sonnet-5`）。standalone 控制台
+的容器安全加固（`Support\ConfigValue`）修复了 dev checkout 下
+`bin/superaicore` 的崩溃。详见
+[docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md) 与
+[docs/advanced-usage.zh-CN.md §35](docs/advanced-usage.zh-CN.md)。
 
 ## 常见问题
 

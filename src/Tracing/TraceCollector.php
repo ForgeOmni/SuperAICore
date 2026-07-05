@@ -59,14 +59,19 @@ final class TraceCollector
 
     private static function resolveStoragePath(): string
     {
-        if (function_exists('config')) {
-            $configured = config('super-ai-core.tracing.storage_path');
-            if (is_string($configured) && $configured !== '') {
-                return $configured;
-            }
+        // ConfigValue guards against a dev checkout where the config()
+        // helper is autoloaded but no container is booted (standalone
+        // bin/superaicore) — calling it then throws instead of returning null.
+        $configured = \SuperAICore\Support\ConfigValue::get('super-ai-core.tracing.storage_path');
+        if (is_string($configured) && $configured !== '') {
+            return $configured;
         }
         if (function_exists('storage_path')) {
-            return storage_path('app/superaicore/traces');
+            try {
+                return storage_path('app/superaicore/traces');
+            } catch (\Throwable) {
+                // no container bound — fall through to the temp default
+            }
         }
 
         return sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'superaicore-traces';
@@ -74,11 +79,9 @@ final class TraceCollector
 
     private static function resolveEnabledFlag(): bool
     {
-        if (function_exists('config')) {
-            $configured = config('super-ai-core.tracing.enabled');
-            if (is_bool($configured)) {
-                return $configured;
-            }
+        $configured = \SuperAICore\Support\ConfigValue::get('super-ai-core.tracing.enabled');
+        if (is_bool($configured)) {
+            return $configured;
         }
         $envFlag = getenv('AI_CORE_TRACE_ENABLED');
 
@@ -87,11 +90,9 @@ final class TraceCollector
 
     private static function resolveCapacity(): int
     {
-        if (function_exists('config')) {
-            $configured = config('super-ai-core.tracing.ring_size');
-            if (is_int($configured) && $configured > 0) {
-                return $configured;
-            }
+        $configured = \SuperAICore\Support\ConfigValue::get('super-ai-core.tracing.ring_size');
+        if (is_int($configured) && $configured > 0) {
+            return $configured;
         }
         $env = getenv('AI_CORE_TRACE_RING_SIZE');
 

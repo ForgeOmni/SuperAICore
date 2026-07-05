@@ -166,6 +166,25 @@ AI_CORE_PROCESS_MONITOR=false
 
 Expected: a short text reply and a usage block.
 
+### Dispatch smoke test (1.1.0)
+
+```bash
+# Aggregate diagnostic: engines, auth, backends, aliases, preferences, run store
+./vendor/bin/superaicore doctor
+
+# Alias one-shot dispatch with the full JSON routing contract
+./vendor/bin/superaicore send sonnet "ping" --json-result
+
+# Inspect the routing pool and the run archive
+./vendor/bin/superaicore aliases
+./vendor/bin/superaicore runs list
+```
+
+Expected: `doctor` ends with an `N ok, 0 warn, 0 fail`-style summary (warns
+are fine — they flag engines you simply haven't installed), and `send`
+returns a JSON contract whose `ok` field is `true`. See
+[docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md).
+
 ### Skill & sub-agent CLI smoke test
 
 If you have any Claude Code skills or sub-agents installed (under `./.claude/skills/` in the project, `~/.claude/plugins/*/skills/`, or `~/.claude/skills/` / `~/.claude/agents/`), they are picked up automatically:
@@ -1351,6 +1370,18 @@ want the refreshed `model_pricing` table (`php artisan vendor:publish
 
 See [docs/advanced-usage.md §34](docs/advanced-usage.md) (Fable 5 & Sonnet 5 —
 the adaptive surface and the Anthropic effort dial).
+
+**1.1.0 — ai-dispatch parity wave; no migration; SDK pin unchanged.**
+Additive: new standalone + artisan commands `send`, `resume`, `runs`,
+`aliases`, `preferences`, `doctor`, and `skill:install-dispatch`, plus a new
+`dispatch` config block (`aliases` / `retry_on_classes` / `runs_path` /
+`preferences_path` — re-publish the config to see it, or drive it via
+`AI_CORE_RUNS_PATH` / `AI_CORE_PREFERENCES_PATH`). The Claude model tables
+catch up with the Claude 5 generation (`fable` family; `sonnet` now targets
+`claude-sonnet-5`). Standalone-console container-safety hardening
+(`Support\ConfigValue`) fixes `bin/superaicore` in dev checkouts. See
+[docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md) and
+[docs/advanced-usage.md §35](docs/advanced-usage.md).
 
 ## Troubleshooting
 

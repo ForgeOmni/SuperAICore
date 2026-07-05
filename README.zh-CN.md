@@ -32,6 +32,7 @@
   - [streamChat MCP 波次（1.0.8）](#streamchat-mcp-波次108)
   - [GLM-5.2 原生旗舰波次（1.0.10 / SDK 1.1.2）](#glm-52-原生旗舰波次1010--sdk-112)
   - [Fable 5 与 Sonnet 5 波次（1.0.11 / SDK 1.1.5）](#fable-5-与-sonnet-5-波次1011--sdk-115)
+  - [ai-dispatch 对齐波次（1.1.0）](#ai-dispatch-对齐波次110)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -106,6 +107,40 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### ai-dispatch 对齐波次（1.1.0）
+
+借鉴 [rennzhang/ai-dispatch](https://github.com/rennzhang/ai-dispatch)：让一个
+AI Agent 把任务顺手派给另一个本机 AI 引擎，而无需了解那个引擎的命令行参数。
+一个短名即可解析为有序的 `{backend, model}` 候选池并透明降级，会话可真正续聊，
+每次派单都有存档。纯增量、不破坏现有 API —— 详见
+[docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md)。
+
+```bash
+superaicore send opus "评审 HEAD~1 的 diff" --cwd "$PWD" --json-result
+superaicore resume --session-id <id> "追问" --json-result
+```
+
+- **`superaicore send <目标> "<任务>"`** —— 目标可以是别名（`opus`、`kimi`、
+  `gemini-pro` 等）、backend 名或模型 id；`AliasRouter` 按用户配置 → 内置注册表
+  → backend 透传 → 模型推断的顺序解析，候选依次尝试。quota / 限流 / 认证 / 网络
+  类失败自动落到下一个候选（`degraded: true` + 完整 `route_trace[]`）；其余失败
+  一律 fail-closed。`--json-result` 返回 `ok / status / backend_used /
+  model_used / route_trace / degraded / failure_class / session_id / run_id`。
+- **`superaicore resume --session-id <id>`** —— 真正的会话续聊：
+  `claude --resume` / `codex exec resume <thread_id>`；run store 记录了会话属于
+  哪个引擎，调用方只需发送增量问题。
+- **`superaicore runs list|show`** —— 文件系统运行存档（`~/.superaicore/runs`），
+  零数据库依赖。
+- **`superaicore aliases [目标]`** —— 查看或解析路由池；通过
+  `super-ai-core.dispatch.aliases` 扩展。
+- **`superaicore preferences init|show|path`** —— 自然语言的场景→模型偏好文件
+  （`~/.superaicore/preferences.md`），由发起调用的 Agent 在选择目标前阅读。
+- **`superaicore skill:install-dispatch`** —— 把内置的 `superaicore-dispatch`
+  SKILL 安装到 `~/.claude/skills` / `~/.codex/skills` / `~/.gemini/skills`，让
+  外部 Agent 能把任务派**进** SuperAICore（与 `superaicore:sync-cli` 方向相反）。
+- **`superaicore doctor [--json]`** —— 聚合体检：引擎、认证、backend、别名、
+  偏好文件、运行存档。
 
 ### Fable 5 与 Sonnet 5 波次（1.0.11 / SDK 1.1.5）
 

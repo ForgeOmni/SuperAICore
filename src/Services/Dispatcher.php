@@ -72,10 +72,7 @@ class Dispatcher
      */
     protected function shouldDumpOn(string $trigger): bool
     {
-        if (!function_exists('config')) {
-            return true;
-        }
-        $val = config('super-ai-core.tracing.dump_on.' . $trigger);
+        $val = \SuperAICore\Support\ConfigValue::get('super-ai-core.tracing.dump_on.' . $trigger);
         if ($val === null) return true;
         return (bool) $val;
     }
@@ -467,9 +464,7 @@ class Dispatcher
         $sessionId = $options['metadata']['session_id'] ?? $options['session_id'] ?? null;
         if (!is_string($sessionId) || $sessionId === '') return null;
 
-        $thresholdSeconds = (int) (function_exists('config')
-            ? (config('super-ai-core.cache_cold_warning.threshold_seconds') ?? 270)
-            : 270);
+        $thresholdSeconds = (int) (\SuperAICore\Support\ConfigValue::get('super-ai-core.cache_cold_warning.threshold_seconds') ?? 270);
         if ($thresholdSeconds <= 0) return null;
 
         // Defer to the usage repository if the host registered one — it's
@@ -626,9 +621,7 @@ class Dispatcher
         }
 
         // 5. Default backend from config + env credentials
-        $defaultBackend = function_exists('config')
-            ? config('super-ai-core.default_backend', 'anthropic_api')
-            : 'anthropic_api';
+        $defaultBackend = \SuperAICore\Support\ConfigValue::get('super-ai-core.default_backend', 'anthropic_api');
         return [$this->backends->get($defaultBackend), [], null, null];
     }
 

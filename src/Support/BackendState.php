@@ -39,7 +39,13 @@ class BackendState
 
     public static function isEngineDisabled(string $engine): bool
     {
-        return IntegrationConfig::getValue('ai_execution', 'backend_disabled.' . $engine) === '1';
+        try {
+            return IntegrationConfig::getValue('ai_execution', 'backend_disabled.' . $engine) === '1';
+        } catch (\Throwable) {
+            // No DB bound (standalone bin/superaicore) — the operator
+            // toggle can't exist there, so every engine counts as enabled.
+            return false;
+        }
     }
 
     public static function isDispatcherBackendAllowed(string $backendName): bool

@@ -541,6 +541,17 @@ class SuperAICoreServiceProvider extends ServiceProvider
                 //   $schedule->command('super-ai-core:gh-watch')->everyFiveMinutes();
                 // Or run as a daemon: `php artisan super-ai-core:gh-watch --loop=30`.
                 \SuperAICore\Console\Commands\GhWatchCommand::class,
+
+                // ai-dispatch parity wave — alias send with route trace +
+                // degraded contract, session resume, run archive, agent
+                // preferences file, and the aggregate doctor diagnostic.
+                \SuperAICore\Console\Commands\SendCommand::class,
+                \SuperAICore\Console\Commands\ResumeCommand::class,
+                \SuperAICore\Console\Commands\RunsCommand::class,
+                \SuperAICore\Console\Commands\AliasesCommand::class,
+                \SuperAICore\Console\Commands\PreferencesCommand::class,
+                \SuperAICore\Console\Commands\DoctorCommand::class,
+                \SuperAICore\Console\Commands\InstallDispatchSkillCommand::class,
             ]);
         }
 

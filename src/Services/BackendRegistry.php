@@ -30,7 +30,7 @@ class BackendRegistry
         array $config = [],
         ?callable $superagentAvailable = null,
     ) {
-        $config = $config ?: (function_exists('config') ? (config('super-ai-core.backends') ?? []) : []);
+        $config = $config ?: (\SuperAICore\Support\ConfigValue::get('super-ai-core.backends') ?? []);
         // Injectable for tests; prod callers pass nothing and get the real detector.
         $sdkAvailable = $superagentAvailable ?? [SuperAgentDetector::class, 'isAvailable'];
 

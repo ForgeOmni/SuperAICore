@@ -41,6 +41,8 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 31. [kimi-cli + kimi-code 双轨支持（1.0.2 / SDK 1.0.10）](#31-kimi-cli--kimi-code-双轨支持102--sdk-1010)
 32. [SmartFlow —— 跨 CLI 动态工作流 + superagent 联邦（1.0.5 / SDK 1.1.0）](#32-smartflow--跨-cli-动态工作流--superagent-联邦105--sdk-110)
 33. [CLI skill 桥接 —— `superaicore:sync-cli` + `SkillLibrary` contract（1.0.6）](#33-cli-skill-桥接--superaicoresync-cli--skilllibrary-contract106)
+34. [Fable 5 与 Sonnet 5 —— 自适应请求面与 Anthropic effort 档位（1.0.11 / SDK 1.1.5）](#34-fable-5-与-sonnet-5--自适应请求面与-anthropic-effort-档位1011--sdk-115)
+35. [ai-dispatch 对齐 —— 短名派单、会话续聊、运行存档（1.1.0）](#35-ai-dispatch-对齐--短名派单会话续聊运行存档110)
 
 ---
 
@@ -3533,8 +3535,91 @@ $result = $dispatcher->dispatch([
 
 ---
 
+## 35. ai-dispatch 对齐 —— 短名派单、会话续聊、运行存档（1.1.0）
+
+借鉴 [rennzhang/ai-dispatch](https://github.com/rennzhang/ai-dispatch)；完整
+设计笔记见 [docs/ai-dispatch-parity.md](ai-dispatch-parity.md)。一个短名解析
+为有序的 `{backend, model}` 候选池，`superaicore send` 依次尝试并透明降级；
+会话可真正续聊；每次派单都有存档。
+
+### 自定义别名池
+
+`AliasRouter` 优先级：`super-ai-core.dispatch.aliases`（用户配置）→ 内置注册
+表（`fable`/`opus`/`sonnet`/`haiku`、`codex`、`gemini-pro` 等）→ backend 名
+透传 → 模型 id 推断 → 默认 backend。配置支持完整 map、紧凑的
+`backend:model` 字符串或单个字符串：
+
+```php
+'dispatch' => [
+    'aliases' => [
+        'reviewer' => [
+            ['backend' => 'claude_cli', 'model' => 'opus'],
+            'gemini_cli:pro',                        // 第二顺位
+        ],
+        'mimo' => 'superagent:mimo-v2.5-pro',
+    ],
+    // 允许落到下一候选的失败类别。与 task_fallback.failure_classes 共用
+    // 分类表；其余类别（tool_policy / validation / 未匹配的运行时错误）
+    // 一律 fail-closed。
+    'retry_on_classes' => ['quota', 'rate_limit', 'auth', 'network'],
+],
+```
+
+### 结果契约
+
+`send`/`resume --json-result` 返回一个扁平、Agent 可直接消费的对象 —— 永远
+不要假设请求的目标就是应答者；要读 `backend_used` / `model_used` /
+`route_trace[]`（每个候选的 status、reason、failure_class、耗时）/
+`degraded` + `degrade_reason` / `failure_class` / `session_id` / `run_id`。
+派单走正常的 Dispatcher 流式路径，usage 行（`usage_source:
+dispatch_send`）、成本归因、tracing、进程监控全都可见。
+
+### 会话续聊机制
+
+- `ClaudeCliBackend` —— 传 `resume_session_id` 时用 `--resume <id>` 替代
+  `--session-id`；`generate()`/`stream()` 信封现在都带 `session_id`。
+- `CodexCliBackend` —— 从 JSONL 流捕获 `thread.started` → `thread_id`（作为
+  `session_id` 暴露），续聊走 `codex exec resume <id>`。
+- `superaicore resume --session-id <id> "<增量问题>"` 从运行存档反查所属
+  backend/model；续聊绝不会落到别的引擎。引擎可能在每次 resume 时派生新
+  id —— 后续追问永远用**最新**结果的 `session_id`。
+
+在 PHP（Laravel 宿主）里，同一套循环就是一个服务：
+
+```php
+use SuperAICore\Services\{AliasRouter, BackendRegistry, CostCalculator,
+    Dispatcher, DispatchSender, RunStore};
+
+$backends = new BackendRegistry();
+$sender   = new DispatchSender(new Dispatcher($backends, new CostCalculator()), $backends, new RunStore());
+$route    = (new AliasRouter($backends))->resolve('reviewer');
+
+$result = $sender->send($route['requested'], $route['source'], $route['candidates'],
+    '评审 HEAD~1 的 diff', ['cwd' => base_path(), 'task_name' => 'review']);
+// $result['ok'], $result['route_trace'], $result['session_id'], …
+```
+
+### 运行存档、偏好文件、反向 SKILL、doctor
+
+- `~/.superaicore/runs`（配置 `dispatch.runs_path` / 环境变量
+  `AI_CORE_RUNS_PATH`）—— 每次派单一个 JSON；`superaicore runs
+  list|show <id>`；`RunStore::findBySession()` 支撑 resume。
+- `~/.superaicore/preferences.md`（配置 `dispatch.preferences_path` /
+  环境变量 `AI_CORE_PREFERENCES_PATH`）—— 自然语言的场景→模型偏好，由发起
+  调用的 Agent 阅读；SuperAICore 从不解析它。`superaicore preferences
+  init|show|path`。
+- `superaicore skill:install-dispatch --agent claude|codex|gemini` —— 把
+  `resources/skills/superaicore-dispatch/SKILL.md` 装进各 Agent 的 skill
+  目录，让外部 Agent 把任务派**进** SuperAICore（与 `superaicore:sync-cli`
+  方向相反）。
+- `superaicore doctor [--json]` —— 引擎 + 认证、已注册 backend、别名可解析
+  性、偏好文件、运行存档可写性，一次跑完。
+
+---
+
 ## 另见
 
+- [docs/ai-dispatch-parity.md](ai-dispatch-parity.md) —— 短名派单 / 会话续聊 / 运行存档 / 偏好文件 / doctor（1.1.0）
 - [docs/smartflow.md](smartflow.md) —— SmartFlow 跨 CLI 工作流 + superagent 联邦（1.0.5）
 - [docs/idempotency.md](idempotency.md) —— 60 秒去重窗口、repository 层契约
 - [docs/streaming-backends.md](streaming-backends.md) —— 各 CLI 流格式

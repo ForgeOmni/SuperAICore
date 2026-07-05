@@ -4,6 +4,106 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-07-05
+
+**Claude 5 model-table catch-up** — `ClaudeModelResolver` gains the
+`fable` family (`claude-fable-5`, native 1M, no `[1m]` variant) and
+`claude-sonnet-5` as the `sonnet` alias target + catalog entries; the
+retired Opus 4.6 rows are removed from the catalog. `EngineCatalog`'s
+claude seed mirrors the same list and its `default_model` moves to
+`claude-sonnet-5` (what the CLI's bare `sonnet` alias actually runs
+now). Fixes model pickers missing Fable 5 / Sonnet 5 while SDK 1.1.5
+already supported them — the UI table is maintained separately and had
+drifted (SuperTeam carries a host-side postprocess shim until this
+ships).
+
+**ai-dispatch parity wave — alias send with a transparent routing contract,
+real CLI session resume, a filesystem run archive, an agent preferences
+file, a delegate-in SKILL, and `doctor`.** Borrowed from
+[rennzhang/ai-dispatch](https://github.com/rennzhang/ai-dispatch): one short
+token (`opus`, `kimi`, `codex`, a model id, a backend name) now resolves to
+an ordered `{backend, model}` candidate pool that `superaicore send` walks
+with transparent degradation — quota / rate-limit / auth / network failures
+fall through to the next candidate, anything else fails closed. Machine
+callers read `ok / status / backend_used / model_used / route_trace /
+degraded / failure_class / session_id` instead of assuming the requested
+target answered. **Additive and non-breaking** — Dispatcher, TaskRunner,
+orchestrators, and SmartFlow untouched; no migrations; SDK pin unchanged.
+See `docs/ai-dispatch-parity.md`.
+
+```bash
+composer update forgeomni/superaicore
+# no migrations
+
+superaicore send opus "review the diff in HEAD~1" --cwd "$PWD" --json-result
+superaicore resume --session-id <id> "follow-up question" --json-result
+superaicore runs list · superaicore aliases · superaicore preferences init · superaicore doctor
+```
+
+### Added
+
+- **`AliasRouter`** (`src/Services/AliasRouter.php`) — unified short-name →
+  candidate-pool routing with ai-dispatch's precedence: user config
+  (`super-ai-core.dispatch.aliases`, accepts maps / `'backend:model'`
+  strings) → built-in registry → backend passthrough → model-id inference →
+  default backend. `superaicore aliases [target] [--json]` lists the pool or
+  resolves one target exactly like `send` does.
+- **`superaicore send <target> "<task>"`** (`SendCommand` +
+  `src/Services/DispatchSender.php`) — one-shot dispatch through the normal
+  Dispatcher streaming path (usage rows, cost, tracing, process monitor all
+  see it; `usage_source: dispatch_send`). `--json-result` emits the full
+  contract incl. `route_trace[]` per-candidate attempts and a `degraded`
+  flag; `--prompt-file`, `--stream-progress`, `--system`, `--timeout`,
+  `--task-name`, `--no-check` supported. Fall-through policy driven by
+  `dispatch.retry_on_classes` over the shared
+  `task_fallback.failure_classes` taxonomy (`Support\FailureClassifier`).
+- **Real session resume** — `ClaudeCliBackend` accepts `resume_session_id`
+  → `claude --resume <id>` (both `generate()` and `stream()`; envelopes now
+  surface `session_id`), `CodexCliBackend` captures `thread.started` →
+  `thread_id` and resumes via `codex exec resume <thread_id>`.
+  `superaicore resume --session-id <id> "<delta>"` re-routes to the owning
+  backend recorded in the run store (`--backend`/`--model` override for
+  unknown sessions); resume never falls back to a different engine.
+- **`RunStore`** (`src/Services/RunStore.php`) — one JSON file per
+  `send`/`resume` under `~/.superaicore/runs` (`dispatch.runs_path` /
+  `AI_CORE_RUNS_PATH`), browsable via `superaicore runs list|show <id>`;
+  `findBySession()` powers resume's backend lookup. Filesystem-only so
+  headless CLIs and delegating agents audit results with zero DB access.
+- **Agent preferences file** — `superaicore preferences init|show|path`
+  manages `~/.superaicore/preferences.md` (`dispatch.preferences_path` /
+  `AI_CORE_PREFERENCES_PATH`): natural-language scenario→model preferences
+  the CALLING agent reads before picking a target; SuperAICore never parses
+  it (ai-dispatch's "routing intelligence lives at the agent layer").
+- **Delegate-in SKILL** — `resources/skills/superaicore-dispatch/SKILL.md`
+  teaches external Claude Code / Codex / Gemini agents to dispatch INTO
+  SuperAICore (read preferences → `send` → interpret contract → `resume`);
+  `superaicore skill:install-dispatch --agent claude|codex|gemini` installs
+  it via the existing `SkillManager`. Mirror image of `superaicore:sync-cli`.
+- **`superaicore doctor [--json]`** — aggregate diagnostic: registered
+  backends, CLI engine binaries + auth (same probes as `cli:status`), alias
+  resolvability, preferences file, run-store writability; exits non-zero
+  only when nothing can dispatch.
+
+### Changed
+
+- **Claude model tables refreshed** — `ClaudeModelResolver::FAMILIES` gains
+  `fable => claude-fable-5` and points `sonnet` at `claude-sonnet-5`; the
+  catalog adds both Claude-5 ids (native 1M, no `[1m]` variants) and drops
+  the retired Opus 4.6 rows. `EngineCatalog`'s claude seed mirrors the same
+  list and its `default_model` moves to `claude-sonnet-5`. The new `fable`
+  entry in `AliasRouter::BUILTIN` rides on the same family, so
+  `superaicore send fable "…"` works out of the box.
+
+### Fixed
+
+- **Standalone console container-safety** — `function_exists('config')` is
+  not a safe guard in a dev checkout (Laravel helpers autoload without a
+  booted container and `config()` throws). New `Support\ConfigValue::get()`
+  hardens `BackendRegistry`, `Dispatcher`, `CostCalculator`,
+  `TraceCollector`, and `BackendState::isEngineDisabled` (which fataled on
+  a missing DB), fixing pre-existing `bin/superaicore list-backends` /
+  `call` breakage in dev checkouts.
+
 ## [1.0.11] — 2026-07-03
 
 **SuperAgent SDK bumped to 1.1.5 — Fable 5 and Sonnet 5 land as native

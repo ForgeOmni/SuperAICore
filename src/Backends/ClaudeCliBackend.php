@@ -81,6 +81,14 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
             $cmd[] = '--system-prompt';
             $cmd[] = $options['system'];
         }
+        // Session continuation — `--resume <id>` re-opens a prior claude
+        // conversation (its session store keeps the transcript), so the
+        // prompt only needs the delta. Callers get the id from a previous
+        // result envelope's `session_id`.
+        if (!empty($options['resume_session_id'])) {
+            $cmd[] = '--resume';
+            $cmd[] = (string) $options['resume_session_id'];
+        }
         // Pipe prompt via stdin instead of trailing argv. argv on Windows
         // hits cmd-line escaping / 8K length limits for prompts with
         // newlines, code fences, or non-ASCII (typical for ours: 25K of
@@ -113,6 +121,7 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
                     'total_cost_usd' => $parsed['total_cost_usd'],
                 ],
                 'stop_reason' => $parsed['stop_reason'],
+                'session_id'  => $parsed['session_id'],
             ];
         } catch (\Throwable $e) {
             if ($this->logger) $this->logger->warning("ClaudeCliBackend error: {$e->getMessage()}");
@@ -194,8 +203,12 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
         // Session id — propagate caller's id for traceability across the
         // host's log files + claude's session store. Claude auto-generates
-        // one when omitted.
-        if (!empty($options['session_id'])) {
+        // one when omitted. `--resume` re-opens an existing conversation
+        // instead and is mutually exclusive with `--session-id`.
+        if (!empty($options['resume_session_id'])) {
+            $cmd[] = '--resume';
+            $cmd[] = (string) $options['resume_session_id'];
+        } elseif (!empty($options['session_id'])) {
             $cmd[] = '--session-id';
             $cmd[] = (string) $options['session_id'];
         }
@@ -268,6 +281,7 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
                 'total_cost_usd'              => $parsed['total_cost_usd'],
             ],
             'stop_reason' => $parsed['stop_reason'],
+            'session_id'  => $parsed['session_id'],
             'log_file'    => $result['log_file'],
             'duration_ms' => $result['duration_ms'],
             'exit_code'   => $result['exit_code'],
@@ -330,7 +344,7 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
      * routing inflate token counts but not cost). Falls back to the first
      * key when cost isn't present.
      *
-     * @return array{text:string, model:?string, input_tokens:int, output_tokens:int, cache_read_input_tokens:int, cache_creation_input_tokens:int, total_cost_usd:float, stop_reason:?string}|null
+     * @return array{text:string, model:?string, input_tokens:int, output_tokens:int, cache_read_input_tokens:int, cache_creation_input_tokens:int, total_cost_usd:float, stop_reason:?string, session_id:?string}|null
      */
     public function parseJson(string $output): ?array
     {
@@ -352,6 +366,7 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
             'cache_creation_input_tokens'  => (int) ($usage['cache_creation_input_tokens'] ?? 0),
             'total_cost_usd'               => (float) ($data['total_cost_usd'] ?? 0.0),
             'stop_reason'                  => $data['stop_reason'] ?? null,
+            'session_id'                   => $data['session_id'] ?? null,
         ];
     }
 

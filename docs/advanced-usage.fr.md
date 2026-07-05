@@ -41,6 +41,8 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 31. [Support bi-CLI kimi-cli + kimi-code (1.0.2 / SDK 1.0.10)](#31-support-bi-cli-kimi-cli--kimi-code-102--sdk-1010)
 32. [SmartFlow — workflows dynamiques cross-CLI + fédération superagent (1.0.5 / SDK 1.1.0)](#32-smartflow--workflows-dynamiques-cross-cli--fédération-superagent-105--sdk-110)
 33. [Pont de skills CLI — `superaicore:sync-cli` + le contrat `SkillLibrary` (1.0.6)](#33-pont-de-skills-cli--superaicoresync-cli--le-contrat-skilllibrary-106)
+34. [Fable 5 & Sonnet 5 — la surface adaptative et le cadran d'effort Anthropic (1.0.11 / SDK 1.1.5)](#34-fable-5--sonnet-5--la-surface-adaptative-et-le-cadran-deffort-anthropic-1011--sdk-115)
+35. [Parité ai-dispatch — envoi par alias, reprise de session, archive des runs (1.1.0)](#35-parité-ai-dispatch--envoi-par-alias-reprise-de-session-archive-des-runs-110)
 
 ---
 
@@ -3716,8 +3718,100 @@ de conformité avant d'y router des charges de travail réglementées.
 
 ---
 
+## 35. Parité ai-dispatch — envoi par alias, reprise de session, archive des runs (1.1.0)
+
+Emprunté à [rennzhang/ai-dispatch](https://github.com/rennzhang/ai-dispatch) ;
+notes de conception complètes dans
+[docs/ai-dispatch-parity.md](ai-dispatch-parity.md). Un nom court se résout
+en un pool ordonné de candidats `{backend, model}` que `superaicore send`
+parcourt avec dégradation transparente ; les sessions se reprennent
+réellement ; chaque envoi est archivé.
+
+### Pools d'alias personnalisés
+
+Précédence d'`AliasRouter` : `super-ai-core.dispatch.aliases` (config
+utilisateur) → registre intégré (`fable`/`opus`/`sonnet`/`haiku`, `codex`,
+`gemini-pro`, …) → passthrough de nom de backend → inférence d'id de modèle
+→ backend par défaut. La config accepte des maps complètes, des chaînes
+compactes `backend:model` ou une chaîne unique :
+
+```php
+'dispatch' => [
+    'aliases' => [
+        'reviewer' => [
+            ['backend' => 'claude_cli', 'model' => 'opus'],
+            'gemini_cli:pro',                        // essayé en second
+        ],
+        'mimo' => 'superagent:mimo-v2.5-pro',
+    ],
+    // Classes d'échec autorisées à basculer au candidat suivant. Même
+    // taxonomie que task_fallback.failure_classes ; tout le reste
+    // (tool_policy / validation / runtime non reconnu) échoue franchement.
+    'retry_on_classes' => ['quota', 'rate_limit', 'auth', 'network'],
+],
+```
+
+### Le contrat de résultat
+
+`send`/`resume --json-result` renvoient un objet plat consommable par un
+agent — ne supposez jamais que la cible demandée a répondu ; lisez
+`backend_used` / `model_used` / `route_trace[]` (statut, raison,
+failure_class, durée par candidat) / `degraded` + `degrade_reason` /
+`failure_class` / `session_id` / `run_id`. Les envois passent par le chemin
+streaming normal du Dispatcher : lignes d'usage (`usage_source:
+dispatch_send`), attribution des coûts, tracing et moniteur de processus
+les voient tous.
+
+### Mécanique de reprise de session
+
+- `ClaudeCliBackend` — passez `resume_session_id` et `--session-id` devient
+  `--resume <id>` ; les enveloppes `generate()`/`stream()` exposent
+  `session_id`.
+- `CodexCliBackend` — capture `thread.started` → `thread_id` sur le flux
+  JSONL (exposé comme `session_id`) et reprend via `codex exec resume <id>`.
+- `superaicore resume --session-id <id> "<delta>"` retrouve le
+  backend/modèle propriétaire dans l'archive des runs ; la reprise ne
+  bascule jamais vers un autre moteur. Les moteurs peuvent créer un nouvel
+  id à chaque reprise — chaînez toujours sur le `session_id` du **dernier**
+  résultat.
+
+Depuis PHP (hôte Laravel), la même boucle est un service :
+
+```php
+use SuperAICore\Services\{AliasRouter, BackendRegistry, CostCalculator,
+    Dispatcher, DispatchSender, RunStore};
+
+$backends = new BackendRegistry();
+$sender   = new DispatchSender(new Dispatcher($backends, new CostCalculator()), $backends, new RunStore());
+$route    = (new AliasRouter($backends))->resolve('reviewer');
+
+$result = $sender->send($route['requested'], $route['source'], $route['candidates'],
+    'Review the diff in HEAD~1', ['cwd' => base_path(), 'task_name' => 'review']);
+// $result['ok'], $result['route_trace'], $result['session_id'], …
+```
+
+### Archive des runs, préférences, SKILL entrant, doctor
+
+- `~/.superaicore/runs` (config `dispatch.runs_path` / env
+  `AI_CORE_RUNS_PATH`) — un JSON par envoi ; `superaicore runs
+  list|show <id>` ; `RunStore::findBySession()` alimente la reprise.
+- `~/.superaicore/preferences.md` (config `dispatch.preferences_path` /
+  env `AI_CORE_PREFERENCES_PATH`) — préférences scénario→modèle en langage
+  naturel lues par l'agent APPELANT ; SuperAICore ne les parse jamais.
+  `superaicore preferences init|show|path`.
+- `superaicore skill:install-dispatch --agent claude|codex|gemini` — installe
+  `resources/skills/superaicore-dispatch/SKILL.md` dans les répertoires de
+  skills des agents pour qu'ils délèguent VERS SuperAICore (l'inverse de
+  `superaicore:sync-cli`).
+- `superaicore doctor [--json]` — moteurs + auth, backends enregistrés,
+  résolvabilité des alias, fichier de préférences, archive inscriptible, en
+  une passe.
+
+---
+
 ## Voir aussi
 
+- [docs/ai-dispatch-parity.md](ai-dispatch-parity.md) — envoi par alias / reprise de session / archive des runs / préférences / doctor (1.1.0)
 - [docs/smartflow.md](smartflow.md) — workflows cross-CLI SmartFlow + fédération superagent (1.0.5)
 - [docs/idempotency.md](idempotency.md) — fenêtre de dédup 60s, contrat niveau repository
 - [docs/streaming-backends.md](streaming-backends.md) — formats de stream par CLI

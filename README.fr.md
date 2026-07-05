@@ -32,6 +32,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague streamChat MCP (1.0.8)](#vague-streamchat-mcp-108)
   - [Vague vaisseau amiral natif GLM-5.2 (1.0.10 / SDK 1.1.2)](#vague-vaisseau-amiral-natif-glm-52-1010--sdk-112)
   - [Vague Fable 5 & Sonnet 5 (1.0.11 / SDK 1.1.5)](#vague-fable-5--sonnet-5-1011--sdk-115)
+  - [Vague parité ai-dispatch (1.1.0)](#vague-parité-ai-dispatch-110)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -106,6 +107,45 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague parité ai-dispatch (1.1.0)
+
+Empruntée à [rennzhang/ai-dispatch](https://github.com/rennzhang/ai-dispatch) :
+permettre à un agent IA de déléguer une tâche à un autre moteur IA local sans
+connaître ses drapeaux. Un nom court se résout désormais en un pool ordonné de
+candidats `{backend, model}` avec dégradation transparente, les sessions
+peuvent réellement être reprises, et chaque envoi est archivé. Additif et
+non cassant — voir [docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md).
+
+```bash
+superaicore send opus "review the diff in HEAD~1" --cwd "$PWD" --json-result
+superaicore resume --session-id <id> "question de suivi" --json-result
+```
+
+- **`superaicore send <cible> "<tâche>"`** — la cible est un alias (`opus`,
+  `kimi`, `gemini-pro`, …), un nom de backend ou un id de modèle ;
+  `AliasRouter` la résout (config utilisateur → registre intégré →
+  passthrough → inférence) et les candidats sont essayés dans l'ordre. Les
+  échecs quota / rate-limit / auth / réseau basculent au candidat suivant
+  (`degraded: true` + `route_trace[]` complet) ; tout le reste échoue
+  franchement. `--json-result` renvoie `ok / status / backend_used /
+  model_used / route_trace / degraded / failure_class / session_id / run_id`.
+- **`superaicore resume --session-id <id>`** — vraie continuation de session :
+  `claude --resume` / `codex exec resume <thread_id>` ; le run store sait
+  quel moteur possède la session, l'appelant n'envoie que le delta.
+- **`superaicore runs list|show`** — archive des exécutions sur le système de
+  fichiers (`~/.superaicore/runs`), sans base de données.
+- **`superaicore aliases [cible]`** — inspecter ou résoudre le pool de
+  routage ; extensible via `super-ai-core.dispatch.aliases`.
+- **`superaicore preferences init|show|path`** — préférences scénario→modèle
+  en langage naturel (`~/.superaicore/preferences.md`) lues par l'agent
+  APPELANT avant de choisir une cible.
+- **`superaicore skill:install-dispatch`** — installe la SKILL
+  `superaicore-dispatch` dans `~/.claude/skills` / `~/.codex/skills` /
+  `~/.gemini/skills` pour que des agents externes délèguent VERS SuperAICore
+  (l'inverse de `superaicore:sync-cli`).
+- **`superaicore doctor [--json]`** — diagnostic agrégé : moteurs, auth,
+  backends, alias, préférences, archive des runs.
 
 ### Vague Fable 5 & Sonnet 5 (1.0.11 / SDK 1.1.5)
 

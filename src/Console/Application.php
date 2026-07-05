@@ -4,9 +4,16 @@ namespace SuperAICore\Console;
 
 use SuperAICore\Console\Commands\AgentListCommand;
 use SuperAICore\Console\Commands\AgentRunCommand;
+use SuperAICore\Console\Commands\AliasesCommand;
 use SuperAICore\Console\Commands\AutoCommand;
 use SuperAICore\Console\Commands\ApiStatusCommand;
 use SuperAICore\Console\Commands\CallCommand;
+use SuperAICore\Console\Commands\DoctorCommand;
+use SuperAICore\Console\Commands\InstallDispatchSkillCommand;
+use SuperAICore\Console\Commands\PreferencesCommand;
+use SuperAICore\Console\Commands\ResumeCommand;
+use SuperAICore\Console\Commands\RunsCommand;
+use SuperAICore\Console\Commands\SendCommand;
 use SuperAICore\Console\Commands\ClaudeMcpSyncCommand;
 use SuperAICore\Console\Commands\CliInstallCommand;
 use SuperAICore\Console\Commands\CliStatusCommand;
@@ -41,7 +48,7 @@ class Application extends SymfonyApplication
 {
     public function __construct()
     {
-        parent::__construct('superaicore', '1.0.5');
+        parent::__construct('superaicore', '1.1.0');
 
         $this->add(new CallCommand());
         $this->add(new ListBackendsCommand());
@@ -73,5 +80,14 @@ class Application extends SymfonyApplication
         // SmartFlow — cross-CLI dynamic workflows (the multi-CLI port of
         // Claude Code's built-in Workflow engine).
         $this->add(new FlowCommand());
+        // ai-dispatch parity wave — short-name send with route trace,
+        // session resume, run archive, agent preferences, and doctor.
+        $this->add(new SendCommand());
+        $this->add(new ResumeCommand());
+        $this->add(new RunsCommand());
+        $this->add(new AliasesCommand());
+        $this->add(new PreferencesCommand());
+        $this->add(new DoctorCommand());
+        $this->add(new InstallDispatchSkillCommand());
     }
 }

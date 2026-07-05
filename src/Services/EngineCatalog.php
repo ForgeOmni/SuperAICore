@@ -336,12 +336,14 @@ class EngineCatalog
                 'dispatcher_backends' => ['claude_cli', 'anthropic_api'],
                 'is_cli'              => true,
                 'cli_binary'          => 'claude',
-                'default_model'       => 'claude-sonnet-4-6',
+                'default_model'       => 'claude-sonnet-5',
                 'billing_model'       => 'usage',
                 'available_models'    => [
+                    // Claude 5 generation; Opus 4.6 retired by Anthropic.
+                    'claude-fable-5',
+                    'claude-sonnet-5',
                     'claude-opus-4-8',
                     'claude-opus-4-7',
-                    'claude-opus-4-6',
                     'claude-opus-4-20250514',
                     'claude-sonnet-4-6',
                     'claude-sonnet-4-5-20241022',

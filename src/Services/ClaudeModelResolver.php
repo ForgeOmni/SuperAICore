@@ -22,8 +22,11 @@ class ClaudeModelResolver
      * lets the UI show the concrete id in badges.
      */
     const FAMILIES = [
+        // Claude 5 generation (SDK 1.1.5): `fable` is its own family above
+        // the Opus tier; the CLI's `sonnet` alias now resolves to Sonnet 5.
+        'fable'  => 'claude-fable-5',
         'opus'   => 'claude-opus-4-8',
-        'sonnet' => 'claude-sonnet-4-6',
+        'sonnet' => 'claude-sonnet-5',
         'haiku'  => 'claude-haiku-4-5-20251001',
     ];
 
@@ -35,17 +38,23 @@ class ClaudeModelResolver
      * / dropdown helpers can iterate both resolvers uniformly.
      */
     const CATALOG = [
-        // Opus generations, newest first. 4.8 is the flagship — native 1M
-        // context, interleaved thinking, fast mode, effort control, and
+        // Claude 5 generation (2026-06/07). Fable 5 is Anthropic's most
+        // capable model — native 1M context, adaptive thinking, effort
+        // dial; Sonnet 5 shares the same adaptive surface at the Sonnet
+        // tier. Both are natively 1M — no [1m] beta suffix variants.
+        ['slug' => 'claude-fable-5',         'display_name' => 'Fable 5 — 1M context', 'family' => 'fable'],
+        ['slug' => 'claude-sonnet-5',        'display_name' => 'Sonnet 5 — 1M context','family' => 'sonnet'],
+
+        // Opus generations, newest first. 4.8 is the Opus flagship — native
+        // 1M context, interleaved thinking, fast mode, effort control, and
         // dynamic workflow / agent-orchestration support (SDK 1.0.8).
+        // Opus 4.6 was retired by Anthropic and is removed from the picker.
         ['slug' => 'claude-opus-4-8',        'display_name' => 'Opus 4.8',             'family' => 'opus'],
         ['slug' => 'claude-opus-4-8[1m]',    'display_name' => 'Opus 4.8 — 1M context','family' => 'opus', 'extended_context' => '1m'],
         ['slug' => 'claude-opus-4-7',        'display_name' => 'Opus 4.7',             'family' => 'opus'],
         ['slug' => 'claude-opus-4-7[1m]',    'display_name' => 'Opus 4.7 — 1M context','family' => 'opus', 'extended_context' => '1m'],
-        ['slug' => 'claude-opus-4-6',        'display_name' => 'Opus 4.6',             'family' => 'opus'],
-        ['slug' => 'claude-opus-4-6[1m]',    'display_name' => 'Opus 4.6 — 1M context','family' => 'opus', 'extended_context' => '1m'],
 
-        // Sonnet
+        // Sonnet 4.x (still selectable by id)
         ['slug' => 'claude-sonnet-4-6',      'display_name' => 'Sonnet 4.6',           'family' => 'sonnet'],
         ['slug' => 'claude-sonnet-4-5-20241022','display_name' => 'Sonnet 4.5',        'family' => 'sonnet'],
 

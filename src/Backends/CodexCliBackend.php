@@ -67,11 +67,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         // `codex exec -` reads the prompt from stdin instead of the
         // trailing argv. Avoids cmd-line escaping / 8K length limits on
         // Windows for large or markdown-heavy prompts.
-        $cmd = [$this->binary, 'exec', '-', '--json', '--full-auto', '--skip-git-repo-check'];
-        if ($model) {
-            $cmd[] = '--model';
-            $cmd[] = $model;
-        }
+        $cmd = $this->execCommand($options, $model);
 
         $env = [];
         if (!empty($providerConfig['api_key'])) {
@@ -111,6 +107,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
                     'cached_input_tokens'  => $parsed['cached_input_tokens'],
                 ],
                 'stop_reason' => $parsed['stop_reason'],
+                'session_id'  => $parsed['thread_id'],
             ];
         } catch (\Throwable $e) {
             if ($this->logger) $this->logger->warning("CodexCliBackend error: {$e->getMessage()}");
@@ -138,11 +135,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $model = CodexModelResolver::resolve($model, $this->binary);
 
         // `codex exec -` reads stdin — same rationale as generate().
-        $cmd = [$this->binary, 'exec', '-', '--json', '--full-auto', '--skip-git-repo-check'];
-        if ($model) {
-            $cmd[] = '--model';
-            $cmd[] = $model;
-        }
+        $cmd = $this->execCommand($options, $model);
 
         $env = [];
         if (!empty($providerConfig['api_key'])) {
@@ -200,10 +193,35 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
                 'cached_input_tokens' => $parsed['cached_input_tokens'],
             ],
             'stop_reason' => $parsed['stop_reason'],
+            'session_id'  => $parsed['thread_id'],
             'log_file'    => $result['log_file'],
             'duration_ms' => $result['duration_ms'],
             'exit_code'   => $result['exit_code'],
         ];
+    }
+
+    /**
+     * Shared `codex exec` argv for generate()/stream(). When the caller
+     * passes `resume_session_id`, the subcommand becomes
+     * `exec resume <thread_id>` so codex re-opens the rollout it recorded
+     * for that thread — the id comes from a prior envelope's `session_id`
+     * (captured off the `thread.started` event).
+     *
+     * @return list<string>
+     */
+    protected function execCommand(array $options, ?string $model): array
+    {
+        $cmd = [$this->binary, 'exec'];
+        if (!empty($options['resume_session_id'])) {
+            $cmd[] = 'resume';
+            $cmd[] = (string) $options['resume_session_id'];
+        }
+        array_push($cmd, '-', '--json', '--full-auto', '--skip-git-repo-check');
+        if ($model) {
+            $cmd[] = '--model';
+            $cmd[] = $model;
+        }
+        return $cmd;
     }
 
     /**
@@ -217,7 +235,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
      *   {"type":"turn.completed","usage":{"input_tokens":N,"output_tokens":N,"cached_input_tokens":N}}
      *   {"type":"turn.failed","error":{"message":"..."}}
      *
-     * @return array{text:string, input_tokens:int, output_tokens:int, cached_input_tokens:int, stop_reason:?string}|null
+     * @return array{text:string, input_tokens:int, output_tokens:int, cached_input_tokens:int, stop_reason:?string, thread_id:?string}|null
      */
     public function parseJsonl(string $output): ?array
     {
@@ -226,6 +244,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
         $outputTokens = 0;
         $cachedInputTokens = 0;
         $stopReason = null;
+        $threadId = null;
         $sawAny = false;
 
         foreach (explode("\n", $output) as $line) {
@@ -238,6 +257,12 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             $type = $event['type'] ?? '';
 
             switch ($type) {
+                case 'thread.started':
+                    if (isset($event['thread_id']) && is_string($event['thread_id'])) {
+                        $threadId = $event['thread_id'];
+                    }
+                    break;
+
                 case 'item.completed':
                     $item = $event['item'] ?? [];
                     if (($item['type'] ?? '') === 'agent_message' && isset($item['text']) && is_string($item['text'])) {
@@ -268,6 +293,7 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             'output_tokens'       => $outputTokens,
             'cached_input_tokens' => $cachedInputTokens,
             'stop_reason'         => $stopReason,
+            'thread_id'           => $threadId,
         ];
     }
 
