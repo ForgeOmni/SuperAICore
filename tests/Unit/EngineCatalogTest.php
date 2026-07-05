@@ -246,7 +246,9 @@ final class EngineCatalogTest extends TestCase
         $models = $catalog->modelsFor('claude');
 
         // Seed list is preserved up front — existing callers never break.
-        $this->assertContains('claude-opus-4-6', $models);
+        // (Claude-5 seed as of 1.1.0: opus-4-6 was retired from the seed.)
+        $this->assertContains('claude-sonnet-5', $models);
+        $this->assertContains('claude-opus-4-8', $models);
         // Catalog-only id (not in EngineCatalog::seed()) appears too.
         $this->assertContains('claude-opus-4-7', $models);
         // Non-claude catalog rows never leak in (filter by `claude-` prefix).
