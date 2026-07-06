@@ -4,6 +4,39 @@ All notable changes to `forgeomni/superaicore` are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-07-06
+
+**Windows hotfix — the process dashboard no longer fatals when the `posix`
+extension is absent.** `AiProcess::isAlive()` called `posix_kill()` without
+the `function_exists()` guard every other call site already had, so on
+Windows PHP (where the `posix` extension isn't loaded) `GET
+/super-ai-core/processes` died with *"Call to undefined function
+posix_kill()"*. The liveness check now delegates to a single source of truth
+with a real Windows branch, so process status is *correct* on Windows, not
+merely non-fatal. **Additive and non-breaking** — no migrations, SDK pin
+unchanged.
+
+```bash
+composer update forgeomni/superaicore
+# no migrations
+```
+
+### Fixed
+
+- **Windows-safe PID liveness check** (`src/Models/AiProcess.php`,
+  `src/Services/ProcessMonitor.php`) — `AiProcess::isAlive()` now delegates to
+  `ProcessMonitor::isAlive()`, the single source of truth for process
+  liveness. On platforms without `posix_kill` (Windows PHP) `ProcessMonitor`
+  falls back to a `tasklist` query keyed on PID, so `GET
+  /super-ai-core/processes` returns accurate status instead of fataling with
+  *"Call to undefined function posix_kill()"*.
+- **`EngineCatalogTest` claude-seed assertion updated for the Opus 4.6
+  retirement** — the 1.1.0 Claude-5 catch-up dropped `claude-opus-4-6` from
+  `EngineCatalog`'s claude seed (`sonnet` now targets `claude-sonnet-5`), but
+  `test_claude_seed_is_expanded_with_catalog_models` still asserted the retired
+  id. It now asserts the current seed ids (`claude-sonnet-5`,
+  `claude-opus-4-8`). Test-only; no runtime change.
+
 ## [1.1.0] — 2026-07-05
 
 **Claude 5 model-table catch-up** — `ClaudeModelResolver` gains the
