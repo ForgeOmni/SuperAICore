@@ -3,6 +3,7 @@
 namespace SuperAICore\Models;
 
 use SuperAICore\Models\Concerns\HasConfigurablePrefix;
+use SuperAICore\Services\ProcessMonitor;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -56,6 +57,8 @@ class AiProcess extends Model
     public function isAlive(): bool
     {
         if (!$this->pid) return false;
-        return posix_kill($this->pid, 0);
+        // Delegate to ProcessMonitor so the liveness check stays cross-platform
+        // (posix_kill on POSIX, tasklist on Windows) in a single place.
+        return ProcessMonitor::isAlive($this->pid);
     }
 }

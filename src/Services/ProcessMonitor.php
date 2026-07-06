@@ -104,6 +104,15 @@ class ProcessMonitor
         if (function_exists('posix_kill')) {
             return @posix_kill($pid, 0);
         }
+        if (PHP_OS_FAMILY === 'Windows') {
+            // posix ext is unavailable on Windows PHP; ask the task table.
+            $out = [];
+            @exec('tasklist /FI "PID eq ' . (int) $pid . '" /NH 2>NUL', $out);
+            foreach ($out as $line) {
+                if (preg_match('/\b' . (int) $pid . '\b/', $line)) return true;
+            }
+            return false;
+        }
         $out = [];
         @exec("ps -p {$pid} -o pid= 2>/dev/null", $out);
         return !empty($out);
