@@ -140,9 +140,12 @@ superaicore resume --session-id <id> "follow-up" --json-result
   scenario→model preferences (`~/.superaicore/preferences.md`) read by the
   CALLING agent before it picks a target.
 - **`superaicore skill:install-dispatch`** — installs the bundled
-  `superaicore-dispatch` SKILL into `~/.claude/skills` / `~/.codex/skills` /
-  `~/.gemini/skills` so external agents can delegate INTO SuperAICore (the
-  reverse of `superaicore:sync-cli`).
+  `superaicore-dispatch` SKILL into agent skill dirs so external agents can
+  delegate INTO SuperAICore (the reverse of `superaicore:sync-cli`). Covers
+  `~/.claude/skills` / `~/.codex/skills` / `~/.gemini/skills`, and *(1.1.2)*
+  `~/.grok/skills` / `~/.cursor/skills-cursor` / `~/.qwen/skills`; defaults
+  to claude + codex, `--agent all` installs everywhere, `--uninstall`
+  reverses a prior install without touching your own skills *(1.1.2)*.
 - **`superaicore doctor [--json]`** — aggregate diagnostic: engines, auth,
   backends, aliases, preferences, run store.
 

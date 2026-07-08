@@ -137,8 +137,11 @@ superaicore resume --session-id <id> "追问" --json-result
 - **`superaicore preferences init|show|path`** —— 自然语言的场景→模型偏好文件
   （`~/.superaicore/preferences.md`），由发起调用的 Agent 在选择目标前阅读。
 - **`superaicore skill:install-dispatch`** —— 把内置的 `superaicore-dispatch`
-  SKILL 安装到 `~/.claude/skills` / `~/.codex/skills` / `~/.gemini/skills`，让
-  外部 Agent 能把任务派**进** SuperAICore（与 `superaicore:sync-cli` 方向相反）。
+  SKILL 安装到各 Agent 的技能目录，让外部 Agent 能把任务派**进** SuperAICore
+  （与 `superaicore:sync-cli` 方向相反）。覆盖 `~/.claude/skills` /
+  `~/.codex/skills` / `~/.gemini/skills`，*（1.1.2）*新增 `~/.grok/skills` /
+  `~/.cursor/skills-cursor` / `~/.qwen/skills`；默认安装 claude + codex，
+  `--agent all` 一次装全，`--uninstall` 可干净卸载且不碰你自己的技能*（1.1.2）*。
 - **`superaicore doctor [--json]`** —— 聚合体检：引擎、认证、backend、别名、
   偏好文件、运行存档。
 

@@ -4,6 +4,13 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
+## [1.1.2] — 2026-07-08
+
+**The dispatch skill now reaches every agent CLI — and can be cleanly removed.**
+
+- `superaicore skill:install-dispatch` covers **Grok, Cursor and Qwen** on top of Claude Code / Codex / Gemini. `--agent all` installs everywhere at once, and the default now sets up the two agents ai-dispatch itself targets (Claude Code **and** Codex) instead of Claude only.
+- **`--uninstall`** reverses a prior install without touching any skill you authored yourself.
+
 ## [1.1.1] — 2026-07-06
 
 **Windows hotfix.** The process dashboard crashed on Windows ("Call to undefined function posix_kill"). It now loads everywhere, and process alive/dead status is actually *correct* on Windows, not just non-crashing.

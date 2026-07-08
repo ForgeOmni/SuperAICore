@@ -131,15 +131,21 @@ superaicore preferences path
 
 The mirror image of `superaicore:sync-cli` (which pushes the HOST's skills
 out to engines): `resources/skills/superaicore-dispatch/SKILL.md` teaches an
-external Claude Code / Codex / Gemini agent to delegate second-opinion /
-review / comparison tasks INTO SuperAICore:
+external agent to delegate second-opinion / review / comparison tasks INTO
+SuperAICore:
 
 ```bash
-superaicore skill:install-dispatch --agent claude --agent codex
+superaicore skill:install-dispatch                 # claude + codex (default)
+superaicore skill:install-dispatch --agent all     # every known skill dir
+superaicore skill:install-dispatch --uninstall     # reverse a prior install
 ```
 
-Symlinks (or copies) the skill into `~/.claude/skills` / `~/.codex/skills` /
-`~/.gemini/skills` via the existing `SkillManager`.
+Symlinks (or copies) the skill into the agent's skill dir via the existing
+`SkillManager`. Known dirs (1.1.2): `~/.claude/skills`, `~/.codex/skills`,
+`~/.gemini/skills`, `~/.grok/skills`, `~/.cursor/skills-cursor`
+(cursor-agent's own layout), `~/.qwen/skills`. `--uninstall` removes only
+the bundled skill names a prior install created — user-authored skills in
+the same directory are never candidates.
 
 ## 7. `superaicore doctor`
 

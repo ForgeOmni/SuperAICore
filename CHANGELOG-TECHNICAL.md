@@ -4,6 +4,41 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] — 2026-07-08
+
+**Delegate-in SKILL coverage catch-up — `skill:install-dispatch` reaches all
+six agent skill dirs and learns `--uninstall`.** The 1.1.0 wave shipped the
+`superaicore-dispatch` SKILL for Claude Code / Codex / Gemini only; the other
+CLIs SuperAICore routes (Grok, Cursor, Qwen) have native skill dirs too, so
+an agent running in any of them can now delegate INTO SuperAICore.
+**Additive and non-breaking** — no migrations, SDK pin unchanged.
+
+```bash
+composer update forgeomni/superaicore
+# no migrations
+```
+
+### Added
+
+- **Grok / Cursor / Qwen skill dirs** (`Services\SkillManager::targetDirFor()`)
+  — `~/.grok/skills`, `~/.cursor/skills-cursor` (cursor-agent's own layout,
+  matching what `CliSkillBridge` already targets for the host-library
+  fanout), `~/.qwen/skills`. New `SkillManager::knownBackends()` enumerates
+  the six install targets; `skill:install-dispatch --agent all` expands to it.
+- **`SkillManager::unsync()` + `skill:install-dispatch --uninstall`** —
+  removes exactly the skills that came from the bundled resources dir
+  (a symlink is unlinked, a copied dir removed recursively). User-authored
+  skills in the same directory are never candidates because removal is keyed
+  on the bundled skill names.
+
+### Changed
+
+- **`skill:install-dispatch` default agents `claude` → `claude,codex`** —
+  matches ai-dispatch's own default install surface. Pass `--agent claude`
+  explicitly for the previous behavior.
+- **Standalone console version string `1.1.1` → `1.1.2`**
+  (`Console\Application`).
+
 ## [1.1.1] — 2026-07-06
 
 **Windows hotfix — the process dashboard no longer fatals when the `posix`

@@ -16,6 +16,9 @@ namespace SuperAICore\Services;
  *   - claude:  ~/.claude/skills/       (user) or `.claude/skills/` (project)
  *   - codex:   ~/.codex/skills/
  *   - gemini:  ~/.gemini/skills/
+ *   - grok:    ~/.grok/skills/          (1.1.2)
+ *   - cursor:  ~/.cursor/skills-cursor/ (1.1.2 — cursor-agent's own layout)
+ *   - qwen:    ~/.qwen/skills/          (1.1.2)
  *
  * The convention we adopt is that skills may be prefixed per host
  * (e.g. `super-team-<name>`) in the target dirs so multiple host apps
@@ -95,6 +98,17 @@ class SkillManager
         return $report;
     }
 
+    /**
+     * Backends with a known user-scope skills directory. Order is the
+     * display/install order used by `--agent all`.
+     *
+     * @return string[]
+     */
+    public static function knownBackends(): array
+    {
+        return ['claude', 'codex', 'gemini', 'grok', 'cursor', 'qwen'];
+    }
+
     /** Absolute path of `~/.<backend>/skills` or equivalent. */
     public static function targetDirFor(string $backend): ?string
     {
@@ -104,8 +118,53 @@ class SkillManager
             'codex'  => $home . DIRECTORY_SEPARATOR . '.codex'  . DIRECTORY_SEPARATOR . 'skills',
             'gemini' => $home . DIRECTORY_SEPARATOR . '.gemini' . DIRECTORY_SEPARATOR . 'skills',
             'claude' => $home . DIRECTORY_SEPARATOR . '.claude' . DIRECTORY_SEPARATOR . 'skills',
+            'grok'   => $home . DIRECTORY_SEPARATOR . '.grok'   . DIRECTORY_SEPARATOR . 'skills',
+            // cursor-agent reads `skills-cursor`, not `skills` — same layout
+            // CliSkillBridge targets for the host-library fanout.
+            'cursor' => $home . DIRECTORY_SEPARATOR . '.cursor' . DIRECTORY_SEPARATOR . 'skills-cursor',
+            'qwen'   => $home . DIRECTORY_SEPARATOR . '.qwen'   . DIRECTORY_SEPARATOR . 'skills',
             default  => null,
         };
+    }
+
+    /**
+     * Remove previously synced skills (the inverse of {@see sync()}).
+     * Only paths whose basename matches a skill under $sourceDir (plus
+     * the optional prefix) are touched — a symlink is unlinked, a copied
+     * dir is removed recursively; the user's own skills are never
+     * candidates because their names don't come from $sourceDir.
+     *
+     * @param  string  $sourceDir  same source that was synced
+     * @param  array   $backends   subset of knownBackends()
+     * @param  string  $prefix     prefix used at sync time
+     * @return array{backend:string,removed:int,target?:string,errors:array}[]
+     */
+    public static function unsync(
+        string $sourceDir,
+        array $backends,
+        string $prefix = ''
+    ): array {
+        $report = [];
+        $skills = is_dir($sourceDir) ? self::listSkills($sourceDir) : [];
+
+        foreach ($backends as $backend) {
+            $targetDir = self::targetDirFor($backend);
+            if (!$targetDir) {
+                $report[] = ['backend' => $backend, 'removed' => 0, 'errors' => ["no skill dir known for backend {$backend}"]];
+                continue;
+            }
+            $removed = 0;
+            foreach ($skills as $name) {
+                $dst = $targetDir . DIRECTORY_SEPARATOR . ($prefix ? $prefix . $name : $name);
+                if (is_link($dst) || file_exists($dst)) {
+                    self::removePath($dst);
+                    $removed++;
+                }
+            }
+            $report[] = ['backend' => $backend, 'removed' => $removed, 'target' => $targetDir, 'errors' => []];
+        }
+
+        return $report;
     }
 
     /** List skill directories under $sourceDir (each skill = one subdir). */

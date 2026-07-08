@@ -3798,10 +3798,13 @@ $result = $sender->send($route['requested'], $route['source'], $route['candidate
   env `AI_CORE_PREFERENCES_PATH`) — natural-language scenario→model
   preferences the CALLING agent reads; SuperAICore never parses it.
   `superaicore preferences init|show|path`.
-- `superaicore skill:install-dispatch --agent claude|codex|gemini` — installs
-  `resources/skills/superaicore-dispatch/SKILL.md` into the agents' skill
-  dirs so external agents delegate INTO SuperAICore (reverse of
-  `superaicore:sync-cli`).
+- `superaicore skill:install-dispatch [--agent <a>|--agent all] [--uninstall]`
+  — installs `resources/skills/superaicore-dispatch/SKILL.md` into the
+  agents' skill dirs so external agents delegate INTO SuperAICore (reverse
+  of `superaicore:sync-cli`). Agents: claude, codex, gemini, and since 1.1.2
+  grok, cursor (`~/.cursor/skills-cursor`), qwen. Defaults to claude +
+  codex; `--uninstall` removes only what a prior install created, never
+  your own skills.
 - `superaicore doctor [--json]` — engines + auth, registered backends, alias
   resolvability, preferences file, run-store writability in one pass.
 

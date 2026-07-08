@@ -3608,10 +3608,12 @@ $result = $sender->send($route['requested'], $route['source'], $route['candidate
   环境变量 `AI_CORE_PREFERENCES_PATH`）—— 自然语言的场景→模型偏好，由发起
   调用的 Agent 阅读；SuperAICore 从不解析它。`superaicore preferences
   init|show|path`。
-- `superaicore skill:install-dispatch --agent claude|codex|gemini` —— 把
-  `resources/skills/superaicore-dispatch/SKILL.md` 装进各 Agent 的 skill
-  目录，让外部 Agent 把任务派**进** SuperAICore（与 `superaicore:sync-cli`
-  方向相反）。
+- `superaicore skill:install-dispatch [--agent <a>|--agent all] [--uninstall]`
+  —— 把 `resources/skills/superaicore-dispatch/SKILL.md` 装进各 Agent 的
+  skill 目录，让外部 Agent 把任务派**进** SuperAICore（与
+  `superaicore:sync-cli` 方向相反）。支持 claude、codex、gemini，1.1.2 起
+  新增 grok、cursor（`~/.cursor/skills-cursor`）、qwen；默认安装 claude +
+  codex；`--uninstall` 只移除此前安装的内容，绝不碰你自己的技能。
 - `superaicore doctor [--json]` —— 引擎 + 认证、已注册 backend、别名可解析
   性、偏好文件、运行存档可写性，一次跑完。
 

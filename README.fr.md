@@ -141,9 +141,13 @@ superaicore resume --session-id <id> "question de suivi" --json-result
   en langage naturel (`~/.superaicore/preferences.md`) lues par l'agent
   APPELANT avant de choisir une cible.
 - **`superaicore skill:install-dispatch`** — installe la SKILL
-  `superaicore-dispatch` dans `~/.claude/skills` / `~/.codex/skills` /
-  `~/.gemini/skills` pour que des agents externes délèguent VERS SuperAICore
-  (l'inverse de `superaicore:sync-cli`).
+  `superaicore-dispatch` dans les répertoires de skills des agents pour que
+  des agents externes délèguent VERS SuperAICore (l'inverse de
+  `superaicore:sync-cli`). Couvre `~/.claude/skills` / `~/.codex/skills` /
+  `~/.gemini/skills`, et *(1.1.2)* `~/.grok/skills` /
+  `~/.cursor/skills-cursor` / `~/.qwen/skills` ; par défaut claude + codex,
+  `--agent all` installe partout, `--uninstall` annule une installation sans
+  toucher à vos propres skills *(1.1.2)*.
 - **`superaicore doctor [--json]`** — diagnostic agrégé : moteurs, auth,
   backends, alias, préférences, archive des runs.
 
