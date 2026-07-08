@@ -141,7 +141,7 @@ superaicore skill:install-dispatch --uninstall     # reverse a prior install
 ```
 
 Symlinks (or copies) the skill into the agent's skill dir via the existing
-`SkillManager`. Known dirs (1.1.2): `~/.claude/skills`, `~/.codex/skills`,
+`SkillManager`. Known dirs (1.1.5): `~/.claude/skills`, `~/.codex/skills`,
 `~/.gemini/skills`, `~/.grok/skills`, `~/.cursor/skills-cursor`
 (cursor-agent's own layout), `~/.qwen/skills`. `--uninstall` removes only
 the bundled skill names a prior install created — user-authored skills in

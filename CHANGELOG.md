@@ -4,7 +4,7 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
-## [1.1.2] — 2026-07-08
+## [1.1.5] — 2026-07-08
 
 **The dispatch skill now reaches every agent CLI — and can be cleanly removed.**
 

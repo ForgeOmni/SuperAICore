@@ -144,10 +144,10 @@ superaicore resume --session-id <id> "question de suivi" --json-result
   `superaicore-dispatch` dans les répertoires de skills des agents pour que
   des agents externes délèguent VERS SuperAICore (l'inverse de
   `superaicore:sync-cli`). Couvre `~/.claude/skills` / `~/.codex/skills` /
-  `~/.gemini/skills`, et *(1.1.2)* `~/.grok/skills` /
+  `~/.gemini/skills`, et *(1.1.5)* `~/.grok/skills` /
   `~/.cursor/skills-cursor` / `~/.qwen/skills` ; par défaut claude seul,
   `--agent all` installe partout, `--uninstall` annule une installation sans
-  toucher à vos propres skills *(1.1.2)*.
+  toucher à vos propres skills *(1.1.5)*.
 - **`superaicore doctor [--json]`** — diagnostic agrégé : moteurs, auth,
   backends, alias, préférences, archive des runs.
 

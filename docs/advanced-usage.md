@@ -3801,7 +3801,7 @@ $result = $sender->send($route['requested'], $route['source'], $route['candidate
 - `superaicore skill:install-dispatch [--agent <a>|--agent all] [--uninstall]`
   — installs `resources/skills/superaicore-dispatch/SKILL.md` into the
   agents' skill dirs so external agents delegate INTO SuperAICore (reverse
-  of `superaicore:sync-cli`). Agents: claude, codex, gemini, and since 1.1.2
+  of `superaicore:sync-cli`). Agents: claude, codex, gemini, and since 1.1.5
   grok, cursor (`~/.cursor/skills-cursor`), qwen. Defaults to claude;
   `--uninstall` removes only what a prior install created, never your
   own skills.

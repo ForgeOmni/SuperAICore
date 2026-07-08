@@ -1383,7 +1383,7 @@ catch up with the Claude 5 generation (`fable` family; `sonnet` now targets
 [docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md) and
 [docs/advanced-usage.md §35](docs/advanced-usage.md).
 
-**1.1.2 — delegate-in SKILL everywhere; no migration; SDK pin unchanged.**
+**1.1.5 — delegate-in SKILL everywhere; no migration; SDK pin unchanged.**
 Additive: `skill:install-dispatch` now also targets Grok / Cursor / Qwen
 (`~/.grok/skills`, `~/.cursor/skills-cursor`, `~/.qwen/skills`); `--agent
 all` covers all six agents in one pass. The default stays claude-only, and

@@ -3803,7 +3803,7 @@ $result = $sender->send($route['requested'], $route['source'], $route['candidate
   — installe `resources/skills/superaicore-dispatch/SKILL.md` dans les
   répertoires de skills des agents pour qu'ils délèguent VERS SuperAICore
   (l'inverse de `superaicore:sync-cli`). Agents : claude, codex, gemini, et
-  depuis 1.1.2 grok, cursor (`~/.cursor/skills-cursor`), qwen. Par défaut
+  depuis 1.1.5 grok, cursor (`~/.cursor/skills-cursor`), qwen. Par défaut
   claude seul ; `--uninstall` ne retire que ce qu'une installation
   antérieure a créé, jamais vos propres skills.
 - `superaicore doctor [--json]` — moteurs + auth, backends enregistrés,

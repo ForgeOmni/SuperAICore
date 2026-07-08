@@ -142,10 +142,10 @@ superaicore resume --session-id <id> "follow-up" --json-result
 - **`superaicore skill:install-dispatch`** — installs the bundled
   `superaicore-dispatch` SKILL into agent skill dirs so external agents can
   delegate INTO SuperAICore (the reverse of `superaicore:sync-cli`). Covers
-  `~/.claude/skills` / `~/.codex/skills` / `~/.gemini/skills`, and *(1.1.2)*
+  `~/.claude/skills` / `~/.codex/skills` / `~/.gemini/skills`, and *(1.1.5)*
   `~/.grok/skills` / `~/.cursor/skills-cursor` / `~/.qwen/skills`; defaults
   to claude, `--agent all` installs everywhere, `--uninstall` reverses a
-  prior install without touching your own skills *(1.1.2)*.
+  prior install without touching your own skills *(1.1.5)*.
 - **`superaicore doctor [--json]`** — aggregate diagnostic: engines, auth,
   backends, aliases, preferences, run store.
 

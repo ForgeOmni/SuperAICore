@@ -16,9 +16,9 @@ namespace SuperAICore\Services;
  *   - claude:  ~/.claude/skills/       (user) or `.claude/skills/` (project)
  *   - codex:   ~/.codex/skills/
  *   - gemini:  ~/.gemini/skills/
- *   - grok:    ~/.grok/skills/          (1.1.2)
- *   - cursor:  ~/.cursor/skills-cursor/ (1.1.2 — cursor-agent's own layout)
- *   - qwen:    ~/.qwen/skills/          (1.1.2)
+ *   - grok:    ~/.grok/skills/          (1.1.5)
+ *   - cursor:  ~/.cursor/skills-cursor/ (1.1.5 — cursor-agent's own layout)
+ *   - qwen:    ~/.qwen/skills/          (1.1.5)
  *
  * The convention we adopt is that skills may be prefixed per host
  * (e.g. `super-team-<name>`) in the target dirs so multiple host apps

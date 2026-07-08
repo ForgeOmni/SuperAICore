@@ -1340,7 +1340,7 @@ standalone + artisan 命令 `send`、`resume`、`runs`、`aliases`、
 [docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md) 与
 [docs/advanced-usage.zh-CN.md §35](docs/advanced-usage.zh-CN.md)。
 
-**1.1.2 —— 派发 SKILL 全覆盖；无迁移；SDK pin 不变。** 纯增量：
+**1.1.5 —— 派发 SKILL 全覆盖；无迁移；SDK pin 不变。** 纯增量：
 `skill:install-dispatch` 新增 Grok / Cursor / Qwen 目标
 （`~/.grok/skills`、`~/.cursor/skills-cursor`、`~/.qwen/skills`），
 `--agent all` 一次覆盖全部六个 Agent，默认仍只装 claude；新增

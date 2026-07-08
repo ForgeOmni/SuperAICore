@@ -1420,7 +1420,7 @@ dans les checkouts de dev. Voir
 [docs/ai-dispatch-parity.md](docs/ai-dispatch-parity.md) et
 [docs/advanced-usage.fr.md §35](docs/advanced-usage.fr.md).
 
-**1.1.2 — la SKILL de délégation partout ; aucune migration ; pin SDK
+**1.1.5 — la SKILL de délégation partout ; aucune migration ; pin SDK
 inchangé.** Additif : `skill:install-dispatch` cible désormais aussi Grok /
 Cursor / Qwen (`~/.grok/skills`, `~/.cursor/skills-cursor`,
 `~/.qwen/skills`) ; `--agent all` couvre les six agents d'un coup, le

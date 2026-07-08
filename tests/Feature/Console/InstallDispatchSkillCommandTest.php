@@ -10,7 +10,7 @@ use Symfony\Component\Console\Tester\CommandTester;
 
 /**
  * `skill:install-dispatch` under a fake $HOME — six-agent coverage,
- * `--agent all`, and the `--uninstall` reverse path (1.1.2).
+ * `--agent all`, and the `--uninstall` reverse path (1.1.5).
  */
 final class InstallDispatchSkillCommandTest extends TestCase
 {

@@ -4,7 +4,7 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.2] — 2026-07-08
+## [1.1.5] — 2026-07-08
 
 **Delegate-in SKILL coverage catch-up — `skill:install-dispatch` reaches all
 six agent skill dirs and learns `--uninstall`.** The 1.1.0 wave shipped the
@@ -33,7 +33,7 @@ composer update forgeomni/superaicore
 
 ### Changed
 
-- **Standalone console version string `1.1.1` → `1.1.2`**
+- **Standalone console version string `1.1.1` → `1.1.5`**
   (`Console\Application`). The `skill:install-dispatch` default agent list
   is unchanged (`claude` only).
 
