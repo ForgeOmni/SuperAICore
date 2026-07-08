@@ -33,11 +33,9 @@ composer update forgeomni/superaicore
 
 ### Changed
 
-- **`skill:install-dispatch` default agents `claude` → `claude,codex`** —
-  matches ai-dispatch's own default install surface. Pass `--agent claude`
-  explicitly for the previous behavior.
 - **Standalone console version string `1.1.1` → `1.1.2`**
-  (`Console\Application`).
+  (`Console\Application`). The `skill:install-dispatch` default agent list
+  is unchanged (`claude` only).
 
 ## [1.1.1] — 2026-07-06
 

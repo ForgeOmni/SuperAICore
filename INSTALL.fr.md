@@ -1423,12 +1423,10 @@ dans les checkouts de dev. Voir
 **1.1.2 — la SKILL de délégation partout ; aucune migration ; pin SDK
 inchangé.** Additif : `skill:install-dispatch` cible désormais aussi Grok /
 Cursor / Qwen (`~/.grok/skills`, `~/.cursor/skills-cursor`,
-`~/.qwen/skills`) ; `--agent all` couvre les six agents d'un coup. La
-surface d'installation par défaut passe de claude seul à **claude + codex**
-(passez `--agent claude` pour l'ancien comportement), et le nouveau drapeau
-`--uninstall` annule une installation antérieure sans toucher aux skills
-que vous avez écrites vous-même. Rien à configurer ; pas de republication
-de config.
+`~/.qwen/skills`) ; `--agent all` couvre les six agents d'un coup, le
+défaut reste claude seul. Le nouveau drapeau `--uninstall` annule une
+installation antérieure sans toucher aux skills que vous avez écrites
+vous-même. Rien à configurer ; pas de republication de config.
 
 ## Dépannage
 

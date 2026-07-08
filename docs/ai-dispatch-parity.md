@@ -135,7 +135,7 @@ external agent to delegate second-opinion / review / comparison tasks INTO
 SuperAICore:
 
 ```bash
-superaicore skill:install-dispatch                 # claude + codex (default)
+superaicore skill:install-dispatch                 # claude (default)
 superaicore skill:install-dispatch --agent all     # every known skill dir
 superaicore skill:install-dispatch --uninstall     # reverse a prior install
 ```

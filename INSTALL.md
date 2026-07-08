@@ -1386,11 +1386,9 @@ catch up with the Claude 5 generation (`fable` family; `sonnet` now targets
 **1.1.2 — delegate-in SKILL everywhere; no migration; SDK pin unchanged.**
 Additive: `skill:install-dispatch` now also targets Grok / Cursor / Qwen
 (`~/.grok/skills`, `~/.cursor/skills-cursor`, `~/.qwen/skills`); `--agent
-all` covers all six agents in one pass. The default install surface moves
-from claude-only to **claude + codex** (pass `--agent claude` for the old
-behavior), and the new `--uninstall` flag reverses a prior install without
-touching skills you authored yourself. Nothing to configure; no config
-re-publish needed.
+all` covers all six agents in one pass. The default stays claude-only, and
+the new `--uninstall` flag reverses a prior install without touching skills
+you authored yourself. Nothing to configure; no config re-publish needed.
 
 ## Troubleshooting
 

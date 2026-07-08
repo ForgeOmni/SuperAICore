@@ -17,9 +17,9 @@ use Symfony\Component\Console\Output\OutputInterface;
  * CLIs can delegate tasks INTO SuperAICore via `superaicore send`
  * (ai-dispatch parity for `npx skills add`).
  *
- * Defaults to claude + codex (the two agents ai-dispatch itself targets);
- * `--agent all` covers every known skill dir, `--uninstall` reverses a
- * prior install without touching the user's own skills.
+ * Defaults to claude; `--agent all` covers every known skill dir,
+ * `--uninstall` reverses a prior install without touching the user's
+ * own skills.
  *
  * This is the reverse direction of `superaicore:sync-cli`, which pushes
  * the HOST's skills out to the engines SuperAICore drives.
@@ -35,7 +35,7 @@ class InstallDispatchSkillCommand extends Command
                 'a',
                 InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY,
                 'Target agent(s): ' . implode(' | ', SkillManager::knownBackends()) . ' | all (repeatable)',
-                ['claude', 'codex'],
+                ['claude'],
             )
             ->addOption(
                 'uninstall',

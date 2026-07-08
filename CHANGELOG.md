@@ -8,7 +8,7 @@ Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwis
 
 **The dispatch skill now reaches every agent CLI — and can be cleanly removed.**
 
-- `superaicore skill:install-dispatch` covers **Grok, Cursor and Qwen** on top of Claude Code / Codex / Gemini. `--agent all` installs everywhere at once, and the default now sets up the two agents ai-dispatch itself targets (Claude Code **and** Codex) instead of Claude only.
+- `superaicore skill:install-dispatch` covers **Grok, Cursor and Qwen** on top of Claude Code / Codex / Gemini. `--agent all` installs everywhere at once; the default remains Claude Code only.
 - **`--uninstall`** reverses a prior install without touching any skill you authored yourself.
 
 ## [1.1.1] — 2026-07-06

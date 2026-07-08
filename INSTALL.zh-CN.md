@@ -1343,8 +1343,7 @@ standalone + artisan 命令 `send`、`resume`、`runs`、`aliases`、
 **1.1.2 —— 派发 SKILL 全覆盖；无迁移；SDK pin 不变。** 纯增量：
 `skill:install-dispatch` 新增 Grok / Cursor / Qwen 目标
 （`~/.grok/skills`、`~/.cursor/skills-cursor`、`~/.qwen/skills`），
-`--agent all` 一次覆盖全部六个 Agent。默认安装面从仅 claude 改为
-**claude + codex**（要旧行为可显式传 `--agent claude`）；新增
+`--agent all` 一次覆盖全部六个 Agent，默认仍只装 claude；新增
 `--uninstall` 可撤销此前的安装且不会碰你自己编写的技能。无需任何配置，
 也不用重新发布 config。
 

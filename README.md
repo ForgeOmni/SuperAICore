@@ -144,8 +144,8 @@ superaicore resume --session-id <id> "follow-up" --json-result
   delegate INTO SuperAICore (the reverse of `superaicore:sync-cli`). Covers
   `~/.claude/skills` / `~/.codex/skills` / `~/.gemini/skills`, and *(1.1.2)*
   `~/.grok/skills` / `~/.cursor/skills-cursor` / `~/.qwen/skills`; defaults
-  to claude + codex, `--agent all` installs everywhere, `--uninstall`
-  reverses a prior install without touching your own skills *(1.1.2)*.
+  to claude, `--agent all` installs everywhere, `--uninstall` reverses a
+  prior install without touching your own skills *(1.1.2)*.
 - **`superaicore doctor [--json]`** — aggregate diagnostic: engines, auth,
   backends, aliases, preferences, run store.
 

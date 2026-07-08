@@ -140,7 +140,7 @@ superaicore resume --session-id <id> "追问" --json-result
   SKILL 安装到各 Agent 的技能目录，让外部 Agent 能把任务派**进** SuperAICore
   （与 `superaicore:sync-cli` 方向相反）。覆盖 `~/.claude/skills` /
   `~/.codex/skills` / `~/.gemini/skills`，*（1.1.2）*新增 `~/.grok/skills` /
-  `~/.cursor/skills-cursor` / `~/.qwen/skills`；默认安装 claude + codex，
+  `~/.cursor/skills-cursor` / `~/.qwen/skills`；默认只装 claude，
   `--agent all` 一次装全，`--uninstall` 可干净卸载且不碰你自己的技能*（1.1.2）*。
 - **`superaicore doctor [--json]`** —— 聚合体检：引擎、认证、backend、别名、
   偏好文件、运行存档。

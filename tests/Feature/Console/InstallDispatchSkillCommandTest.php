@@ -38,15 +38,13 @@ final class InstallDispatchSkillCommandTest extends TestCase
         return new CommandTester($app->find('skill:install-dispatch'));
     }
 
-    public function test_default_installs_into_claude_and_codex(): void
+    public function test_default_installs_into_claude_only(): void
     {
         $tester = $this->tester();
         $this->assertSame(0, $tester->execute([]));
 
-        foreach (['.claude/skills', '.codex/skills'] as $dir) {
-            $skill = $this->fakeHome . '/' . $dir . '/superaicore-dispatch/SKILL.md';
-            $this->assertFileExists($skill, "missing {$skill}");
-        }
+        $this->assertFileExists($this->fakeHome . '/.claude/skills/superaicore-dispatch/SKILL.md');
+        $this->assertDirectoryDoesNotExist($this->fakeHome . '/.codex/skills/superaicore-dispatch');
         $this->assertDirectoryDoesNotExist($this->fakeHome . '/.gemini/skills/superaicore-dispatch');
     }
 
