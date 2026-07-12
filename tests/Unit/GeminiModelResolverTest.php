@@ -52,8 +52,9 @@ class GeminiModelResolverTest extends TestCase
         }
 
         // `gemini` (bare) is NOT in our local ALIASES, but the bundled catalog
-        // lists it as an alias for gemini-2.0-flash. The resolver should fall
-        // through and return a gemini-prefixed id.
+        // lists it as an alias for the current flagship (gemini-3.5-flash
+        // since SDK 1.1.6). The resolver should fall through and return a
+        // gemini-prefixed id.
         $resolved = GeminiModelResolver::resolve('gemini');
         $this->assertNotNull($resolved);
         $this->assertStringStartsWith('gemini', (string) $resolved);

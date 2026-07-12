@@ -10,15 +10,18 @@ use Symfony\Component\Process\Process;
  *
  * The `grok` binary (xAI's "Grok Build" agentic CLI) authenticates against
  * a grok.com subscription (`grok login`, OAuth) and routes model IDs via
- * `-m/--model`. Its authoritative list comes from `grok models`; the
- * grok.com Build plan exposes the single `grok-build` model (the default),
- * so that's the static default here. Hosts on plans that surface more SKUs
- * pick them up through `liveCatalog()`.
+ * `-m/--model`. Its authoritative list comes from `grok models`; as of
+ * grok CLI 0.2.93 (verified 2026-07-12) the Build plan routes `grok-4.5`
+ * as the default plus `grok-composer-2.5-fast`, so `grok-4.5` is the
+ * static default here. The older single-model `grok-build` id stays in the
+ * catalog for accounts still on that lineup; hosts pick up their exact
+ * account list through `liveCatalog()`.
  *
  * This is DISTINCT from the metered xAI **API** provider (the SDK's
- * `GrokProvider`, `AiProvider::TYPE_GROK`, `XAI_API_KEY`, `grok-4.3`):
+ * `GrokProvider`, `AiProvider::TYPE_GROK`, `XAI_API_KEY`, `grok-4.5`):
  *   - `grok_cli` engine → grok.com subscription, model `grok-build`, $0/token.
- *   - `grok` provider type → api.x.ai, model `grok-4.3`, usage-billed.
+ *   - `grok` provider type → api.x.ai, model `grok-4.5` (SDK 1.1.6 default;
+ *     grok-4.3 reachable by id), usage-billed.
  * The two share the brand but nothing else; keep them apart in routing.
  *
  * Billing on this channel is by subscription, so the cost calculator
@@ -30,15 +33,19 @@ class GrokModelResolver
      * Short alias → concrete model ID `grok --model` accepts.
      */
     const FAMILIES = [
-        'grok' => 'grok-build',
+        'grok'     => 'grok-4.5',
+        'composer' => 'grok-composer-2.5-fast',
     ];
 
     /**
-     * Ordered, user-facing catalog. `grok-build` is the agentic build/coding
-     * model the grok.com subscription routes; `auto` lets the CLI pick.
+     * Ordered, user-facing catalog — the grok CLI 0.2.93 subscription
+     * lineup (`grok-4.5` default + the Composer fast tier), with the
+     * legacy `grok-build` id kept routable for older accounts.
      */
     const CATALOG = [
-        ['slug' => 'grok-build', 'display_name' => 'Grok Build', 'family' => 'grok'],
+        ['slug' => 'grok-4.5',               'display_name' => 'Grok 4.5',               'family' => 'grok'],
+        ['slug' => 'grok-composer-2.5-fast', 'display_name' => 'Grok Composer 2.5 Fast', 'family' => 'composer'],
+        ['slug' => 'grok-build',             'display_name' => 'Grok Build (legacy)',    'family' => 'grok'],
     ];
 
     /**
@@ -46,8 +53,9 @@ class GrokModelResolver
      * accepts. Unknown input passes through unchanged so the CLI surfaces
      * its own error instead of a silent substitution.
      *
-     *   resolve('grok')        → 'grok-build'
-     *   resolve('grok-build')  → 'grok-build'  (passthrough)
+     *   resolve('grok')        → 'grok-4.5'
+     *   resolve('composer')    → 'grok-composer-2.5-fast'
+     *   resolve('grok-build')  → 'grok-build'  (passthrough; legacy accounts)
      *   resolve('grok-4.3')    → 'grok-4.3'    (passthrough; CLI may reject — that's the API SKU)
      *   resolve(null)          → null          (engine default)
      */

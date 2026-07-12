@@ -4,6 +4,17 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
+## [1.1.6] — 2026-07-12
+
+**GPT-5.6, Grok 4.5 and a price-table truth-up — your cost dashboards match what vendors actually bill.** SuperAgent SDK pin moves to `^1.1.6`; no migrations. Re-publish the config if you want the refreshed pricing table.
+
+- **New models priced and pickable** — GPT-5.6 Sol/Terra/Luna, Grok 4.5, Gemini 3.5 Flash (the real flagship), Gemini 3.1 Pro/Flash-Lite, Kimi K2.7 Code and the GLM turbo pair, all at official rates with cached-input tiers.
+- **Stale prices corrected** — `gpt-5` was billed at a $5/$15 estimate, it's actually **$1.25/$10**; DeepSeek V4 Flash output halved to $0.28; MiniMax M3 halved to $0.30/$1.20; `qwen3.7-plus` halved to $0.40/$1.60. If your host published an older config copy, re-publish or your dashboards keep over-charging.
+- **New request knobs just work** — GPT-5.6's `reasoning_mode: pro` / `reasoning_context` / explicit prompt caching, and Gemini's `thinking_level`, forward through the normal dispatch options; providers that don't speak them ignore them.
+- **Defaults moved SDK-side** — zero-config `openai-responses` → `gpt-5.6-sol`, `grok` → `grok-4.5` (500K context — pin `grok-4.3` if you needed 1M), `gemini` → `gemini-3.5-flash`. Every old id stays reachable.
+- **Subscription CLIs re-verified live** — Grok Build now routes `grok-4.5` (+ `grok-composer-2.5-fast`); Cursor Composer's picker gains Fable 5 / Sonnet 5 / GPT-5.6 Sol / Grok 4.5 / Gemini 3.5 Flash / Kimi K2.7 / GLM 5.2 with easy `fable`/`sonnet`/`grok`/`gemini`/`kimi`/`glm` aliases. ZCode (Z.ai's desktop IDE) was evaluated — no headless CLI yet, so nothing to integrate.
+- Phantom models removed: `gemini-3.5-pro` / `gemini-3.5-flash-lite` never actually shipped and no longer appear in pickers.
+
 ## [1.1.5] — 2026-07-08
 
 **The dispatch skill now reaches every agent CLI — and can be cleanly removed.**

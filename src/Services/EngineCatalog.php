@@ -399,17 +399,19 @@ class EngineCatalog
                 // OAuth file, or gcloud ADC. Hosts should skip the loggedIn
                 // gate for this engine.
                 'auth_probe_reliable' => false,
-                // SuperAgent SDK 1.0.5 catalog lists gemini-3.5-pro / -flash /
-                // -flash-lite as the production Gemini 3.x family with thinking
-                // + grounding + thought-parts support. Surface them here so the
-                // CLI engine UI can pick them once gemini-cli routes accept
-                // the slug (the SDK can already drive them via its own
-                // GeminiProvider when used via sdk: tags).
+                // SDK 1.1.6 corrected the Gemini catalog to reality:
+                // gemini-3.5-pro and gemini-3.5-flash-lite never publicly
+                // shipped and were removed (3.5 Pro is limited-preview with
+                // no API id). gemini-3.5-flash IS the shipping flagship
+                // (thinking_level + grounding via the SDK's GeminiProvider);
+                // gemini-3.1-pro-preview owns the `gemini-pro` alias and
+                // gemini-3.1-flash-lite is the budget tier. Surfaced here so
+                // the CLI engine UI can pick them once gemini-cli routes
+                // accept the slug.
                 'available_models'    => [
-                    'gemini-3.5-pro',
                     'gemini-3.5-flash',
-                    'gemini-3.5-flash-lite',
-                    'gemini-3-pro-preview',
+                    'gemini-3.1-pro-preview',
+                    'gemini-3.1-flash-lite',
                     'gemini-2.5-pro',
                     'gemini-2.5-flash',
                     'gemini-2.5-flash-lite',
@@ -596,24 +598,34 @@ class EngineCatalog
                 'dispatcher_backends' => ['cursor_cli'],
                 'is_cli'              => true,
                 'cli_binary'          => 'cursor-agent',
-                // Cursor's headless Composer agent (cursor-agent 2026.05.28).
-                // Subscription-billed via the user's Cursor plan — usage rows
-                // emit $0 and the dashboard surfaces shadow cost. Default
-                // composer-2.5-fast (the account default); the CLI also proxies
-                // Anthropic/OpenAI SKUs (Opus 4.8 thinking, gpt-5.x-codex).
+                // Cursor's headless Composer agent (cursor-agent 2026.05.28;
+                // lineup re-verified 2026-07-12 — ~189 slugs live). Subscription-
+                // billed via the user's Cursor plan — usage rows emit $0 and the
+                // dashboard surfaces shadow cost. Default composer-2.5 (the
+                // account's "current" pick); the CLI also proxies Anthropic
+                // (Fable 5 / Sonnet 5 / Opus 4.x thinking), OpenAI (GPT-5.6
+                // Sol, gpt-5.x-codex), xAI (grok-4.5), Google (gemini-3.5-flash),
+                // Moonshot (kimi-k2.7-code) and Z.ai (glm-5.2) SKUs.
                 // The authoritative list is `cursor-agent models`; this seed is
                 // a curated projection (dot/word slugs, no catalog expansion).
-                'default_model'       => 'composer-2.5-fast',
+                'default_model'       => 'composer-2.5',
                 'billing_model'       => 'subscription',
                 'available_models'    => [
                     'auto',
-                    'composer-2.5-fast',
                     'composer-2.5',
+                    'composer-2.5-fast',
+                    'claude-fable-5-thinking-high',
+                    'claude-sonnet-5-thinking-high',
                     'claude-opus-4-8-thinking-high',
                     'claude-opus-4-7-thinking-high',
+                    'gpt-5.6-sol-high',
                     'gpt-5.5-high',
                     'gpt-5.3-codex',
                     'gpt-5.2',
+                    'grok-4.5-xhigh',
+                    'gemini-3.5-flash',
+                    'kimi-k2.7-code',
+                    'glm-5.2-high',
                 ],
                 'process_spec' => new ProcessSpec(
                     binary:           'cursor-agent',
@@ -635,14 +647,18 @@ class EngineCatalog
                 'dispatcher_backends' => ['grok_cli'],
                 'is_cli'              => true,
                 'cli_binary'          => 'grok',
-                // xAI's Grok Build CLI (grok 0.2.8) in headless mode. grok.com
-                // subscription login (~/.grok); the metered xAI API is the
-                // separate `grok` provider type on the superagent backend.
-                // Subscription-billed → $0 usage rows. Default grok-build; the
-                // account-exposed list comes from `grok models`.
-                'default_model'       => 'grok-build',
+                // xAI's Grok Build CLI (grok 0.2.93, verified 2026-07-12) in
+                // headless mode. grok.com subscription login (~/.grok); the
+                // metered xAI API is the separate `grok` provider type on the
+                // superagent backend. Subscription-billed → $0 usage rows.
+                // The Build plan now routes grok-4.5 as the default plus
+                // grok-composer-2.5-fast; grok-build stays listed for older
+                // accounts. The account-exposed list comes from `grok models`.
+                'default_model'       => 'grok-4.5',
                 'billing_model'       => 'subscription',
                 'available_models'    => [
+                    'grok-4.5',
+                    'grok-composer-2.5-fast',
                     'grok-build',
                 ],
                 'process_spec' => new ProcessSpec(

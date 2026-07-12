@@ -120,7 +120,7 @@ class BackendRegistry
             ));
         }
         // Cursor Composer CLI (`cursor-agent`). Subscription engine — owns its
-        // own login (~/.cursor). Default model composer-2.5-fast.
+        // own login (~/.cursor). Default model composer-2.5.
         if ($config['cursor_cli']['enabled'] ?? true) {
             $this->register(new CursorCliBackend(
                 $config['cursor_cli']['binary'] ?? 'cursor-agent',
@@ -130,8 +130,9 @@ class BackendRegistry
             ));
         }
         // Grok Build CLI (`grok`). Subscription engine — grok.com login
-        // (~/.grok). Default model grok-build. Distinct from the metered xAI
-        // API provider routed through the superagent backend.
+        // (~/.grok). Default model grok-4.5 (grok-build on older accounts).
+        // Distinct from the metered xAI API provider routed through the
+        // superagent backend.
         if ($config['grok_cli']['enabled'] ?? true) {
             $this->register(new GrokCliBackend(
                 $config['grok_cli']['binary'] ?? 'grok',

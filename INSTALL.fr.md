@@ -1428,6 +1428,54 @@ défaut reste claude seul. Le nouveau drapeau `--uninstall` annule une
 installation antérieure sans toucher aux skills que vous avez écrites
 vous-même. Rien à configurer ; pas de republication de config.
 
+**1.1.6 — rafraîchissement du catalogue GPT-5.6 + Grok 4.5 ; aucune
+migration ; le pin SDK passe à `^1.1.6`.** Additif partout — aucun changement
+de schéma ; publiez la config seulement si vous voulez la table
+`model_pricing` rafraîchie. Trois choses à savoir :
+
+1. **Les défauts zéro-config du SDK bougent.** `openai-responses` se résout
+   désormais en `gpt-5.6-sol` (était `gpt-5`), `grok` en `grok-4.5` (était
+   `grok-4.3` ; notez que la fenêtre de contexte passe de 1M à 500K sur le
+   nouveau défaut), et `gemini` en `gemini-3.5-flash` (la ligne 2.0 a été
+   retirée en amont le 2026-06-01). Chaque id déjà publié reste joignable en
+   config `model` explicite ; épinglez l'ancien id si vous dépendiez de la
+   fenêtre 1M de grok-4.3.
+
+2. **La table tarifaire est corrigée sur toute la flotte — les tableaux de
+   bord ont besoin de la nouvelle copie.** Nouvelles lignes : GPT-5.6
+   Sol/Terra/Luna (5 $/30 $, 2,50 $/15 $, 1 $/6 $ avec paliers d'entrée en
+   cache), `grok-4.5` 2 $/6 $, `gemini-3.5-flash` 1,50 $/9 $,
+   `gemini-3.1-pro-preview` 2 $/12 $, `gemini-3.1-flash-lite` 0,25 $/1,50 $,
+   `kimi-k2.7-code` 0,95 $/4 $, `glm-5-turbo`/`glm-5v-turbo` 1,20 $/4 $.
+   Corrections : `gpt-5` 5 $/15 $ → **1,25 $/10 $**, sortie
+   `deepseek-v4-flash` 0,55 $ → **0,28 $**, `MiniMax-M3` 0,60 $/2,40 $ →
+   **0,30 $/1,20 $**, `qwen3.7-plus` 0,80 $/2,40 $ → **0,40 $/1,60 $**. Si
+   votre hôte a publié une copie plus ancienne de la config, republiez ou
+   éditez à la main — sinon `CostCalculator` continue d'utiliser les tarifs
+   périmés. Notez que `gemini-3.5-pro` / `gemini-3.5-flash-lite` n'ont
+   jamais été publiés et sont retirés des sélecteurs.
+
+3. **Les surfaces de requête GPT-5.6 / Gemini 3.5 passent par les options de
+   dispatch existantes.** `SuperAgentBackend` transmet désormais
+   `reasoning_mode` (`standard`|`pro`), `reasoning_context`
+   (`auto`|`all_turns`|`current_turn`), `prompt_cache_options` et
+   `thinking_level` (`minimal`…`high`) :
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => 'Prouvez que cet ordonnanceur est sans famine.',
+       'provider_config'  => ['provider' => 'openai-responses'],  // → gpt-5.6-sol
+       'reasoning_effort' => 'max',      // GPT-5.6 gagne none/max
+       'reasoning_mode'   => 'pro',      // Sol Pro
+   ]);
+   ```
+
+   Les quatre sont ignorées silencieusement par les providers qui ne les
+   parlent pas, et le cadran `reasoning_effort` existant est normalisé par
+   génération de modèle côté SDK — une valeur erronée ne provoque jamais de
+   400.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

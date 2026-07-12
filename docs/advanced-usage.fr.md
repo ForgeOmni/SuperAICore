@@ -43,6 +43,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 33. [Pont de skills CLI — `superaicore:sync-cli` + le contrat `SkillLibrary` (1.0.6)](#33-pont-de-skills-cli--superaicoresync-cli--le-contrat-skilllibrary-106)
 34. [Fable 5 & Sonnet 5 — la surface adaptative et le cadran d'effort Anthropic (1.0.11 / SDK 1.1.5)](#34-fable-5--sonnet-5--la-surface-adaptative-et-le-cadran-deffort-anthropic-1011--sdk-115)
 35. [Parité ai-dispatch — envoi par alias, reprise de session, archive des runs (1.1.0)](#35-parité-ai-dispatch--envoi-par-alias-reprise-de-session-archive-des-runs-110)
+36. [GPT-5.6 & Grok 4.5 — les nouvelles surfaces de requête et le rafraîchissement du catalogue (1.1.6 / SDK 1.1.6)](#36-gpt-56--grok-45--les-nouvelles-surfaces-de-requête-et-le-rafraîchissement-du-catalogue-116--sdk-116)
 
 ---
 
@@ -3809,6 +3810,85 @@ $result = $sender->send($route['requested'], $route['source'], $route['candidate
 - `superaicore doctor [--json]` — moteurs + auth, backends enregistrés,
   résolvabilité des alias, fichier de préférences, archive inscriptible, en
   une passe.
+
+---
+
+## 36. GPT-5.6 & Grok 4.5 — les nouvelles surfaces de requête et le rafraîchissement du catalogue (1.1.6 / SDK 1.1.6)
+
+Le SDK 1.1.6 fait atterrir **GPT-5.6** (`gpt-5.6-sol` / `-terra` / `-luna`,
+le nouveau défaut `openai-responses`) et **Grok 4.5** (`grok-4.5`, le nouveau
+défaut `grok`), donne au `GeminiProvider` le contrôle `thinking_level` de la
+génération 3.5, et corrige le catalogue Gemini / DeepSeek / MiniMax / GLM /
+Qwen aux tarifs officiels. SuperAICore transmet les nouvelles options par
+appel via `SuperAgentBackend` et reflète les tarifs corrigés.
+
+### La surface GPT-5.6
+
+```php
+$dispatcher->dispatch([
+    'backend'          => 'superagent',
+    'prompt'           => 'Concevez une file MPMC sans verrou et prouvez-la correcte.',
+    'provider_config'  => ['provider' => 'openai-responses'],  // → gpt-5.6-sol
+    'reasoning_effort' => 'max',       // cadran 5.6 : none…max (minimal retiré)
+    'reasoning_mode'   => 'pro',       // standard | pro (Sol Pro)
+    'reasoning_context'=> 'all_turns', // auto | all_turns | current_turn
+    'prompt_cache_options' => ['ttl' => '24h'],  // cache explicite :
+                                                 // écritures 1,25×, lectures −90 %
+]);
+```
+
+Les valeurs d'effort sont normalisées par génération côté SDK (`gpt-5.6*` :
+`minimal`→`low`, `off`→`none`, `highest`→`max` ; pré-5.6 : `max`/`highest`→
+`xhigh`, `none`/`off`→`minimal`), donc un même point d'appel sert les deux
+générations. Les valeurs `reasoning_mode` invalides sont abandonnées, jamais
+de 400.
+
+### Le cadran Grok 4.5 et l'épinglage de cache
+
+`grok-4.5` raisonne en permanence avec un cadran trois niveaux
+`low`|`medium`|`high` (`max`/`xhigh` se rabattent sur `high` ; `off`
+n'envoie rien — son raisonnement ne peut pas être désactivé). Passer
+`conversation_id` (ou `prompt_cache_key`) dans la config provider émet
+l'en-tête `x-grok-conv-id` pour le routage de cache recommandé par xAI :
+
+```php
+'provider_config' => [
+    'provider'        => 'grok',        // → grok-4.5 (500K ctx)
+    'conversation_id' => 'sess-42',     // → en-tête x-grok-conv-id
+],
+'reasoning_effort' => 'high',
+```
+
+Épinglez `'model' => 'grok-4.3'` si vous dépendiez de la fenêtre 1M de
+l'ancien défaut.
+
+### Le `thinking_level` de la génération Gemini 3.5
+
+`thinking_level` (`minimal`|`low`|`medium`|`high`) remplace `thinkingBudget`
+sur la ligne 3.5 — le SDK émet exactement l'un des deux (les mélanger
+provoque un 400), et le cadran cross-provider `reasoning_effort` s'y mappe
+(`off` supprime `thinkingConfig` ; `max`/`xhigh` → `HIGH`). Transmis par
+`SuperAgentBackend` comme les options Gemini `grounding` / `url_context` —
+ignoré partout ailleurs.
+
+### Notes du rafraîchissement de catalogue
+
+- `gemini-3.5-pro` et `gemini-3.5-flash-lite` n'ont jamais été publiés — le
+  SDK 1.1.6 les a retirés, et le sélecteur du moteur `gemini` de SuperAICore
+  ainsi que `GeminiModelResolver::CATALOG` ont suivi. La famille en
+  production : `gemini-3.5-flash` (1,50 $/9 $, l'alias `gemini`),
+  `gemini-3.1-pro-preview` (2 $/12 $, l'alias `gemini-pro`),
+  `gemini-3.1-flash-lite` (0,25 $/1,50 $).
+- Corrections `model_pricing` sur toute la flotte : `gpt-5` 1,25 $/10 $,
+  sortie `deepseek-v4-flash` 0,28 $ (+0,0028 $ cache-hit), `MiniMax-M3`
+  0,30 $/1,20 $ (lecture cache 0,06 $), `qwen3.7-plus` 0,40 $/1,60 $ ;
+  nouvelles lignes pour GPT-5.6, `grok-4.5` (2 $/6 $), `kimi-k2.7-code`
+  (0,95 $/4 $) et la paire GLM turbo (1,20 $/4 $). Les paliers longue
+  fenêtre (GPT-5.6 >272K, Grok 4.5 >200K, MiniMax >512K, Qwen >256K) ne
+  sont pas modélisés — surchargez à la hausse si c'est votre trafic.
+- Les défauts zéro-config bougent côté SDK : `openai-responses` →
+  `gpt-5.6-sol`, `grok` → `grok-4.5`, `gemini` → `gemini-3.5-flash`. Chaque
+  id déjà publié reste joignable en config explicite.
 
 ---
 

@@ -291,7 +291,9 @@ class ProviderTypeRegistry
             // 1.0.0 — xAI Grok first-class provider (SDK 1.0.8). Routes
             // through the SDK's `GrokProvider` against the OpenAI-compatible
             // endpoint https://api.x.ai/v1 (verified against docs.x.ai).
-            // Default model grok-4.3 (1M context). The SDK reads XAI_API_KEY
+            // Default model grok-4.5 since SDK 1.1.6 (500K context, always-on
+            // three-level reasoning dial; grok-4.3 with its 1M window stays
+            // reachable by id). The SDK reads XAI_API_KEY
             // first and falls back to GROK_API_KEY; the env builder sets the
             // canonical one and aliases the other so hosts that already use
             // either name work unchanged.

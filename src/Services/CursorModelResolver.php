@@ -11,13 +11,18 @@ use Symfony\Component\Process\Process;
  * The `cursor-agent` CLI (Cursor's headless Composer agent) accepts a
  * fixed set of model IDs via `--model` and exposes the authoritative
  * list through `cursor-agent models` (one `slug - Display Name` per line).
- * Account tier decides which rows are routable; the picker here mirrors
- * the public lineup verified 2026-05-28 against cursor-agent 2026.05.28.
+ * Account tier decides which rows are routable; the picker here is a
+ * curated headline subset of the ~189-slug lineup verified 2026-07-12
+ * against cursor-agent 2026.05.28 (the full list adds per-effort and
+ * `-fast` variants of every family — use `liveCatalog()` for those).
  *
- * Cursor's "Composer" model family (`composer-2.5` / `composer-2.5-fast`,
- * the latter the account default) is the headline tier; the CLI also
- * proxies Anthropic (`claude-opus-4-8-thinking-high`) and OpenAI
- * (`gpt-5.x-codex`, `gpt-5.5-high`) SKUs plus the `auto` router.
+ * Cursor's "Composer" model family (`composer-2.5`, the account's
+ * "current" pick; `composer-2.5-fast` alongside) is the headline tier;
+ * the CLI also proxies Anthropic (Fable 5 / Sonnet 5 / Opus 4.x thinking
+ * SKUs — Fable rows are flagged NO ZDR upstream), OpenAI (GPT-5.6
+ * Sol/Terra/Luna, `gpt-5.x-codex`), xAI (`grok-4.5-xhigh`), Google
+ * (`gemini-3.5-flash`), Moonshot (`kimi-k2.7-code`) and Z.ai
+ * (`glm-5.2-high`/`-max`) SKUs plus the `auto` router.
  *
  * Billing is by Cursor subscription (no per-token metering on this
  * channel), so the cost calculator treats `cursor:*` rows as $0 — the
@@ -35,31 +40,50 @@ class CursorModelResolver
      * familiar short name and land on the strongest routable sibling.
      */
     const FAMILIES = [
-        'composer' => 'composer-2.5-fast',
+        'composer' => 'composer-2.5',
         'auto'     => 'auto',
+        'fable'    => 'claude-fable-5-thinking-high',
+        'sonnet'   => 'claude-sonnet-5-thinking-high',
         'opus'     => 'claude-opus-4-8-thinking-high',
-        'gpt'      => 'gpt-5.5-high',
+        'gpt'      => 'gpt-5.6-sol-high',
+        'grok'     => 'grok-4.5-xhigh',
+        'gemini'   => 'gemini-3.5-flash',
+        'kimi'     => 'kimi-k2.7-code',
+        'glm'      => 'glm-5.2-high',
     ];
 
     /**
      * Ordered, user-facing catalog (newest/headline first). Shape mirrors
      * ClaudeModelResolver::catalog() so EngineCatalog renders it uniformly.
+     * Curated subset — the CLI's full list adds per-effort (`-low`…`-max`)
+     * and `-fast` variants of every family; those still pass `resolve()`
+     * untouched and show in `liveCatalog()`.
      */
     const CATALOG = [
         // Auto router
-        ['slug' => 'auto',                              'display_name' => 'Auto',                  'family' => 'auto'],
+        ['slug' => 'auto',                              'display_name' => 'Auto',                     'family' => 'auto'],
         // Cursor Composer (native, subscription-billed)
-        ['slug' => 'composer-2.5-fast',                 'display_name' => 'Composer 2.5 Fast',     'family' => 'composer'],
-        ['slug' => 'composer-2.5',                      'display_name' => 'Composer 2.5',          'family' => 'composer'],
-        // Anthropic (proxied)
-        ['slug' => 'claude-opus-4-8-thinking-high',     'display_name' => 'Opus 4.8 1M Thinking',  'family' => 'opus'],
-        ['slug' => 'claude-opus-4-7-thinking-high',     'display_name' => 'Opus 4.7 1M Thinking',  'family' => 'opus'],
+        ['slug' => 'composer-2.5',                      'display_name' => 'Composer 2.5',             'family' => 'composer'],
+        ['slug' => 'composer-2.5-fast',                 'display_name' => 'Composer 2.5 Fast',        'family' => 'composer'],
+        // Anthropic (proxied; Fable rows are NO ZDR upstream)
+        ['slug' => 'claude-fable-5-thinking-high',      'display_name' => 'Fable 5 1M Thinking',      'family' => 'fable'],
+        ['slug' => 'claude-sonnet-5-thinking-high',     'display_name' => 'Sonnet 5 1M Thinking',     'family' => 'sonnet'],
+        ['slug' => 'claude-opus-4-8-thinking-high',     'display_name' => 'Opus 4.8 1M Thinking',     'family' => 'opus'],
+        ['slug' => 'claude-opus-4-7-thinking-high',     'display_name' => 'Opus 4.7 1M High Thinking','family' => 'opus'],
         // OpenAI (proxied)
-        ['slug' => 'gpt-5.5-high',                      'display_name' => 'GPT-5.5 1M High',       'family' => 'gpt'],
-        ['slug' => 'gpt-5.4-high',                      'display_name' => 'GPT-5.4 1M High',       'family' => 'gpt'],
-        ['slug' => 'gpt-5.3-codex',                     'display_name' => 'Codex 5.3',             'family' => 'gpt'],
-        ['slug' => 'gpt-5.3-codex-high',                'display_name' => 'Codex 5.3 High',        'family' => 'gpt'],
-        ['slug' => 'gpt-5.2',                           'display_name' => 'GPT-5.2',               'family' => 'gpt'],
+        ['slug' => 'gpt-5.6-sol-high',                  'display_name' => 'GPT-5.6 Sol 1M High',      'family' => 'gpt'],
+        ['slug' => 'gpt-5.6-sol-xhigh',                 'display_name' => 'GPT-5.6 Sol 1M Extra High','family' => 'gpt'],
+        ['slug' => 'gpt-5.5-high',                      'display_name' => 'GPT-5.5 1M High',          'family' => 'gpt'],
+        ['slug' => 'gpt-5.3-codex',                     'display_name' => 'Codex 5.3',                'family' => 'gpt'],
+        ['slug' => 'gpt-5.3-codex-high',                'display_name' => 'Codex 5.3 High',           'family' => 'gpt'],
+        ['slug' => 'gpt-5.2',                           'display_name' => 'GPT-5.2',                  'family' => 'gpt'],
+        // xAI / Google / Moonshot / Z.ai (proxied)
+        ['slug' => 'grok-4.5-xhigh',                    'display_name' => 'Cursor Grok 4.5',          'family' => 'grok'],
+        ['slug' => 'gemini-3.5-flash',                  'display_name' => 'Gemini 3.5 Flash',         'family' => 'gemini'],
+        ['slug' => 'gemini-3.1-pro',                    'display_name' => 'Gemini 3.1 Pro',           'family' => 'gemini'],
+        ['slug' => 'kimi-k2.7-code',                    'display_name' => 'Kimi K2.7 Code',           'family' => 'kimi'],
+        ['slug' => 'glm-5.2-high',                      'display_name' => 'GLM 5.2',                  'family' => 'glm'],
+        ['slug' => 'glm-5.2-max',                       'display_name' => 'GLM 5.2 Max',              'family' => 'glm'],
     ];
 
     /**
@@ -68,9 +92,10 @@ class CursorModelResolver
      * the CLI surfaces its own "model not available" error rather than us
      * silently substituting.
      *
-     *   resolve('composer')              → 'composer-2.5-fast'
+     *   resolve('composer')              → 'composer-2.5'
+     *   resolve('fable')                 → 'claude-fable-5-thinking-high'
      *   resolve('opus')                  → 'claude-opus-4-8-thinking-high'
-     *   resolve('composer-2.5')          → 'composer-2.5'   (passthrough)
+     *   resolve('composer-2.5-fast')     → 'composer-2.5-fast' (passthrough)
      *   resolve('claude-opus-4-8[1m]')   → 'claude-opus-4-8-thinking-high' (strip tag + family)
      *   resolve(null)                    → null             (engine default)
      */
@@ -173,8 +198,14 @@ class CursorModelResolver
     private static function familyFromName(string $slug): ?string
     {
         if (str_contains($slug, 'composer')) return 'composer';
+        if (str_contains($slug, 'fable'))    return 'fable';
+        if (str_contains($slug, 'sonnet'))   return 'sonnet';
         if (str_contains($slug, 'opus'))     return 'opus';
         if (str_starts_with($slug, 'gpt'))   return 'gpt';
+        if (str_starts_with($slug, 'grok'))  return 'grok';
+        if (str_starts_with($slug, 'gemini')) return 'gemini';
+        if (str_starts_with($slug, 'kimi'))  return 'kimi';
+        if (str_starts_with($slug, 'glm'))   return 'glm';
         return null;
     }
 }

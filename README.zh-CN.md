@@ -33,6 +33,7 @@
   - [GLM-5.2 原生旗舰波次（1.0.10 / SDK 1.1.2）](#glm-52-原生旗舰波次1010--sdk-112)
   - [Fable 5 与 Sonnet 5 波次（1.0.11 / SDK 1.1.5）](#fable-5-与-sonnet-5-波次1011--sdk-115)
   - [ai-dispatch 对齐波次（1.1.0）](#ai-dispatch-对齐波次110)
+  - [GPT-5.6 + Grok 4.5 目录刷新波次（1.1.6 / SDK 1.1.6）](#gpt-56--grok-45-目录刷新波次116--sdk-116)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -107,6 +108,53 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### GPT-5.6 + Grok 4.5 目录刷新波次（1.1.6 / SDK 1.1.6）
+
+SDK 约束从 `^1.1.5` 移到 `^1.1.6`。SuperAgent 1.1.6 带来 **GPT-5.6**
+（Sol / Terra / Luna —— 新的 `openai-responses` 默认）与 **Grok 4.5**
+（新的 `grok` 默认）及其请求面，并把 Gemini / DeepSeek / MiniMax / GLM /
+Qwen 目录修正为官方价格；SuperAICore 转发新的每次调用选项、把修正后的价格
+镜像进自己的 `model_pricing` 表，并修复 Gemini 选择器漂移
+（`gemini-3.5-pro` / `gemini-3.5-flash-lite` 从未上线）。纯增量、不破坏 ——
+无迁移、无配置变更。
+
+- **转发 GPT-5.6 / Gemini 3.5 请求面** —— `SuperAgentBackend` 现在把
+  `reasoning_mode`（`standard`|`pro`，Sol Pro）、`reasoning_context`
+  （`auto`|`all_turns`|`current_turn`）与 `prompt_cache_options`（显式
+  缓存：写 1.25×，读保持 −90%）转发给 SDK 的 `OpenAIResponsesProvider`，
+  并把 `thinking_level`（`minimal`…`high`，取代 `thinkingBudget` 的控制项）
+  转发给 `GeminiProvider`。四个选项在不支持的 provider 上都会被静默忽略。
+  既有的 `reasoning_effort` 档位在 GPT-5.6 上获得 `none`/`max`、在
+  Grok 4.5 上获得常开三级档 —— 均在 SDK 侧完成，SuperAICore 无需改动。
+- **新模型定价** —— `gpt-5.6-sol` 每 1M **$5 / 缓存 $0.50 / $30**、
+  `gpt-5.6-terra` **$2.50 / $0.25 / $15**、`gpt-5.6-luna`
+  **$1 / $0.10 / $6**（均 1.05M 上下文）；`grok-4.5` **$2 / 缓存 $0.50 /
+  $6**（500K 上下文，新 `grok` 默认；`grok-4.3` 仍可按 id 调用）；
+  `gemini-3.5-flash`（真正的旗舰）**$1.50 / 缓存 $0.15 / $9**；
+  `gemini-3.1-pro-preview` $2/$12；`gemini-3.1-flash-lite` $0.25/$1.50；
+  `kimi-k2.7-code` $0.95 / 缓存命中 $0.19 / $4（`-highspeed` 为 2×）；
+  `glm-5-turbo` / `glm-5v-turbo` $1.20/$4。
+- **镜像全线价格修正** —— `gpt-5` 修正为官方 **$1.25/$10**（原为 $5/$15
+  估价）、`deepseek-v4-flash` 输出 **$0.55 → $0.28**（+$0.0028 缓存命中
+  档）、`MiniMax-M3` 改为永久分层价 **$0.30/$1.20**（缓存读 $0.06）、
+  `qwen3.7-plus` 改为 GA 价 **$0.40/$1.60**。若宿主还带着旧配置副本，
+  请重新发布配置。
+- **Gemini 目录修正回现实** —— `gemini-3.5-pro` 与 `gemini-3.5-flash-lite`
+  从未公开上线，已从 `gemini` 引擎选择器移除；`gemini-3.5-flash` /
+  `gemini-3.1-pro-preview` / `gemini-3.1-flash-lite` 进入 `EngineCatalog`
+  与 `GeminiModelResolver`。SDK 零配置默认迁移（`openai-responses` →
+  `gpt-5.6-sol`、`grok` → `grok-4.5`、`gemini` → `gemini-3.5-flash`）；
+  所有已上线过的 id 都仍可显式配置调用。
+- **订阅 CLI 目录实测刷新（2026-07-12）** —— Grok Build 计划（grok CLI
+  0.2.93）现以 `grok-4.5` 为订阅默认并新增 `grok-composer-2.5-fast`
+  （`grok-build` 保留为遗留行）；Cursor Composer 阵容（约 189 个 slug）
+  以 `composer-2.5` 为 "current"，并代理 Fable 5 / Sonnet 5 / GPT-5.6
+  Sol / Grok 4.5 / Gemini 3.5 Flash / Kimi K2.7 Code / GLM 5.2 ——
+  `GrokModelResolver`、`CursorModelResolver`（新增
+  `fable`/`sonnet`/`grok`/`gemini`/`kimi`/`glm` 别名）、引擎种子与
+  `grok:*`/`cursor:*` $0 订阅行全部跟进。ZCode（Z.ai 桌面 IDE）已评估
+  但跳过 —— 没有可集成的无头 CLI 面。
 
 ### ai-dispatch 对齐波次（1.1.0）
 

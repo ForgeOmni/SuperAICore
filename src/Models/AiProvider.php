@@ -83,10 +83,12 @@ class AiProvider extends Model
     const TYPE_QWEN_ANTHROPIC    = 'qwen-anthropic';
     // xAI Grok first-class provider (SDK 1.0.8+). Routes through the SDK's
     // `GrokProvider` against xAI's OpenAI-compatible endpoint at
-    // https://api.x.ai/v1. Default model `grok-4.3` (1M context). API key
-    // is read from XAI_API_KEY (GROK_API_KEY accepted as a fallback). The
-    // flagship models reason natively; only `grok-3-mini` honours the
-    // `reasoning_effort` dial, gated SDK-side.
+    // https://api.x.ai/v1. Default model `grok-4.5` since SDK 1.1.6 (500K
+    // context; grok-4.3 and its 1M window stay reachable by id). API key
+    // is read from XAI_API_KEY (GROK_API_KEY accepted as a fallback).
+    // grok-4.5 carries an always-on three-level `reasoning_effort` dial
+    // (low|medium|high, gated SDK-side); grok-3-mini keeps the two-level
+    // mini mapping; grok-4.3/4/3 send no dial.
     const TYPE_GROK              = 'grok';
 
     const TYPES = [

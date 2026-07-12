@@ -4,6 +4,84 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.6] — 2026-07-12
+
+**SuperAgent SDK bumped to 1.1.6 — GPT-5.6 (Sol/Terra/Luna) and Grok 4.5
+land with their request surfaces, and the fleet-wide catalog refresh is
+mirrored into SuperAICore's own pricing table and pickers.** SDK 1.1.6 makes
+`gpt-5.6-sol` the `openai-responses` default, `grok-4.5` the `grok` default,
+and `gemini-3.5-flash` the `gemini` default, and corrects Gemini / DeepSeek /
+MiniMax / GLM / Qwen pricing to official vendor rates. **Additive and
+non-breaking** — SDK pin `^1.1.5` → `^1.1.6`, no migrations, no config
+changes for existing callers; every previously shipped model id stays
+reachable.
+
+### Added
+
+- **SDK 1.1.6 per-call options forwarded** (`SuperAgentBackend::buildPerCallOptions`) —
+  `reasoning_mode` (`standard`|`pro`, GPT-5.6 Sol Pro), `reasoning_context`
+  (`auto`|`all_turns`|`current_turn`), `prompt_cache_options` (explicit
+  prompt caching) for the SDK's `OpenAIResponsesProvider`, and
+  `thinking_level` (`minimal`…`high`) for `GeminiProvider`'s 3.5-generation
+  control. String values are normalized to lowercase like `reasoning_effort`;
+  empty values are not forwarded; unsupported providers ignore them silently.
+  Tests in `SuperAgentBackendTest`.
+- **New `model_pricing` rows** (`config/super-ai-core.php`) — GPT-5.6
+  `gpt-5.6-sol` $5/$30 (cached input $0.50), `gpt-5.6-terra` $2.50/$15
+  ($0.25), `gpt-5.6-luna` $1/$6 ($0.10); `grok-4.5` $2/$6 (cached $0.50);
+  `gemini-3.5-flash` $1.50/$9 (cache-read $0.15), `gemini-3.1-pro-preview`
+  $2/$12, `gemini-3.1-flash-lite` $0.25/$1.50; `kimi-k2.7-code` $0.95/$4
+  (cache-hit $0.19) + `kimi-k2.7-code-highspeed` at 2×; `glm-5-turbo` /
+  `glm-5v-turbo` $1.20/$4. Long-context surcharges (GPT-5.6 beyond 272K,
+  Grok 4.5 beyond 200K, MiniMax beyond 512K, Qwen beyond 256K) are noted in
+  comments but not modelled — hosts with long-context traffic should
+  override upward. Pricing tests in `CostCalculatorTest`.
+
+### Changed
+
+- **SDK pin `forgeomni/superagent: ^1.1.5` → `^1.1.6`** (`composer.json`).
+- **Fleet-wide pricing corrections mirrored** — `gpt-5` to the official
+  $1.25/$10 (was a $5/$15 pre-release estimate), `deepseek-v4-flash` output
+  $0.55 → $0.28 with a $0.0028 cache-hit tier (the retiring `deepseek-chat`
+  alias row follows), `MiniMax-M3` to the permanent tiered $0.30/$1.20 with
+  $0.06 cache-read (the launch promo became the standard price),
+  `qwen3.7-plus` to the GA $0.40/$1.60, and the retired
+  `gemini-3-pro-preview` back to its historical $2/$15 (the $2/$12 rate
+  belongs to its successor `gemini-3.1-pro-preview`).
+- **Gemini catalog corrected to reality** — `gemini-3.5-pro` and
+  `gemini-3.5-flash-lite` (never publicly shipped; removed in SDK 1.1.6)
+  dropped from the `gemini` engine's `available_models`; `gemini-3.5-flash`
+  (the shipping flagship), `gemini-3.1-pro-preview` (owns the `gemini-pro`
+  alias) and `gemini-3.1-flash-lite` seeded into `EngineCatalog` and
+  `GeminiModelResolver::CATALOG`. The resolver's `pro`/`flash`/`flash-lite`
+  aliases stay on the 2.5 line — the last generation gemini-cli verifiably
+  routes.
+- **Grok default-model references updated** — `AiProvider::TYPE_GROK`,
+  `ProviderTypeRegistry`, `GrokModelResolver` and `GrokCliBackend` docs now
+  state the SDK 1.1.6 zero-config default `grok-4.5` (500K context,
+  always-on three-level reasoning dial, `x-grok-conv-id` cache pinning);
+  `grok-4.3` and its 1M window stay reachable by id.
+- **Grok Build CLI catalog refreshed to grok 0.2.93** (verified live
+  2026-07-12) — the grok.com Build plan now routes `grok-4.5` as the
+  subscription default plus `grok-composer-2.5-fast`; `GrokModelResolver`
+  (new `composer` family, `grok-build` kept as a legacy row), the
+  `EngineCatalog` grok seed (`default_model` → `grok-4.5`) and the `grok:*`
+  subscription pricing rows follow. Envelope fallback labels in
+  `GrokCliBackend` move off `grok-build`.
+- **Cursor Composer CLI catalog refreshed to the 2026-07 lineup** (verified
+  live against `cursor-agent models`, ~189 slugs) — `composer-2.5` is the
+  account's "current" pick (new engine default); `CursorModelResolver`
+  gains `fable` / `sonnet` / `grok` / `gemini` / `kimi` / `glm` family
+  aliases targeting the newly proxied `claude-fable-5-thinking-high`,
+  `claude-sonnet-5-thinking-high`, `grok-4.5-xhigh`, `gemini-3.5-flash`,
+  `kimi-k2.7-code` and `glm-5.2-high` SKUs, plus GPT-5.6 Sol rows
+  (`gpt-5.6-sol-high`/`-xhigh`); the `EngineCatalog` cursor seed and
+  `cursor:*` subscription pricing rows follow. Full per-effort/`-fast`
+  variants keep resolving via passthrough + `liveCatalog()`.
+- **ZCode checked, not integrated** — Z.ai's ZCode (zcode.z.ai) is a
+  desktop-only agentic IDE with no documented headless CLI surface, so no
+  engine backend is added; revisit if a CLI ships.
+
 ## [1.1.5] — 2026-07-08
 
 **Delegate-in SKILL coverage catch-up — `skill:install-dispatch` reaches all

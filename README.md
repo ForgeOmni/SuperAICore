@@ -33,6 +33,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [GLM-5.2 native flagship wave (1.0.10 / SDK 1.1.2)](#glm-52-native-flagship-wave-1010--sdk-112)
   - [Fable 5 & Sonnet 5 wave (1.0.11 / SDK 1.1.5)](#fable-5--sonnet-5-wave-1011--sdk-115)
   - [ai-dispatch parity wave (1.1.0)](#ai-dispatch-parity-wave-110)
+  - [GPT-5.6 + Grok 4.5 catalog refresh wave (1.1.6 / SDK 1.1.6)](#gpt-56--grok-45-catalog-refresh-wave-116--sdk-116)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -107,6 +108,58 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### GPT-5.6 + Grok 4.5 catalog refresh wave (1.1.6 / SDK 1.1.6)
+
+SDK pin moves `^1.1.5` → `^1.1.6`. SuperAgent 1.1.6 lands **GPT-5.6**
+(Sol / Terra / Luna — the new `openai-responses` default) and **Grok 4.5**
+(the new `grok` default) with their request surfaces, and corrects the
+Gemini / DeepSeek / MiniMax / GLM / Qwen catalog to official rates;
+SuperAICore forwards the new per-call options, mirrors the corrected rates
+into its own `model_pricing` table, and fixes the Gemini picker drift
+(`gemini-3.5-pro` / `gemini-3.5-flash-lite` never shipped). Additive and
+non-breaking — no migrations, no config changes.
+
+- **GPT-5.6 / Gemini 3.5 request surface forwarded** — `SuperAgentBackend`
+  now forwards `reasoning_mode` (`standard`|`pro` — Sol Pro),
+  `reasoning_context` (`auto`|`all_turns`|`current_turn`) and
+  `prompt_cache_options` (explicit caching: writes 1.25×, reads keep −90%)
+  to the SDK's `OpenAIResponsesProvider`, plus `thinking_level`
+  (`minimal`…`high`, the control that replaces `thinkingBudget`) to
+  `GeminiProvider`. All four are silently ignored by providers that don't
+  speak them. The existing `reasoning_effort` dial gains `none`/`max` on
+  GPT-5.6 and the always-on three-level dial on Grok 4.5 — SDK-side, no
+  SuperAICore change needed.
+- **New models priced** — `gpt-5.6-sol` **$5 / $0.50 cached / $30** per 1M,
+  `gpt-5.6-terra` **$2.50 / $0.25 / $15**, `gpt-5.6-luna` **$1 / $0.10 / $6**
+  (all 1.05M context); `grok-4.5` **$2 / $0.50 cached / $6** (500K context,
+  the new `grok` default; `grok-4.3` stays reachable); `gemini-3.5-flash`
+  (the actual flagship) **$1.50 / $0.15 cached / $9**;
+  `gemini-3.1-pro-preview` $2/$12; `gemini-3.1-flash-lite` $0.25/$1.50;
+  `kimi-k2.7-code` $0.95 / $0.19 cache-hit / $4 (+`-highspeed` at 2×);
+  `glm-5-turbo` / `glm-5v-turbo` $1.20/$4.
+- **Fleet-wide corrections mirrored** — `gpt-5` to its official **$1.25/$10**
+  (was a $5/$15 estimate), `deepseek-v4-flash` output **$0.55 → $0.28**
+  (+$0.0028 cache-hit), `MiniMax-M3` to the permanent tiered
+  **$0.30/$1.20** (cache-read $0.06), `qwen3.7-plus` to the GA **$0.40/$1.60**.
+  Re-publish the config if your host carries an older copy.
+- **Gemini catalog corrected to reality** — `gemini-3.5-pro` and
+  `gemini-3.5-flash-lite` never publicly shipped and are removed from the
+  `gemini` engine picker; `gemini-3.5-flash` / `gemini-3.1-pro-preview` /
+  `gemini-3.1-flash-lite` land in `EngineCatalog` and `GeminiModelResolver`.
+  Zero-config SDK defaults move (`openai-responses` → `gpt-5.6-sol`, `grok` →
+  `grok-4.5`, `gemini` → `gemini-3.5-flash`); every previously shipped id
+  stays reachable by explicit config.
+- **Subscription CLI catalogs re-verified live (2026-07-12)** — the Grok
+  Build plan (grok CLI 0.2.93) now routes `grok-4.5` as the subscription
+  default plus `grok-composer-2.5-fast` (`grok-build` kept as a legacy row),
+  and Cursor Composer's lineup (~189 slugs) makes `composer-2.5` the
+  "current" pick and proxies Fable 5 / Sonnet 5 / GPT-5.6 Sol / Grok 4.5 /
+  Gemini 3.5 Flash / Kimi K2.7 Code / GLM 5.2 — `GrokModelResolver`,
+  `CursorModelResolver` (new `fable`/`sonnet`/`grok`/`gemini`/`kimi`/`glm`
+  aliases), the engine seeds and the `grok:*`/`cursor:*` $0 subscription
+  rows all follow. ZCode (Z.ai's desktop IDE) was evaluated and skipped —
+  no headless CLI surface to integrate.
 
 ### ai-dispatch parity wave (1.1.0)
 

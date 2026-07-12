@@ -9,11 +9,15 @@ final class GrokModelResolverTest extends TestCase
 {
     public function test_family_alias_resolves(): void
     {
-        $this->assertSame('grok-build', GrokModelResolver::resolve('grok'));
+        // grok CLI 0.2.93 — the Build plan routes grok-4.5 as the default.
+        $this->assertSame('grok-4.5', GrokModelResolver::resolve('grok'));
+        $this->assertSame('grok-composer-2.5-fast', GrokModelResolver::resolve('composer'));
     }
 
     public function test_known_slug_passes_through(): void
     {
+        $this->assertSame('grok-4.5', GrokModelResolver::resolve('grok-4.5'));
+        // Legacy single-model lineup stays routable for older accounts.
         $this->assertSame('grok-build', GrokModelResolver::resolve('grok-build'));
     }
 
@@ -33,8 +37,10 @@ final class GrokModelResolverTest extends TestCase
     public function test_catalog_and_default(): void
     {
         $this->assertNotEmpty(GrokModelResolver::catalog());
-        $this->assertSame('grok-build', GrokModelResolver::defaultFor('grok'));
+        $this->assertSame('grok-4.5', GrokModelResolver::defaultFor('grok'));
         $this->assertContains('grok', GrokModelResolver::families());
-        $this->assertSame('Grok Build', GrokModelResolver::displayName('grok-build'));
+        $this->assertContains('composer', GrokModelResolver::families());
+        $this->assertSame('Grok 4.5', GrokModelResolver::displayName('grok-4.5'));
+        $this->assertSame('Grok Build (legacy)', GrokModelResolver::displayName('grok-build'));
     }
 }

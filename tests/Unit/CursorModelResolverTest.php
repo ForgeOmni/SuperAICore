@@ -9,16 +9,29 @@ final class CursorModelResolverTest extends TestCase
 {
     public function test_family_aliases_resolve_to_concrete_ids(): void
     {
-        $this->assertSame('composer-2.5-fast', CursorModelResolver::resolve('composer'));
+        // Lineup verified 2026-07-12: composer-2.5 is the account's
+        // "current" pick; GPT family lands on the newest 5.6 Sol tier.
+        $this->assertSame('composer-2.5', CursorModelResolver::resolve('composer'));
         $this->assertSame('claude-opus-4-8-thinking-high', CursorModelResolver::resolve('opus'));
-        $this->assertSame('gpt-5.5-high', CursorModelResolver::resolve('gpt'));
+        $this->assertSame('gpt-5.6-sol-high', CursorModelResolver::resolve('gpt'));
         $this->assertSame('auto', CursorModelResolver::resolve('auto'));
+    }
+
+    public function test_new_proxied_family_aliases_resolve(): void
+    {
+        $this->assertSame('claude-fable-5-thinking-high', CursorModelResolver::resolve('fable'));
+        $this->assertSame('claude-sonnet-5-thinking-high', CursorModelResolver::resolve('sonnet'));
+        $this->assertSame('grok-4.5-xhigh', CursorModelResolver::resolve('grok'));
+        $this->assertSame('gemini-3.5-flash', CursorModelResolver::resolve('gemini'));
+        $this->assertSame('kimi-k2.7-code', CursorModelResolver::resolve('kimi'));
+        $this->assertSame('glm-5.2-high', CursorModelResolver::resolve('glm'));
     }
 
     public function test_known_slugs_pass_through(): void
     {
-        $this->assertSame('composer-2.5', CursorModelResolver::resolve('composer-2.5'));
+        $this->assertSame('composer-2.5-fast', CursorModelResolver::resolve('composer-2.5-fast'));
         $this->assertSame('gpt-5.3-codex', CursorModelResolver::resolve('gpt-5.3-codex'));
+        $this->assertSame('glm-5.2-max', CursorModelResolver::resolve('glm-5.2-max'));
     }
 
     public function test_claude_context_tag_and_date_stamp_map_to_thinking_sku(): void
@@ -43,8 +56,10 @@ final class CursorModelResolverTest extends TestCase
     public function test_catalog_and_default(): void
     {
         $this->assertNotEmpty(CursorModelResolver::catalog());
-        $this->assertSame('composer-2.5-fast', CursorModelResolver::defaultFor('composer'));
+        $this->assertSame('composer-2.5', CursorModelResolver::defaultFor('composer'));
         $this->assertContains('composer', CursorModelResolver::families());
+        $this->assertContains('fable', CursorModelResolver::families());
         $this->assertSame('Composer 2.5', CursorModelResolver::displayName('composer-2.5'));
+        $this->assertSame('Kimi K2.7 Code', CursorModelResolver::displayName('kimi-k2.7-code'));
     }
 }

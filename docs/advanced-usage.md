@@ -43,6 +43,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 33. [CLI skill bridge — `superaicore:sync-cli` + the `SkillLibrary` contract (1.0.6)](#33-cli-skill-bridge--superaicoresync-cli--the-skilllibrary-contract-106)
 34. [Fable 5 & Sonnet 5 — the adaptive surface and the Anthropic effort dial (1.0.11 / SDK 1.1.5)](#34-fable-5--sonnet-5--the-adaptive-surface-and-the-anthropic-effort-dial-1011--sdk-115)
 35. [ai-dispatch parity — alias send, session resume, run archive (1.1.0)](#35-ai-dispatch-parity--alias-send-session-resume-run-archive-110)
+36. [GPT-5.6 & Grok 4.5 — the new request surfaces and the catalog refresh (1.1.6 / SDK 1.1.6)](#36-gpt-56--grok-45--the-new-request-surfaces-and-the-catalog-refresh-116--sdk-116)
 
 ---
 
@@ -3807,6 +3808,82 @@ $result = $sender->send($route['requested'], $route['source'], $route['candidate
   own skills.
 - `superaicore doctor [--json]` — engines + auth, registered backends, alias
   resolvability, preferences file, run-store writability in one pass.
+
+---
+
+## 36. GPT-5.6 & Grok 4.5 — the new request surfaces and the catalog refresh (1.1.6 / SDK 1.1.6)
+
+SDK 1.1.6 lands **GPT-5.6** (`gpt-5.6-sol` / `-terra` / `-luna`, the new
+`openai-responses` default) and **Grok 4.5** (`grok-4.5`, the new `grok`
+default), gives `GeminiProvider` the 3.5-generation `thinking_level` control,
+and corrects the Gemini / DeepSeek / MiniMax / GLM / Qwen catalog to official
+vendor rates. SuperAICore forwards the new per-call options through
+`SuperAgentBackend` and mirrors the corrected pricing.
+
+### The GPT-5.6 surface
+
+```php
+$dispatcher->dispatch([
+    'backend'          => 'superagent',
+    'prompt'           => 'Design a lock-free MPMC queue and prove it correct.',
+    'provider_config'  => ['provider' => 'openai-responses'],  // → gpt-5.6-sol
+    'reasoning_effort' => 'max',       // 5.6 dial: none…max (minimal retired)
+    'reasoning_mode'   => 'pro',       // standard | pro (Sol Pro)
+    'reasoning_context'=> 'all_turns', // auto | all_turns | current_turn
+    'prompt_cache_options' => ['ttl' => '24h'],  // explicit caching:
+                                                 // writes 1.25×, reads −90%
+]);
+```
+
+Effort values are normalized per model generation SDK-side (`gpt-5.6*`:
+`minimal`→`low`, `off`→`none`, `highest`→`max`; pre-5.6: `max`/`highest`→
+`xhigh`, `none`/`off`→`minimal`), so one call site can serve both
+generations. Invalid `reasoning_mode` values are dropped, never 400.
+
+### The Grok 4.5 dial and cache pinning
+
+`grok-4.5` reasons always-on with a three-level `low`|`medium`|`high` dial
+(`max`/`xhigh` clamp to `high`; `off` sends nothing — its reasoning can't be
+disabled). Passing `conversation_id` (or `prompt_cache_key`) in the provider
+config emits the `x-grok-conv-id` header for xAI's recommended cache routing:
+
+```php
+'provider_config' => [
+    'provider'        => 'grok',        // → grok-4.5 (500K ctx)
+    'conversation_id' => 'sess-42',     // → x-grok-conv-id header
+],
+'reasoning_effort' => 'high',
+```
+
+Pin `'model' => 'grok-4.3'` if you depended on the 1M window of the previous
+default.
+
+### The Gemini 3.5-generation `thinking_level`
+
+`thinking_level` (`minimal`|`low`|`medium`|`high`) replaces `thinkingBudget`
+on the 3.5 line — the SDK emits exactly one of the two (mixing 400s), and the
+cross-provider `reasoning_effort` dial maps onto it (`off` suppresses
+`thinkingConfig`; `max`/`xhigh` → `HIGH`). Forwarded by `SuperAgentBackend`
+like the Gemini `grounding` / `url_context` options — ignored everywhere
+else.
+
+### Catalog refresh notes
+
+- `gemini-3.5-pro` and `gemini-3.5-flash-lite` never publicly shipped — SDK
+  1.1.6 removed them, and SuperAICore's `gemini` engine picker and
+  `GeminiModelResolver::CATALOG` followed. The shipping family:
+  `gemini-3.5-flash` ($1.50/$9, the `gemini` alias), `gemini-3.1-pro-preview`
+  ($2/$12, the `gemini-pro` alias), `gemini-3.1-flash-lite` ($0.25/$1.50).
+- Fleet-wide `model_pricing` corrections: `gpt-5` $1.25/$10,
+  `deepseek-v4-flash` output $0.28 (+$0.0028 cache-hit), `MiniMax-M3`
+  $0.30/$1.20 (cache-read $0.06), `qwen3.7-plus` $0.40/$1.60; new rows for
+  GPT-5.6, `grok-4.5` ($2/$6), `kimi-k2.7-code` ($0.95/$4) and the GLM turbo
+  pair ($1.20/$4). Long-context surcharge tiers (GPT-5.6 >272K, Grok 4.5
+  >200K, MiniMax >512K, Qwen >256K) are not modelled — override upward if
+  that's your traffic.
+- Zero-config defaults moved SDK-side: `openai-responses` → `gpt-5.6-sol`,
+  `grok` → `grok-4.5`, `gemini` → `gemini-3.5-flash`. Every previously
+  shipped id stays reachable by explicit config.
 
 ---
 

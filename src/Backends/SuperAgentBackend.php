@@ -497,6 +497,31 @@ class SuperAgentBackend implements Backend
             $perCall['url_context'] = $options['url_context'];
         }
 
+        // SDK 1.1.6 — GPT-5.6 request surface (OpenAIResponsesProvider):
+        //   - reasoning_mode: 'standard'|'pro' → reasoning.mode (Sol Pro);
+        //     invalid values are dropped by the provider.
+        //   - reasoning_context: 'auto'|'all_turns'|'current_turn' →
+        //     reasoning.context.
+        //   - prompt_cache_options: array → explicit prompt caching (writes
+        //     1.25×, reads keep −90%).
+        // And the Gemini 3.5-generation dial (GeminiProvider):
+        //   - thinking_level: 'minimal'|'low'|'medium'|'high' — replaces
+        //     thinkingBudget; the provider emits exactly one of the two.
+        // All four are read straight off Agent options and silently ignored
+        // by providers that don't speak them, so forwarding is safe.
+        if (isset($options['reasoning_mode']) && is_string($options['reasoning_mode']) && $options['reasoning_mode'] !== '') {
+            $perCall['reasoning_mode'] = strtolower(trim($options['reasoning_mode']));
+        }
+        if (isset($options['reasoning_context']) && is_string($options['reasoning_context']) && $options['reasoning_context'] !== '') {
+            $perCall['reasoning_context'] = strtolower(trim($options['reasoning_context']));
+        }
+        if (isset($options['prompt_cache_options']) && is_array($options['prompt_cache_options']) && $options['prompt_cache_options'] !== []) {
+            $perCall['prompt_cache_options'] = $options['prompt_cache_options'];
+        }
+        if (isset($options['thinking_level']) && is_string($options['thinking_level']) && $options['thinking_level'] !== '') {
+            $perCall['thinking_level'] = strtolower(trim($options['thinking_level']));
+        }
+
         return $perCall;
     }
 

@@ -261,6 +261,45 @@ final class SuperAgentBackendTest extends TestCase
         $this->assertArrayNotHasKey('traceparent', $b->lastRunOptions);
     }
 
+    public function test_sdk_116_request_surface_options_are_forwarded(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            // GPT-5.6 surface (OpenAIResponsesProvider) — normalized to
+            // lowercase like reasoning_effort.
+            'reasoning_mode'       => 'Pro',
+            'reasoning_context'    => 'ALL_TURNS',
+            'prompt_cache_options' => ['ttl' => '24h'],
+            // Gemini 3.5-generation dial (GeminiProvider).
+            'thinking_level'       => 'High',
+        ]);
+
+        $this->assertSame('pro', $b->lastRunOptions['reasoning_mode']);
+        $this->assertSame('all_turns', $b->lastRunOptions['reasoning_context']);
+        $this->assertSame(['ttl' => '24h'], $b->lastRunOptions['prompt_cache_options']);
+        $this->assertSame('high', $b->lastRunOptions['thinking_level']);
+    }
+
+    public function test_sdk_116_request_surface_options_absent_when_not_given(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'reasoning_mode'       => '',
+            'prompt_cache_options' => [],
+        ]);
+
+        $this->assertArrayNotHasKey('reasoning_mode', $b->lastRunOptions);
+        $this->assertArrayNotHasKey('reasoning_context', $b->lastRunOptions);
+        $this->assertArrayNotHasKey('prompt_cache_options', $b->lastRunOptions);
+        $this->assertArrayNotHasKey('thinking_level', $b->lastRunOptions);
+    }
+
     public function test_classified_provider_exception_returns_null_with_classification(): void
     {
         TestSuperAgentProvider::$throw = new \SuperAgent\Exceptions\Provider\ContextWindowExceededException(

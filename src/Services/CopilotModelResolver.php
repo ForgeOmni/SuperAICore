@@ -36,10 +36,10 @@ class CopilotModelResolver
         'haiku'  => 'claude-haiku-4.5',
         // OpenAI — copilot ships its own gpt-5 lineup.
         'gpt'    => 'gpt-5.1',
-        // Gemini — SuperAgent SDK 1.0.5 added gemini-3.5-pro routing; copilot
-        // catalog still surfaces the 3-pro-preview, which we keep as the
-        // family default for now. Upgrade to 'gemini-3.5-pro' once copilot
-        // gateways accept it.
+        // Gemini — copilot's catalog surfaces the 3-pro-preview, which we
+        // keep as the family default. Note gemini-3.5-pro never publicly
+        // shipped (SDK 1.1.6 catalog correction); the live API flagship is
+        // gemini-3.5-flash. Upgrade once copilot gateways route a newer slug.
         'gemini' => 'gemini-3-pro-preview',
     ];
 

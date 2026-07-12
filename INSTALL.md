@@ -1390,6 +1390,49 @@ all` covers all six agents in one pass. The default stays claude-only, and
 the new `--uninstall` flag reverses a prior install without touching skills
 you authored yourself. Nothing to configure; no config re-publish needed.
 
+**1.1.6 — GPT-5.6 + Grok 4.5 catalog refresh; no migration; SDK pin
+moves to `^1.1.6`.** Additive across the board — no schema changes; publish
+the config only if you want the refreshed `model_pricing` table. Three things
+worth knowing:
+
+1. **Zero-config SDK defaults moved.** `openai-responses` now resolves to
+   `gpt-5.6-sol` (was `gpt-5`), `grok` to `grok-4.5` (was `grok-4.3`; note
+   the context window shrinks 1M → 500K on the new default), and `gemini` to
+   `gemini-3.5-flash` (the 2.0 line was retired upstream 2026-06-01). Every
+   previously shipped id stays reachable by explicit `model` config; pin the
+   old id if you depended on grok-4.3's 1M window.
+
+2. **The pricing table was corrected fleet-wide — dashboards need the new
+   copy.** New rows: GPT-5.6 Sol/Terra/Luna ($5/$30, $2.50/$15, $1/$6 with
+   cached-input tiers), `grok-4.5` $2/$6, `gemini-3.5-flash` $1.50/$9,
+   `gemini-3.1-pro-preview` $2/$12, `gemini-3.1-flash-lite` $0.25/$1.50,
+   `kimi-k2.7-code` $0.95/$4, `glm-5-turbo`/`glm-5v-turbo` $1.20/$4.
+   Corrections: `gpt-5` $5/$15 → **$1.25/$10**, `deepseek-v4-flash` output
+   $0.55 → **$0.28**, `MiniMax-M3` $0.60/$2.40 → **$0.30/$1.20**,
+   `qwen3.7-plus` $0.80/$2.40 → **$0.40/$1.60**. If your host published an
+   older config copy, re-publish or hand-edit — otherwise `CostCalculator`
+   keeps using the stale rates. Note `gemini-3.5-pro` / `gemini-3.5-flash-lite`
+   never shipped and were removed from the pickers.
+
+3. **The GPT-5.6 / Gemini 3.5 request surfaces route through the existing
+   dispatch options.** `SuperAgentBackend` now forwards `reasoning_mode`
+   (`standard`|`pro`), `reasoning_context` (`auto`|`all_turns`|`current_turn`),
+   `prompt_cache_options` and `thinking_level` (`minimal`…`high`):
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => 'Prove this scheduler is starvation-free.',
+       'provider_config'  => ['provider' => 'openai-responses'],  // → gpt-5.6-sol
+       'reasoning_effort' => 'max',      // GPT-5.6 gains none/max
+       'reasoning_mode'   => 'pro',      // Sol Pro
+   ]);
+   ```
+
+   All four are ignored silently by providers that don't speak them, and the
+   existing `reasoning_effort` dial gets normalized per model generation
+   SDK-side — a stray value never 400s.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

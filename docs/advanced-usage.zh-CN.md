@@ -43,6 +43,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 33. [CLI skill 桥接 —— `superaicore:sync-cli` + `SkillLibrary` contract（1.0.6）](#33-cli-skill-桥接--superaicoresync-cli--skilllibrary-contract106)
 34. [Fable 5 与 Sonnet 5 —— 自适应请求面与 Anthropic effort 档位（1.0.11 / SDK 1.1.5）](#34-fable-5-与-sonnet-5--自适应请求面与-anthropic-effort-档位1011--sdk-115)
 35. [ai-dispatch 对齐 —— 短名派单、会话续聊、运行存档（1.1.0）](#35-ai-dispatch-对齐--短名派单会话续聊运行存档110)
+36. [GPT-5.6 与 Grok 4.5 —— 新请求面与目录刷新（1.1.6 / SDK 1.1.6）](#36-gpt-56-与-grok-45--新请求面与目录刷新116--sdk-116)
 
 ---
 
@@ -3616,6 +3617,78 @@ $result = $sender->send($route['requested'], $route['source'], $route['candidate
   `--uninstall` 只移除此前安装的内容，绝不碰你自己的技能。
 - `superaicore doctor [--json]` —— 引擎 + 认证、已注册 backend、别名可解析
   性、偏好文件、运行存档可写性，一次跑完。
+
+---
+
+## 36. GPT-5.6 与 Grok 4.5 —— 新请求面与目录刷新（1.1.6 / SDK 1.1.6）
+
+SDK 1.1.6 带来 **GPT-5.6**（`gpt-5.6-sol` / `-terra` / `-luna`，新的
+`openai-responses` 默认）与 **Grok 4.5**（`grok-4.5`，新的 `grok` 默认），
+给 `GeminiProvider` 加上 3.5 代的 `thinking_level` 控制项，并把 Gemini /
+DeepSeek / MiniMax / GLM / Qwen 目录修正为官方价格。SuperAICore 通过
+`SuperAgentBackend` 转发新的每次调用选项，并镜像修正后的定价。
+
+### GPT-5.6 请求面
+
+```php
+$dispatcher->dispatch([
+    'backend'          => 'superagent',
+    'prompt'           => '设计一个无锁 MPMC 队列并证明其正确性。',
+    'provider_config'  => ['provider' => 'openai-responses'],  // → gpt-5.6-sol
+    'reasoning_effort' => 'max',       // 5.6 档位：none…max（minimal 退役）
+    'reasoning_mode'   => 'pro',       // standard | pro（Sol Pro）
+    'reasoning_context'=> 'all_turns', // auto | all_turns | current_turn
+    'prompt_cache_options' => ['ttl' => '24h'],  // 显式缓存：
+                                                 // 写 1.25×，读 −90%
+]);
+```
+
+effort 值由 SDK 按模型代次归一化（`gpt-5.6*`：`minimal`→`low`、
+`off`→`none`、`highest`→`max`；5.6 之前：`max`/`highest`→`xhigh`、
+`none`/`off`→`minimal`），同一个调用点可同时服务两代模型。非法的
+`reasoning_mode` 值会被丢弃，绝不 400。
+
+### Grok 4.5 档位与缓存锚定
+
+`grok-4.5` 常开推理，带三级 `low`|`medium`|`high` 档（`max`/`xhigh` 收敛到
+`high`；`off` 不发送任何东西 —— 它的推理无法关闭）。在 provider config 里
+传 `conversation_id`（或 `prompt_cache_key`）会发出 `x-grok-conv-id` 头，
+走 xAI 推荐的缓存路由：
+
+```php
+'provider_config' => [
+    'provider'        => 'grok',        // → grok-4.5（500K 上下文）
+    'conversation_id' => 'sess-42',     // → x-grok-conv-id 头
+],
+'reasoning_effort' => 'high',
+```
+
+如依赖旧默认的 1M 窗口，请固定 `'model' => 'grok-4.3'`。
+
+### Gemini 3.5 代 `thinking_level`
+
+`thinking_level`（`minimal`|`low`|`medium`|`high`）在 3.5 系上取代
+`thinkingBudget` —— SDK 恰好只发出两者之一（混用会 400），跨 provider 的
+`reasoning_effort` 档位会映射到它（`off` 抑制 `thinkingConfig`；
+`max`/`xhigh` → `HIGH`）。由 `SuperAgentBackend` 像 Gemini 的
+`grounding` / `url_context` 选项一样转发 —— 其他 provider 一律忽略。
+
+### 目录刷新须知
+
+- `gemini-3.5-pro` 与 `gemini-3.5-flash-lite` 从未公开上线 —— SDK 1.1.6
+  已移除，SuperAICore 的 `gemini` 引擎选择器与
+  `GeminiModelResolver::CATALOG` 同步跟进。现役家族：`gemini-3.5-flash`
+  （$1.50/$9，`gemini` 别名）、`gemini-3.1-pro-preview`（$2/$12，
+  `gemini-pro` 别名）、`gemini-3.1-flash-lite`（$0.25/$1.50）。
+- `model_pricing` 全线修正：`gpt-5` $1.25/$10、`deepseek-v4-flash` 输出
+  $0.28（+$0.0028 缓存命中）、`MiniMax-M3` $0.30/$1.20（缓存读 $0.06）、
+  `qwen3.7-plus` $0.40/$1.60；新增 GPT-5.6、`grok-4.5`（$2/$6）、
+  `kimi-k2.7-code`（$0.95/$4）与 GLM turbo 一对（$1.20/$4）。长上下文
+  加价档（GPT-5.6 >272K、Grok 4.5 >200K、MiniMax >512K、Qwen >256K）
+  未建模 —— 如属你的流量请向上覆盖。
+- SDK 零配置默认迁移：`openai-responses` → `gpt-5.6-sol`、`grok` →
+  `grok-4.5`、`gemini` → `gemini-3.5-flash`。所有已上线过的 id 都仍可
+  显式配置调用。
 
 ---
 

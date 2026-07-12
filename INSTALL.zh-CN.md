@@ -1347,6 +1347,45 @@ standalone + artisan 命令 `send`、`resume`、`runs`、`aliases`、
 `--uninstall` 可撤销此前的安装且不会碰你自己编写的技能。无需任何配置，
 也不用重新发布 config。
 
+**1.1.6 —— GPT-5.6 + Grok 4.5 目录刷新；无迁移；SDK pin 移到 `^1.1.6`。**
+全面纯增量 —— 无 schema 变更；只有想要刷新后的 `model_pricing` 表时才需要
+重新发布 config。三件值得了解的事：
+
+1. **SDK 零配置默认迁移。** `openai-responses` 现解析为 `gpt-5.6-sol`
+   （原 `gpt-5`）、`grok` 解析为 `grok-4.5`（原 `grok-4.3`；注意新默认的
+   上下文窗口从 1M 缩到 500K）、`gemini` 解析为 `gemini-3.5-flash`
+   （2.0 系已于 2026-06-01 上游退役）。所有已上线过的 id 都仍可显式
+   `model` 配置调用；如依赖 grok-4.3 的 1M 窗口请固定旧 id。
+
+2. **价格表全线修正 —— 看板需要新副本。** 新增行：GPT-5.6
+   Sol/Terra/Luna（$5/$30、$2.50/$15、$1/$6，含缓存输入档）、`grok-4.5`
+   $2/$6、`gemini-3.5-flash` $1.50/$9、`gemini-3.1-pro-preview` $2/$12、
+   `gemini-3.1-flash-lite` $0.25/$1.50、`kimi-k2.7-code` $0.95/$4、
+   `glm-5-turbo`/`glm-5v-turbo` $1.20/$4。修正项：`gpt-5` $5/$15 →
+   **$1.25/$10**、`deepseek-v4-flash` 输出 $0.55 → **$0.28**、
+   `MiniMax-M3` $0.60/$2.40 → **$0.30/$1.20**、`qwen3.7-plus`
+   $0.80/$2.40 → **$0.40/$1.60**。若宿主发布过旧 config 副本，请重新发布
+   或手改 —— 否则 `CostCalculator` 会继续用过期价格。另注意
+   `gemini-3.5-pro` / `gemini-3.5-flash-lite` 从未上线，已从选择器移除。
+
+3. **GPT-5.6 / Gemini 3.5 请求面走既有 dispatch 选项。**
+   `SuperAgentBackend` 现在转发 `reasoning_mode`（`standard`|`pro`）、
+   `reasoning_context`（`auto`|`all_turns`|`current_turn`）、
+   `prompt_cache_options` 与 `thinking_level`（`minimal`…`high`）：
+
+   ```php
+   $dispatcher->dispatch([
+       'backend'          => 'superagent',
+       'prompt'           => '证明这个调度器不会饿死任务。',
+       'provider_config'  => ['provider' => 'openai-responses'],  // → gpt-5.6-sol
+       'reasoning_effort' => 'max',      // GPT-5.6 新增 none/max
+       'reasoning_mode'   => 'pro',      // Sol Pro
+   ]);
+   ```
+
+   四个选项在不支持的 provider 上都被静默忽略；既有的 `reasoning_effort`
+   档位由 SDK 按模型代次归一化 —— 传错值也不会 400。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

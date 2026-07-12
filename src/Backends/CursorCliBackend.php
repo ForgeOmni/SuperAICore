@@ -94,7 +94,7 @@ class CursorCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
             return [
                 'text'  => $parsed['text'],
-                'model' => $parsed['model'] ?? $model ?? 'composer-2.5-fast',
+                'model' => $parsed['model'] ?? $model ?? 'composer-2.5',
                 'usage' => [
                     'input_tokens'  => $parsed['input_tokens'],
                     'output_tokens' => $parsed['output_tokens'],
@@ -155,7 +155,7 @@ class CursorCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
         return [
             'text'  => $parsed['text'],
-            'model' => $parsed['model'] ?? $model ?? 'composer-2.5-fast',
+            'model' => $parsed['model'] ?? $model ?? 'composer-2.5',
             'usage' => [
                 'input_tokens'  => $parsed['input_tokens'],
                 'output_tokens' => $parsed['output_tokens'],

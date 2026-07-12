@@ -33,6 +33,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague vaisseau amiral natif GLM-5.2 (1.0.10 / SDK 1.1.2)](#vague-vaisseau-amiral-natif-glm-52-1010--sdk-112)
   - [Vague Fable 5 & Sonnet 5 (1.0.11 / SDK 1.1.5)](#vague-fable-5--sonnet-5-1011--sdk-115)
   - [Vague parité ai-dispatch (1.1.0)](#vague-parité-ai-dispatch-110)
+  - [Vague GPT-5.6 + Grok 4.5 rafraîchissement du catalogue (1.1.6 / SDK 1.1.6)](#vague-gpt-56--grok-45-rafraîchissement-du-catalogue-116--sdk-116)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -107,6 +108,63 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague GPT-5.6 + Grok 4.5 rafraîchissement du catalogue (1.1.6 / SDK 1.1.6)
+
+Le pin SDK passe de `^1.1.5` à `^1.1.6`. SuperAgent 1.1.6 fait atterrir
+**GPT-5.6** (Sol / Terra / Luna — le nouveau défaut `openai-responses`) et
+**Grok 4.5** (le nouveau défaut `grok`) avec leurs surfaces de requête, et
+corrige le catalogue Gemini / DeepSeek / MiniMax / GLM / Qwen aux tarifs
+officiels ; SuperAICore transmet les nouvelles options par appel, reflète les
+tarifs corrigés dans sa propre table `model_pricing` et corrige la dérive du
+sélecteur Gemini (`gemini-3.5-pro` / `gemini-3.5-flash-lite` n'ont jamais été
+publiés). Additif et non cassant — aucune migration, aucun changement de
+config.
+
+- **Surface GPT-5.6 / Gemini 3.5 transmise** — `SuperAgentBackend` transmet
+  désormais `reasoning_mode` (`standard`|`pro` — Sol Pro),
+  `reasoning_context` (`auto`|`all_turns`|`current_turn`) et
+  `prompt_cache_options` (cache explicite : écritures 1,25×, lectures −90 %)
+  à l'`OpenAIResponsesProvider` du SDK, plus `thinking_level`
+  (`minimal`…`high`, le contrôle qui remplace `thinkingBudget`) au
+  `GeminiProvider`. Les quatre sont ignorés silencieusement par les
+  providers qui ne les parlent pas. Le cadran `reasoning_effort` existant
+  gagne `none`/`max` sur GPT-5.6 et le cadran trois niveaux toujours actif
+  sur Grok 4.5 — côté SDK, aucun changement SuperAICore requis.
+- **Nouveaux modèles tarifés** — `gpt-5.6-sol` **5 $ / 0,50 $ en cache /
+  30 $** par 1M, `gpt-5.6-terra` **2,50 $ / 0,25 $ / 15 $**, `gpt-5.6-luna`
+  **1 $ / 0,10 $ / 6 $** (tous 1,05M de contexte) ; `grok-4.5` **2 $ /
+  0,50 $ en cache / 6 $** (500K de contexte, le nouveau défaut `grok` ;
+  `grok-4.3` reste joignable) ; `gemini-3.5-flash` (le vrai vaisseau amiral)
+  **1,50 $ / 0,15 $ en cache / 9 $** ; `gemini-3.1-pro-preview` 2 $/12 $ ;
+  `gemini-3.1-flash-lite` 0,25 $/1,50 $ ; `kimi-k2.7-code` 0,95 $ / 0,19 $
+  cache-hit / 4 $ (+`-highspeed` à 2×) ; `glm-5-turbo` / `glm-5v-turbo`
+  1,20 $/4 $.
+- **Corrections tarifaires reflétées** — `gpt-5` à son tarif officiel
+  **1,25 $/10 $** (était une estimation 5 $/15 $), sortie
+  `deepseek-v4-flash` **0,55 $ → 0,28 $** (+0,0028 $ cache-hit),
+  `MiniMax-M3` au tarif par paliers permanent **0,30 $/1,20 $** (lecture
+  cache 0,06 $), `qwen3.7-plus` au tarif GA **0,40 $/1,60 $**. Re-publiez la
+  config si votre hôte porte une copie plus ancienne.
+- **Catalogue Gemini corrigé à la réalité** — `gemini-3.5-pro` et
+  `gemini-3.5-flash-lite` n'ont jamais été publiés et sont retirés du
+  sélecteur du moteur `gemini` ; `gemini-3.5-flash` /
+  `gemini-3.1-pro-preview` / `gemini-3.1-flash-lite` atterrissent dans
+  `EngineCatalog` et `GeminiModelResolver`. Les défauts zéro-config du SDK
+  bougent (`openai-responses` → `gpt-5.6-sol`, `grok` → `grok-4.5`,
+  `gemini` → `gemini-3.5-flash`) ; chaque id déjà publié reste joignable en
+  config explicite.
+- **Catalogues des CLI par abonnement re-vérifiés en direct (2026-07-12)** —
+  le plan Grok Build (grok CLI 0.2.93) route désormais `grok-4.5` comme
+  défaut d'abonnement plus `grok-composer-2.5-fast` (`grok-build` conservé
+  en ligne héritée), et la gamme Cursor Composer (~189 slugs) fait de
+  `composer-2.5` le choix « current » et proxifie Fable 5 / Sonnet 5 /
+  GPT-5.6 Sol / Grok 4.5 / Gemini 3.5 Flash / Kimi K2.7 Code / GLM 5.2 —
+  `GrokModelResolver`, `CursorModelResolver` (nouveaux alias
+  `fable`/`sonnet`/`grok`/`gemini`/`kimi`/`glm`), les seeds moteurs et les
+  lignes d'abonnement à 0 $ `grok:*`/`cursor:*` suivent. ZCode (l'IDE de
+  bureau de Z.ai) a été évalué puis écarté — aucune surface CLI headless à
+  intégrer.
 
 ### Vague parité ai-dispatch (1.1.0)
 

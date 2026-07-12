@@ -909,8 +909,19 @@ return [
         'claude-haiku-4-5'            => ['input' => 1.00,  'output' => 5.00],
         'claude-haiku-4-5-20251001'   => ['input' => 1.00,  'output' => 5.00],
 
-        // ─── OpenAI GPT (estimates for unreleased model IDs; override per host) ───
-        'gpt-5'                       => ['input' => 5.00,  'output' => 15.00],
+        // ─── OpenAI GPT ───
+        // GPT-5.6 (GA 2026-07-09, SDK 1.1.6) replaces GPT-5.5 and retires the
+        // mini/nano naming — Sol / Terra / Luna, all 1.05M context / 128K
+        // output with vision, official OpenAI rates with a cached-input tier
+        // (carried as `cache_read_input`). Note the long-context surcharge
+        // (2× in / 1.5× out beyond 272K input) is NOT modelled here — hosts
+        // with long-context traffic should override upward. `gpt-5` is also
+        // corrected to its official $1.25/$10 (was a pre-release estimate);
+        // the dotted 5.1 SKUs keep their estimate rates pending official ids.
+        'gpt-5.6-sol'                 => ['input' => 5.00,  'output' => 30.00, 'cache_read_input' => 0.50],
+        'gpt-5.6-terra'               => ['input' => 2.50,  'output' => 15.00, 'cache_read_input' => 0.25],
+        'gpt-5.6-luna'                => ['input' => 1.00,  'output' => 6.00,  'cache_read_input' => 0.10],
+        'gpt-5'                       => ['input' => 1.25,  'output' => 10.00],
         'gpt-5.1'                     => ['input' => 5.00,  'output' => 15.00],
         'gpt-5.1-codex'               => ['input' => 5.00,  'output' => 15.00],
         'gpt-5.1-codex-mini'          => ['input' => 0.50,  'output' => 2.00],
@@ -929,9 +940,12 @@ return [
         // they route to the V4 successors here (chat → flash, reasoner →
         // pro) so cost dashboards keep working past the hard cutover and the
         // SDK's one-shot deprecation warning is the user's only nudge.
+        // V4-Flash output corrected $0.55 → $0.28 in SDK 1.1.6 (official
+        // sheet), with a $0.0028 cache-hit input tier; V4 GA mid-July brings
+        // peak-hour 2× pricing — these are the off-peak base rates.
         'deepseek-v4-pro'             => ['input' => 0.435, 'output' => 0.87, 'cache_read_input' => 0.003625],
-        'deepseek-v4-flash'           => ['input' => 0.14,  'output' => 0.55],
-        'deepseek-chat'               => ['input' => 0.14,  'output' => 0.55],
+        'deepseek-v4-flash'           => ['input' => 0.14,  'output' => 0.28, 'cache_read_input' => 0.0028],
+        'deepseek-chat'               => ['input' => 0.14,  'output' => 0.28, 'cache_read_input' => 0.0028],
         'deepseek-reasoner'           => ['input' => 0.435, 'output' => 0.87, 'cache_read_input' => 0.003625],
 
         // ─── MiniMax (native, since SuperAgent 1.1.1) ───
@@ -939,13 +953,15 @@ return [
         // 1M context, 512K max output, native image *and* video input,
         // single-model interleaved thinking. The bare `minimax` shorthand
         // and the zero-config default now resolve to M3; M2.7 stays
-        // reachable by id and the `m2` / `minimax-m2` aliases. Standard PAYG
-        // is $0.60 in / $2.40 out per 1M (a 7-day launch promo currently
-        // halves this to $0.30 / $1.20; image/video input billed $1.00/M).
+        // reachable by id and the `m2` / `minimax-m2` aliases. The launch
+        // promo became MiniMax's permanent tiered price (SDK 1.1.6): $0.30
+        // in / $1.20 out per 1M for ≤512K input (cache-read $0.06; $0.60 /
+        // $2.40 above 512K; priority tier 1.5× — the >512K tier is NOT
+        // modelled here, override upward for long-context traffic).
         // The SDK's ModelCatalog carries these rows too, so unlisted MiniMax
         // SKUs still resolve — these explicit entries keep cost dashboards
         // accurate offline without a catalog round-trip.
-        'MiniMax-M3'                  => ['input' => 0.60,  'output' => 2.40],
+        'MiniMax-M3'                  => ['input' => 0.30,  'output' => 1.20, 'cache_read_input' => 0.06],
         'MiniMax-M2.7'                => ['input' => 0.30,  'output' => 1.20],
         'MiniMax-M2.5'                => ['input' => 0.30,  'output' => 1.20],
         'MiniMax-M2'                  => ['input' => 0.30,  'output' => 1.20],
@@ -965,9 +981,23 @@ return [
         'glm-5.2'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
         'glm-5.1'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
         'glm-5'                       => ['input' => 1.00,  'output' => 3.20],
+        // Turbo pair at the official Z.ai $1.20 / $4 rate (SDK 1.1.6
+        // correction); glm-5v-turbo is the multimodal sibling.
+        'glm-5-turbo'                 => ['input' => 1.20,  'output' => 4.00, 'cache_read_input' => 0.24],
+        'glm-5v-turbo'                => ['input' => 1.20,  'output' => 4.00],
 
         // ─── Google Gemini ───
-        'gemini-3-pro-preview'        => ['input' => 2.00,  'output' => 12.00],
+        // Catalog corrected to reality in SDK 1.1.6: `gemini-3.5-pro` and
+        // `gemini-3.5-flash-lite` never publicly shipped and carry no rows;
+        // `gemini-3.5-flash` is the actual flagship at the official $1.50 /
+        // $9 (cache-read $0.15). `gemini-3.1-pro-preview` ($2 / $12 ≤200K
+        // tier; $4 / $18 above — the higher tier is NOT modelled here) owns
+        // the `gemini-pro` alias; the retired `gemini-3-pro-preview` keeps
+        // its historical $2 / $15 for old usage rows.
+        'gemini-3.5-flash'            => ['input' => 1.50,  'output' => 9.00, 'cache_read_input' => 0.15],
+        'gemini-3.1-pro-preview'      => ['input' => 2.00,  'output' => 12.00],
+        'gemini-3.1-flash-lite'       => ['input' => 0.25,  'output' => 1.50],
+        'gemini-3-pro-preview'        => ['input' => 2.00,  'output' => 15.00],
         'gemini-2.5-pro'              => ['input' => 1.25,  'output' => 10.00],
         'gemini-2.5-flash'            => ['input' => 0.30,  'output' => 2.50],
         'gemini-2.5-flash-lite'       => ['input' => 0.10,  'output' => 0.40],
@@ -978,8 +1008,11 @@ return [
         // public pricing sheet 2026-05-22.
         // Earlier Qwen3 entries kept so cost dashboards still bucket
         // calls against legacy aliases correctly.
+        // qwen3.7-plus corrected to the GA tiered price in SDK 1.1.6:
+        // $0.40/$1.60 per 1M ≤256K input (multimodal image+video; the
+        // >256K tier is not modelled here).
         'qwen3.7-max'                 => ['input' => 2.50,  'output' => 7.50],
-        'qwen3.7-plus'                => ['input' => 0.80,  'output' => 2.40],
+        'qwen3.7-plus'                => ['input' => 0.40,  'output' => 1.60],
         'qwen3.6-max-preview'         => ['input' => 0.78,  'output' => 3.90],
         'qwen3-max'                   => ['input' => 0.78,  'output' => 3.90],
         'qwen3.5-plus'                => ['input' => 0.40,  'output' => 1.20],
@@ -987,13 +1020,26 @@ return [
         'qwen3-coder-plus'            => ['input' => 0.40,  'output' => 1.20],
         'qwen3-vl-plus'               => ['input' => 0.78,  'output' => 3.90],
 
-        // ─── xAI Grok (SDK 1.0.8) ───
-        // grok-4.3 is the recommended flagship (1M context). Prices per 1M
-        // tokens, verified against docs.x.ai (May 2026). grok-4-fast is the
-        // cheap 2M-context tier; grok-code-fast-1 targets agentic coding.
-        // The SDK's ModelCatalog carries the same rows, so unlisted Grok
-        // SKUs still resolve — these explicit entries keep cost dashboards
-        // accurate without a catalog round-trip.
+        // ─── Moonshot Kimi (metered API; SDK 1.1.6) ───
+        // kimi-k2.7-code (2026-06-12) is Moonshot's coding flagship — 262K
+        // context / 32K output, thinking forced on, image+video input —
+        // at $0.95 in / $0.19 cache-hit / $4 out per 1M; the highspeed
+        // variant bills exactly 2×. Distinct from the subscription `kimi`
+        // CLI engine (kimi-code OAuth), which stays $0/token.
+        'kimi-k2.7-code'              => ['input' => 0.95,  'output' => 4.00, 'cache_read_input' => 0.19],
+        'kimi-k2.7-code-highspeed'    => ['input' => 1.90,  'output' => 8.00, 'cache_read_input' => 0.38],
+
+        // ─── xAI Grok (SDK 1.0.8; grok-4.5 since 1.1.6) ───
+        // grok-4.5 (released 2026-07-08) is the flagship and the SDK's
+        // zero-config `grok` default — $2 in / $0.50 cached / $6 out per 1M
+        // (2× beyond 200K prompt, not modelled here), 500K context, an
+        // always-on three-level reasoning dial, and `x-grok-conv-id` cache
+        // pinning. grok-4.3 (1M context) stays reachable by id. grok-4-fast
+        // is the cheap 2M-context tier; grok-code-fast-1 targets agentic
+        // coding. The SDK's ModelCatalog carries the same rows, so unlisted
+        // Grok SKUs still resolve — these explicit entries keep cost
+        // dashboards accurate without a catalog round-trip.
+        'grok-4.5'                    => ['input' => 2.00,  'output' => 6.00, 'cache_read_input' => 0.50],
         'grok-4.3'                    => ['input' => 1.25,  'output' => 2.50],
         'grok-4.20'                   => ['input' => 1.25,  'output' => 2.50],
         'grok-build-0.1'              => ['input' => 1.00,  'output' => 2.00],
@@ -1046,19 +1092,30 @@ return [
         // Routed via `cursor-agent` against the user's Cursor plan. The CLI
         // does not meter per-token, so usage rows emit $0 and the dashboard
         // groups them under "Subscription engines" (keyed by engine `cursor:`).
-        'cursor:auto'                          => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'cursor:composer-2.5-fast'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'cursor:composer-2.5'                  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'cursor:claude-opus-4-8-thinking-high' => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'cursor:claude-opus-4-7-thinking-high' => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'cursor:gpt-5.5-high'                  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'cursor:gpt-5.3-codex'                 => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'cursor:gpt-5.2'                       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:auto'                           => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:composer-2.5'                   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:composer-2.5-fast'              => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:claude-fable-5-thinking-high'   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:claude-sonnet-5-thinking-high'  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:claude-opus-4-8-thinking-high'  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:claude-opus-4-7-thinking-high'  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:gpt-5.6-sol-high'               => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:gpt-5.5-high'                   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:gpt-5.3-codex'                  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:gpt-5.2'                        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:grok-4.5-xhigh'                 => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:gemini-3.5-flash'               => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:kimi-k2.7-code'                 => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:glm-5.2-high'                   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
 
         // ─── Grok Build CLI (subscription billed; per-token cost is $0) ───
         // Routed via `grok` against a grok.com subscription. Distinct from
-        // the metered xAI API rows above (`grok-4.3` etc.); the CLI channel
-        // is keyed by engine `grok:` and contributes $0 to USD totals.
+        // the metered xAI API rows above (`grok-4.5` etc.); the CLI channel
+        // is keyed by engine `grok:` and contributes $0 to USD totals. The
+        // grok CLI 0.2.93 Build plan routes grok-4.5 (default) +
+        // grok-composer-2.5-fast; grok-build remains for older accounts.
+        'grok:grok-4.5'               => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'grok:grok-composer-2.5-fast' => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'grok:grok-build'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
     ],
 

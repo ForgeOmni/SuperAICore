@@ -23,14 +23,18 @@ use Symfony\Component\Process\Process;
  * calculator treats `grok_cli:*` rows as $0 ("Subscription engines").
  *
  * This is DISTINCT from the metered xAI API provider (SDK `GrokProvider`,
- * `AiProvider::TYPE_GROK`, `XAI_API_KEY`, `grok-4.3`). Same brand, different
- * channel: this backend is the subscription CLI (`grok-build` model).
+ * `AiProvider::TYPE_GROK`, `XAI_API_KEY`, `grok-4.5` usage-billed). Same
+ * brand, different channel: this backend is the subscription CLI (grok CLI
+ * 0.2.93 routes `grok-4.5` + `grok-composer-2.5-fast` on the Build plan;
+ * `grok-build` on older accounts — all $0/token here).
  *
  * Invocation surface used here:
  *   - `-p` / `--single <PROMPT>`   headless single-turn (print + exit)
  *   - `--prompt-file <PATH>`       headless prompt from a file (scripted spawn)
  *   - `--output-format`            plain | json | streaming-json
- *   - `-m/--model <id>`            grok-build (+ account-exposed SKUs)
+ *   - `-m/--model <id>`            grok-4.5 (default) / grok-composer-2.5-fast
+ *                                  (+ account-exposed SKUs; grok-build on
+ *                                  older accounts)
  *   - `--effort low|…|max`         effort dial (passed through from options)
  *   - `--reasoning-effort <e>`     reasoning-model effort
  *   - `--always-approve`           auto-approve tools (headless)
@@ -97,7 +101,7 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 
             return [
                 'text'  => $parsed['text'],
-                'model' => $parsed['model'] ?? $model ?? 'grok-build',
+                'model' => $parsed['model'] ?? $model ?? 'grok-4.5',
                 'usage' => [
                     'input_tokens'  => $parsed['input_tokens'],
                     'output_tokens' => $parsed['output_tokens'],
@@ -158,7 +162,7 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 
         return [
             'text'  => $parsed['text'],
-            'model' => $parsed['model'] ?? $model ?? 'grok-build',
+            'model' => $parsed['model'] ?? $model ?? 'grok-4.5',
             'usage' => [
                 'input_tokens'  => $parsed['input_tokens'],
                 'output_tokens' => $parsed['output_tokens'],

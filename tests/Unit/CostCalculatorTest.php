@@ -87,9 +87,31 @@ class CostCalculatorTest extends TestCase
 
     public function test_codex_pricing_resolves_for_gpt_5_family(): void
     {
-        // Hits the seeded gpt-5 rate from config (5/15) → 5+15 = 20
+        // Hits the seeded gpt-5 rate from config — corrected to the official
+        // $1.25/$10 in the SDK 1.1.6 wave (was a $5/$15 estimate) → 11.25.
         $calc = new CostCalculator();
-        $this->assertEqualsWithDelta(20.0, $calc->calculate('gpt-5', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(11.25, $calc->calculate('gpt-5', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_gpt_56_sol_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.6 — gpt-5.6-sol $5 in / $30 out per 1M, cached input $0.50.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(35.0, $calc->calculate('gpt-5.6-sol', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_grok_45_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.6 — grok-4.5 $2 in / $6 out per 1M.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(8.0, $calc->calculate('grok-4.5', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_gemini_35_flash_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.6 catalog correction — gemini-3.5-flash $1.50 in / $9 out.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(10.5, $calc->calculate('gemini-3.5-flash', 1_000_000, 1_000_000), 0.0001);
     }
 
     public function test_unknown_model_falls_through_to_superagent_model_catalog(): void
