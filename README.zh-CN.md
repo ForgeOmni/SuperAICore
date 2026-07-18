@@ -34,6 +34,7 @@
   - [Fable 5 与 Sonnet 5 波次（1.0.11 / SDK 1.1.5）](#fable-5-与-sonnet-5-波次1011--sdk-115)
   - [ai-dispatch 对齐波次（1.1.0）](#ai-dispatch-对齐波次110)
   - [GPT-5.6 + Grok 4.5 目录刷新波次（1.1.6 / SDK 1.1.6）](#gpt-56--grok-45-目录刷新波次116--sdk-116)
+  - [Kimi K3 波次（1.1.7 / SDK 1.1.7）](#kimi-k3-波次117--sdk-117)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -108,6 +109,25 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### Kimi K3 波次（1.1.7 / SDK 1.1.7）
+
+SDK 约束从 `^1.1.6` 移到 `^1.1.7`。SuperAgent 1.1.7 带来 **Kimi K3** ——
+Moonshot 新的开源通用旗舰（2026-07-16 发布），也是 SDK 新的零配置 `kimi`
+默认模型。纯增量、不破坏 —— 无迁移、无配置变更。
+
+- **Kimi K3 已定价** —— `kimi-k3`（2.8T 开源权重 MoE、1M 上下文、常开思考、
+  图像 + 视频输入）按官方计量 API 价格 **输入 $3 / 缓存 $0.30 / 输出 $15**
+  （每 1M）种入 `model_pricing`，`CostCalculator` 无需回查目录即可离线计价。
+  编码向的 `kimi-k2.7-code` 保持不变；退役的 `kimi-k2-6` 仍可按 id 调用
+  （通过 SDK 的 `ModelCatalog` 解析）。Kimi 原生零配置默认（`kimi` →
+  `kimi-k3`）由 SDK 侧的 `KimiProvider` 拥有，SuperAICore 原样转发；订阅制
+  `kimi` CLI 引擎（kimi-code OAuth，$0/token）是独立的一面，保持不变。
+- **修复：`superaicore --version`** 现在正确报告 `1.1.7`（此前卡在 `1.1.5`
+  —— 1.1.6 发布时漏改）。
+- **内部清理** —— `SuperAgentBackend::buildPerCallOptions` 现在把重复的字符串
+  转发收敛到两个辅助方法（`putRawString` / `putLoweredString`）；行为保持不变，
+  并带回归测试。
 
 ### GPT-5.6 + Grok 4.5 目录刷新波次（1.1.6 / SDK 1.1.6）
 

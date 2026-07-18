@@ -1386,6 +1386,20 @@ standalone + artisan 命令 `send`、`resume`、`runs`、`aliases`、
    四个选项在不支持的 provider 上都被静默忽略；既有的 `reasoning_effort`
    档位由 SDK 按模型代次归一化 —— 传错值也不会 400。
 
+**1.1.7 —— Kimi K3；无迁移；SDK pin 移到 `^1.1.7`。** 纯增量 —— 无 schema
+变更；只有想要新的 `model_pricing` 行时才需要重新发布 config。两件值得了解的事：
+
+1. **Kimi K3 已定价，且是新的零配置 Kimi 默认。** `kimi-k3`（Moonshot 新的
+   2.8T 开源权重通用旗舰、1M 上下文、常开思考）在 SDK 侧解析为 `kimi` 原生
+   默认，价格为官方 **输入 $3 / 缓存 $0.30 / 输出 $15**（每 1M）。该行已种入
+   `model_pricing`，`CostCalculator` 可离线计价 —— 若宿主带着旧副本，请重新
+   发布 config。编码向的 `kimi-k2.7-code` 保持不变，较旧的 `kimi-k2-6` 仍可
+   通过显式 `model` 配置调用。订阅制 `kimi` CLI 引擎（kimi-code OAuth，
+   $0/token）未受影响。
+
+2. **`superaicore --version` 现在报告真实版本。** 它此前卡在 `1.1.5`
+   （1.1.6 发布时漏改），现在正确读取为 `1.1.7`。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

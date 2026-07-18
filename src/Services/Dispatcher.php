@@ -7,6 +7,7 @@ use SuperAICore\Contracts\ProviderRepository;
 use SuperAICore\Contracts\RoutingRepository;
 use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Support\BackendState;
+use SuperAICore\Support\FailureClassifier;
 use SuperAICore\Arrow\ArrowSerializer;
 use SuperAICore\Tracing\TraceCollector;
 use Psr\Log\LoggerInterface;
@@ -206,6 +207,22 @@ class Dispatcher
                 ]);
             }
             return null;
+        }
+
+        // Quota / rate-limit cooldown on a NON-NULL failure envelope. The
+        // non-streaming path returns null on a CLI failure (cooled down
+        // above), but the streaming path returns a populated envelope with a
+        // non-zero exit_code even when the run died on "usage limit reached".
+        // Policy: a quota failure means this account is out of quota — cool it
+        // down so the next dispatch rotates off it, matching the null path.
+        // Positive-only (never cools on a generic non-zero exit), so a bad
+        // prompt or a tool error doesn't burn an account.
+        $cooldownReason = $this->quotaCooldownReason($result);
+        if ($cooldownReason !== null) {
+            $this->cooldownActiveAccount(
+                $callOptions['provider_config'] ?? [],
+                reason: $cooldownReason,
+            );
         }
 
         // Compute cost. Backend name lets the calculator pick subscription
@@ -665,6 +682,66 @@ class Dispatcher
      * in try/catch so a missing migration doesn't cascade into a dispatch
      * failure on top of the original error.
      */
+    /**
+     * Classify a NON-NULL result envelope as a quota / rate-limit failure
+     * that should cool down the active account. Returns the cooldown reason
+     * (`quota_exceeded` | `rate_limited`) or null when the envelope is a
+     * success or an unrelated failure.
+     *
+     * Only the streaming path reaches dispatch() with a populated failure
+     * envelope (generate() returns null on failure, handled earlier), so a
+     * successful turn — which carries a zero/absent `exit_code` — is ignored
+     * cheaply. Classification is positive-only via `FailureClassifier`: we
+     * cool down solely when the failure text (envelope fields + the tee'd log
+     * tail) names a quota / rate-limit condition, never on a bare non-zero
+     * exit, so a validation error or tool failure never burns an account.
+     *
+     * @param array<string,mixed> $result
+     */
+    protected function quotaCooldownReason(array $result): ?string
+    {
+        $exit = $result['exit_code'] ?? null;
+        if ($exit === null || (int) $exit === 0) return null;
+
+        $parts = [];
+        foreach (['error', 'text', 'stop_reason'] as $k) {
+            if (isset($result[$k]) && is_string($result[$k]) && $result[$k] !== '') {
+                $parts[] = $result[$k];
+            }
+        }
+        $log = $result['log_file'] ?? null;
+        if (is_string($log) && $log !== '' && is_file($log)) {
+            $tail = $this->tailFile($log, 8192);
+            if ($tail !== '') $parts[] = $tail;
+        }
+        $haystack = implode("\n", $parts);
+        if (trim($haystack) === '') return null;
+
+        return match (FailureClassifier::classify($haystack)['class'] ?? null) {
+            'quota'      => 'quota_exceeded',
+            'rate_limit' => 'rate_limited',
+            default      => null,
+        };
+    }
+
+    /** Read the last $maxBytes of a file (for failure classification). */
+    private function tailFile(string $path, int $maxBytes): string
+    {
+        $size = @filesize($path);
+        if ($size === false) return '';
+        $fh = @fopen($path, 'rb');
+        if ($fh === false) return '';
+        try {
+            if ($size > $maxBytes) {
+                @fseek($fh, -$maxBytes, SEEK_END);
+            }
+            $data = @stream_get_contents($fh);
+            return is_string($data) ? $data : '';
+        } finally {
+            @fclose($fh);
+        }
+    }
+
     protected function cooldownActiveAccount(array $providerConfig, string $reason = 'quota_exceeded'): void
     {
         $accountId = $providerConfig['_account_id'] ?? null;

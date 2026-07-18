@@ -4,6 +4,156 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.7] — 2026-07-17
+
+**SuperAgent SDK bumped to 1.1.7 — Kimi K3 lands as Moonshot's new general
+flagship and the zero-config `kimi` default.** SDK 1.1.7 adds `kimi-k3` (a
+2.8T open-weight MoE, 1M context, always-on thinking, image+video input) and
+moves `KimiProvider`'s default off `kimi-k2-6`. SuperAICore mirrors the new
+pricing row and forwards the SDK-side default unchanged. **Additive and
+non-breaking** — SDK pin `^1.1.6` → `^1.1.7`, no migrations, no config changes
+for existing callers; `kimi-k2.7-code` and `kimi-k2-6` stay reachable.
+
+### Added
+
+- **New `model_pricing` row** (`config/super-ai-core.php`) — `kimi-k3` at the
+  official metered-API rate **$3 in / $15 out** per 1M with a **$0.30**
+  cache-hit input tier (`cache_read_input`). Keeps `CostCalculator` accurate
+  offline for the new Moonshot general flagship without a `ModelCatalog`
+  round-trip; the retired `kimi-k2-6` still resolves through the SDK catalog
+  fallback. The Moonshot section comment is refreshed to distinguish the
+  general flagship (`kimi-k3`) from the coding flagship (`kimi-k2.7-code`) and
+  from the subscription `kimi` CLI engine (kimi-code OAuth, still $0/token).
+  Pricing test in `CostCalculatorTest::test_kimi_k3_pricing_from_seeded_config`
+  (base rate + cache-read tier).
+
+### Changed
+
+- **SDK pin `forgeomni/superagent: ^1.1.6` → `^1.1.7`** (`composer.json`). The
+  native-Kimi zero-config default (`kimi` → `kimi-k3`) is owned SDK-side by
+  `KimiProvider::defaultModel()`; SuperAICore forwards it untouched, so no
+  resolver, engine seed or provider-type change is required. The `kimi` CLI
+  engine (`EngineCatalog`) is a separate OAuth-routed surface and is left as-is.
+
+### Fixed
+
+- **Stale CLI version string** — `Console\Application` reported `1.1.5`; it was
+  never bumped in the 1.1.6 release. Aligned to the current release `1.1.7`
+  (mirrors the SDK's own `SuperAgentApplication::VERSION` catch-up).
+- **`GrokCliBackend` effort dial rejected valid cross-engine values** — the
+  `--effort` flag on grok 0.2.102 accepts only `low`/`medium`/`high` (grok-4.5's
+  three-level dial; `grok -p x --effort max` → *"unknown effort level 'max';
+  use one of: high, medium, low"*), but `EFFORT_LEVELS` still listed
+  `xhigh`/`max`, so `normalizeEffort('max')` returned `max` and the backend
+  passed `--effort max` — failing the entire dispatch. `EFFORT_LEVELS` is now
+  the real three levels and `normalizeEffort()` clamps `xhigh`/`max` → `high`
+  and drops `off`/`none`/`minimal`/unknown (no flag) instead of erroring.
+  `appendEffortFlags()` also stopped emitting both `--effort` and its
+  `--reasoning-effort` alias for one dial (grok rejects the duplicate) — it now
+  picks one source (`effort` → `reasoning_effort`, options over `extra_config`)
+  and emits a single flag. Verified against the installed `grok` binary; the
+  public `xai-org/grok-build` `main` tree documents a newer `--yolo` surface,
+  but the pinned stable CLI still uses `--always-approve`, so that flag is left
+  untouched.
+
+### Grok CLI (grok-build) support — verified against grok 0.2.102
+
+- **Envelope reaches parity with the other CLI backends.** `scanEvents()` /
+  `parseAgentOutput()` now read the full headless `--output-format json` shape:
+  `sessionId`, `stopReason` (camelCase alongside the existing `stop_reason`),
+  `num_turns`, `usage.cache_read_input_tokens`, and the `thought` reasoning
+  channel (plus `thinking`-type assistant blocks). `generate()` and `stream()`
+  build their envelope through a new `buildEnvelope()` seam that surfaces
+  `session_id`, `turns`, `thinking` (only when present) and always carries
+  `usage.cache_read_input_tokens`. **`total_cost_usd` is intentionally parsed
+  but NOT surfaced** — `grok_cli` is the subscription channel `CostCalculator`
+  books at $0, and the Dispatcher prefers a non-zero envelope `cost_usd`, so
+  leaking it would double-count. `stream()` also stopped risking a null
+  dereference when the captured buffer has no parseable content (`emptyParsed()`
+  fallback).
+- **Session resume** — new `appendSessionFlags()` maps `resume_session_id` →
+  `--resume <id>` (the same convention `ClaudeCliBackend` / `CodexCliBackend`
+  use, and `superaicore resume` already drives), plus grok's `continue_session`
+  → `--continue`, a fresh `session_id` → `--session-id <uuid>`, and
+  `fork_session` → `--fork-session`. Precedence: resume > continue > new id.
+  Wired into both `generate()` and `stream()`; the surfaced envelope
+  `session_id` closes the resume loop.
+- Tests: `GrokCliBackendTest` gains effort-clamp cases, session-flag cases
+  (resume/continue/fork + precedence), and rich-JSON parsing
+  (session/cache/turns/thinking) + an envelope case asserting `cost_usd` never
+  leaks. Docblocks updated (verified-version note, invocation-surface + JSON
+  shape). No public API or config changes; the metered xAI **API** provider
+  (`GrokProvider`) is untouched.
+
+### Internal
+
+- **`SuperAgentBackend::buildPerCallOptions` de-duplicated** — the repeated
+  "forward a non-empty string" and "trim + lower-case an enum-style dial"
+  blocks (`idempotency_key` / `traceparent` / `tracestate`;
+  `reasoning_effort` / `reasoning_mode` / `reasoning_context` /
+  `thinking_level`) now route through two small protected helpers
+  (`putRawString`, `putLoweredString`). Behavior-preserving, with one
+  sharpening: a whitespace-only enum value is dropped instead of forwarding as
+  an empty string. Covered by new `SuperAgentBackendTest` cases
+  (`test_reasoning_effort_is_trimmed_and_lowercased`,
+  `test_whitespace_only_enum_option_is_not_forwarded`) on top of the existing
+  1.1.6 request-surface tests.
+
+### Fixed — codebase hardening pass
+
+A focused bug sweep (parallel review across the CLI-backend, cost/usage and
+dispatch/runner subsystems), each finding verified against the code before the
+fix. All covered by new regression tests.
+
+- **`AliasRouter` misrouted `grok-composer-2.5-fast` to Cursor.** The
+  `INFERENCE` substring map checked `composer` before `grok`, and
+  `grok-composer-2.5-fast` (a real Grok CLI id) contains `composer`, so it
+  resolved to `cursor_cli` (which then rejects the model). Reordered so `grok`
+  precedes `composer`; a bare `composer-2.5` still infers `cursor_cli`.
+- **`UsageRecorder` dropped the cache slice on an explicit zero.** The
+  `cache_read_tokens ?? cache_hit_tokens` coalesce let an explicit
+  `cache_read_tokens => 0` (as a normalised SDK Usage emits) shadow a non-zero
+  `cache_hit_tokens` alias — `0` is not null — silently zeroing cost /
+  `cache_hit_rate`. Now honours the documented "first NON-zero wins".
+- **`EngineCatalog` crashed on a non-array engine override.** A mistaken
+  `super-ai-core.engines.claude => false` reached `array_merge($defaults,
+  false)` (the `?? []` only guards null) → `TypeError`, taking down every
+  catalog/pricing/dropdown lookup. The seeded-engine loop now coerces a
+  non-array override to `[]`, like the host-injected loop already did.
+- **`CursorCliBackend::stream()` dereferenced a null parse result.**
+  `parseAgentOutput()` returns null on empty/unparseable output; `stream()`
+  built its envelope from `$parsed['text']` without the null-guard every
+  sibling backend has (and that `generate()` has). Added the guard.
+- **`TaskRunner` fallback dead-lettered silent failures.** `failureHaystack()`
+  always appended `(string) $result->exitCode` (a non-nullable int), so the
+  haystack was never empty and the `empty_failure_with_nonzero_exit ⇒
+  retryable` branch was unreachable — a crash with no diagnostic text never
+  fell back to the next engine. Removed the exit code from the haystack (it was
+  useless for word-pattern matching; `fallbackReason()` reads `exitCode`
+  directly).
+- **`ProcessMonitor::isAlive()` reported a live cross-user process as dead.**
+  `posix_kill($pid, 0)` returns false for both ESRCH (dead) and EPERM (alive
+  but owned by another uid); the code treated any false as dead. Now checks
+  `posix_get_last_error()` and treats EPERM as alive.
+- **`SideEffectDetector` never skipped `bootstrap/cache`.** The prune callback
+  matches `getFilename()` (a basename), so the multi-segment `bootstrap/cache`
+  entry could never hit — Laravel's compiled-cache writes registered as run
+  side-effects and wrongly locked a `FallbackChain` hop. Split into a
+  path-suffix skip list; a plain root-level `cache/` is still detected.
+- **`Dispatcher` never cooled down an account on a streaming quota failure.**
+  `cooldownActiveAccount()` fired only on the null-result path, but the
+  streaming path returns a populated envelope with a non-zero `exit_code` on a
+  quota hit, so the account was never rotated off. New `quotaCooldownReason()`
+  classifies the failure envelope (fields + tee'd log tail via
+  `FailureClassifier`) and cools down — positive-only on `quota` / `rate_limit`
+  so a bad prompt or tool error never burns an account. Non-streaming dispatch
+  is unaffected (it already returns null → cools down).
+- **Added `qwen3-coder-next` pricing** (`model_pricing`) — it sat in the `qwen`
+  engine's usage-billed `available_models` with no price row, so a real run
+  could bill $0 via the catalog fallback. Seeded at the official Alibaba Model
+  Studio (International) base ≤32K tier **$0.30 in / $1.50 out** per 1M (higher
+  input-length tiers noted in a comment, not modelled).
+
 ## [1.1.6] — 2026-07-12
 
 **SuperAgent SDK bumped to 1.1.6 — GPT-5.6 (Sol/Terra/Luna) and Grok 4.5

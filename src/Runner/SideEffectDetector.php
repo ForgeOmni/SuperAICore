@@ -23,7 +23,18 @@ namespace SuperAICore\Runner;
  */
 final class SideEffectDetector
 {
-    private const SKIP_DIRS = ['.git', 'vendor', 'node_modules', '.phpunit.cache', '.idea', '.claude', 'storage', 'bootstrap/cache'];
+    /** Directory basenames pruned from the walk (matched via getFilename()). */
+    private const SKIP_DIRS = ['.git', 'vendor', 'node_modules', '.phpunit.cache', '.idea', '.claude', 'storage'];
+
+    /**
+     * Multi-segment paths pruned from the walk. These CANNOT live in
+     * SKIP_DIRS — the callback matches `getFilename()` (a basename), so
+     * `bootstrap/cache` would never hit (its basename is just `cache`, which
+     * we don't want to prune wholesale). Matched against the path tail instead
+     * so Laravel's compiled-cache writes don't register as run side-effects
+     * and wrongly lock a FallbackChain hop.
+     */
+    private const SKIP_PATHS = ['bootstrap/cache'];
 
     /** Canonical + gemini + codex mutating tool names. */
     private const WRITE_TOOLS = [
@@ -95,8 +106,17 @@ final class SideEffectDetector
                 new \RecursiveCallbackFilterIterator(
                     new \RecursiveDirectoryIterator($this->cwd, \FilesystemIterator::SKIP_DOTS | \FilesystemIterator::FOLLOW_SYMLINKS),
                     function (\SplFileInfo $current): bool {
-                        if ($current->isDir() && in_array($current->getFilename(), self::SKIP_DIRS, true)) {
+                        if (!$current->isDir()) {
+                            return true;
+                        }
+                        if (in_array($current->getFilename(), self::SKIP_DIRS, true)) {
                             return false;
+                        }
+                        $path = str_replace('\\', '/', $current->getPathname());
+                        foreach (self::SKIP_PATHS as $skip) {
+                            if ($path === $skip || str_ends_with($path, '/' . $skip)) {
+                                return false;
+                            }
                         }
                         return true;
                     }

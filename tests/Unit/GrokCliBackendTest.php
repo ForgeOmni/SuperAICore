@@ -57,9 +57,132 @@ final class GrokCliBackendTest extends TestCase
 
     public function test_effort_levels_constant_matches_cli(): void
     {
+        // grok 0.2.102 `--effort` accepts exactly high|medium|low (the
+        // grok-4.5 three-level dial). xhigh/max are NOT accepted.
         $this->assertSame(
-            ['low', 'medium', 'high', 'xhigh', 'max'],
+            ['low', 'medium', 'high'],
             GrokCliBackend::EFFORT_LEVELS,
         );
+    }
+
+    public function test_effort_clamps_xhigh_and_max_to_high(): void
+    {
+        $b = new ExposedGrokCliBackend();
+        // Cross-engine `xhigh`/`max` clamp up to grok's `high` so the strongest
+        // reasoning is still requested — never passed through verbatim (the CLI
+        // would reject them and fail the dispatch).
+        $this->assertSame('high', $b->normalize('max'));
+        $this->assertSame('high', $b->normalize('xhigh'));
+        $this->assertSame('high', $b->normalize('  MAX '));
+    }
+
+    public function test_effort_passes_through_valid_levels_and_drops_the_rest(): void
+    {
+        $b = new ExposedGrokCliBackend();
+        $this->assertSame('low', $b->normalize('low'));
+        $this->assertSame('medium', $b->normalize('MEDIUM'));
+        $this->assertSame('high', $b->normalize('high'));
+        // off / none / minimal / unknown / blank → no flag (null), never an
+        // error-triggering value.
+        $this->assertNull($b->normalize('off'));
+        $this->assertNull($b->normalize('none'));
+        $this->assertNull($b->normalize('minimal'));
+        $this->assertNull($b->normalize('bogus'));
+        $this->assertNull($b->normalize(''));
+        $this->assertNull($b->normalize(null));
+    }
+
+    public function test_append_session_flags_builds_resume(): void
+    {
+        $b = new ExposedGrokCliBackend();
+        $cmd = ['grok', '-p', 'x'];
+        $b->sessionFlags($cmd, ['resume_session_id' => 'sess-42']);
+        $this->assertContains('--resume', $cmd);
+        $this->assertContains('sess-42', $cmd);
+    }
+
+    public function test_append_session_flags_continue_and_fork(): void
+    {
+        $b = new ExposedGrokCliBackend();
+        $cmd = [];
+        $b->sessionFlags($cmd, ['continue_session' => true, 'fork_session' => true]);
+        $this->assertContains('--continue', $cmd);
+        $this->assertContains('--fork-session', $cmd);
+        $this->assertNotContains('--resume', $cmd);
+    }
+
+    public function test_resume_wins_over_continue(): void
+    {
+        $b = new ExposedGrokCliBackend();
+        $cmd = [];
+        $b->sessionFlags($cmd, ['resume_session_id' => 'sess-9', 'continue_session' => true]);
+        $this->assertContains('--resume', $cmd);
+        $this->assertNotContains('--continue', $cmd);
+    }
+
+    public function test_rich_result_json_surfaces_session_cache_turns_and_thinking(): void
+    {
+        $raw = json_encode([
+            'type'           => 'result',
+            'result'         => 'done',
+            'model'          => 'grok-4.5',
+            'sessionId'      => 'sess-abc',
+            'stopReason'     => 'end_turn',
+            'num_turns'      => 4,
+            'total_cost_usd' => 0.0123,
+            'thought'        => 'let me think…',
+            'usage'          => [
+                'input_tokens'            => 500,
+                'output_tokens'           => 60,
+                'cache_read_input_tokens' => 400,
+            ],
+        ]);
+        $p = $this->backend()->parseAgentOutput($raw);
+
+        $this->assertSame('done', $p['text']);
+        $this->assertSame('sess-abc', $p['session_id']);
+        $this->assertSame('end_turn', $p['stop_reason']);
+        $this->assertSame(4, $p['turns']);
+        $this->assertSame(400, $p['cache_read_input_tokens']);
+        $this->assertSame('let me think…', $p['thinking']);
+        $this->assertEqualsWithDelta(0.0123, $p['cost_usd'], 0.00001);
+    }
+
+    public function test_envelope_surfaces_session_and_cache_but_not_cost(): void
+    {
+        $b = new ExposedGrokCliBackend();
+        $parsed = $this->backend()->parseAgentOutput(json_encode([
+            'type' => 'result', 'result' => 'ok', 'model' => 'grok-4.5',
+            'sessionId' => 'sess-1', 'num_turns' => 2, 'total_cost_usd' => 5.0,
+            'usage' => ['input_tokens' => 10, 'output_tokens' => 2, 'cache_read_input_tokens' => 3],
+        ]));
+        $env = $b->envelope($parsed, 'grok-4.5', 'end_turn');
+
+        $this->assertSame('sess-1', $env['session_id']);
+        $this->assertSame(2, $env['turns']);
+        $this->assertSame(3, $env['usage']['cache_read_input_tokens']);
+        // Subscription channel — cost must NOT leak into the envelope or it
+        // would double-count against the $0 CostCalculator booking.
+        $this->assertArrayNotHasKey('cost_usd', $env);
+    }
+}
+
+/** Exposes GrokCliBackend's protected seams for unit assertions. */
+final class ExposedGrokCliBackend extends GrokCliBackend
+{
+    public function normalize(?string $e): ?string
+    {
+        return $this->normalizeEffort($e);
+    }
+
+    /** @param string[] $cmd */
+    public function sessionFlags(array &$cmd, array $options): void
+    {
+        $this->appendSessionFlags($cmd, $options);
+    }
+
+    public function envelope(array $parsed, ?string $model, string $defaultStop): array
+    {
+        return $this->buildEnvelope($parsed, $model, $defaultStop);
     }
 }

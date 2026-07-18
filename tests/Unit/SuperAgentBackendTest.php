@@ -300,6 +300,36 @@ final class SuperAgentBackendTest extends TestCase
         $this->assertArrayNotHasKey('thinking_level', $b->lastRunOptions);
     }
 
+    public function test_reasoning_effort_is_trimmed_and_lowercased(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'reasoning_effort' => '  MAX ',
+        ]);
+
+        $this->assertSame('max', $b->lastRunOptions['reasoning_effort']);
+    }
+
+    public function test_whitespace_only_enum_option_is_not_forwarded(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            // A blank-once-trimmed value must never forward as an empty
+            // string — the SDK would otherwise see reasoning_effort=''.
+            'reasoning_effort' => '   ',
+            'thinking_level'   => "\t",
+        ]);
+
+        $this->assertArrayNotHasKey('reasoning_effort', $b->lastRunOptions);
+        $this->assertArrayNotHasKey('thinking_level', $b->lastRunOptions);
+    }
+
     public function test_classified_provider_exception_returns_null_with_classification(): void
     {
         TestSuperAgentProvider::$throw = new \SuperAgent\Exceptions\Provider\ContextWindowExceededException(

@@ -91,10 +91,14 @@ class UsageRecorder
         // historical wire; the SDK now recognises it natively. Accept either
         // name here so hosts that captured the raw provider envelope shape
         // (instead of going through the SDK's normalised Usage object) stop
-        // silently dropping the cache slice. First non-zero wins.
-        $cacheReadTokens  = (int) ($data['cache_read_tokens']
-                                ?? $data['cache_hit_tokens']
-                                ?? 0);
+        // silently dropping the cache slice. First NON-ZERO wins: `??` alone
+        // would let an explicit `cache_read_tokens => 0` shadow a non-zero
+        // `cache_hit_tokens` alias (0 is not null), re-introducing exactly the
+        // dropped-cache-slice bug this block exists to fix.
+        $cacheReadTokens  = (int) ($data['cache_read_tokens'] ?? 0);
+        if ($cacheReadTokens === 0) {
+            $cacheReadTokens = (int) ($data['cache_hit_tokens'] ?? 0);
+        }
         $cacheWriteTokens = (int) ($data['cache_write_tokens'] ?? 0);
 
         $cost = $data['cost_usd'] ?? null;

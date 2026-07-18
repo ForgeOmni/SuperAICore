@@ -44,6 +44,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 34. [Fable 5 & Sonnet 5 — la surface adaptative et le cadran d'effort Anthropic (1.0.11 / SDK 1.1.5)](#34-fable-5--sonnet-5--la-surface-adaptative-et-le-cadran-deffort-anthropic-1011--sdk-115)
 35. [Parité ai-dispatch — envoi par alias, reprise de session, archive des runs (1.1.0)](#35-parité-ai-dispatch--envoi-par-alias-reprise-de-session-archive-des-runs-110)
 36. [GPT-5.6 & Grok 4.5 — les nouvelles surfaces de requête et le rafraîchissement du catalogue (1.1.6 / SDK 1.1.6)](#36-gpt-56--grok-45--les-nouvelles-surfaces-de-requête-et-le-rafraîchissement-du-catalogue-116--sdk-116)
+37. [Kimi K3 — le nouveau modèle phare généraliste de Moonshot (1.1.7 / SDK 1.1.7)](#37-kimi-k3--le-nouveau-modèle-phare-généraliste-de-moonshot-117--sdk-117)
 
 ---
 
@@ -3889,6 +3890,63 @@ ignoré partout ailleurs.
 - Les défauts zéro-config bougent côté SDK : `openai-responses` →
   `gpt-5.6-sol`, `grok` → `grok-4.5`, `gemini` → `gemini-3.5-flash`. Chaque
   id déjà publié reste joignable en config explicite.
+
+---
+
+## 37. Kimi K3 — le nouveau modèle phare généraliste de Moonshot (1.1.7 / SDK 1.1.7)
+
+Le SDK 1.1.7 fait atterrir **Kimi K3** (`kimi-k3`), le nouveau vaisseau amiral
+généraliste open-weight de Moonshot (sorti le 2026-07-16) et le nouveau défaut
+`kimi` zéro-config du SDK. C'est un MoE open-weight de 2,8 T de paramètres
+(16 experts actifs sur 896 par token) doté d'une fenêtre de contexte de 1M de
+tokens, d'une réflexion toujours active et d'une entrée image + vidéo.
+SuperAICore reflète la nouvelle ligne tarifaire et transmet le défaut côté SDK
+tel quel — aucun changement de résolveur, d'amorce de moteur ou de type de
+provider n'est requis.
+
+### Routage vers Kimi K3
+
+Le chemin natif de Moonshot (mesuré, clé API à fournir) résout `kimi-k3` comme
+son défaut zéro-config côté SDK, donc vous n'avez pas à le nommer :
+
+```php
+$dispatcher->dispatch([
+    'backend'         => 'superagent',
+    'prompt'          => 'Résumez cette spec de 400 pages et signalez les ambiguïtés.',
+    'provider_config' => ['provider' => 'kimi', 'api_key' => env('KIMI_API_KEY')],
+    // pas de 'model' → KimiProvider::defaultModel() du SDK → kimi-k3
+    'reasoning_effort'=> 'high',   // la réflexion de K3 est toujours active ; le cadran en règle la profondeur
+]);
+```
+
+Épinglez `'model' => 'kimi-k2-6'` si vous voulez l'ancien défaut généraliste,
+ou `'model' => 'kimi-k2.7-code'` pour le vaisseau amiral orienté codage — les
+deux restent joignables.
+
+### Tarification
+
+`kimi-k3` est injecté dans `model_pricing` au tarif officiel mesuré de
+Moonshot pour que `CostCalculator` le tarife hors-ligne sans aller-retour vers
+le `ModelCatalog` :
+
+| Modèle | Entrée / 1M | Entrée cache-hit / 1M | Sortie / 1M |
+| --- | --- | --- | --- |
+| `kimi-k3` | 3,00 $ | 0,30 $ | 15,00 $ |
+| `kimi-k2.7-code` | 0,95 $ | 0,19 $ | 4,00 $ |
+
+Le `kimi-k2-6` retiré ne porte aucune ligne explicite — il se résout via le
+repli sur le catalogue du SDK. Le moteur CLI `kimi` par abonnement (OAuth
+kimi-code) est une surface distincte et facture toujours 0 $/token.
+
+### Ce qui n'a pas changé
+
+- Le moteur CLI `kimi` (`EngineCatalog`) — une surface d'abonnement routée par
+  OAuth — conserve son modèle `kimi-code/kimi-for-coding` et sa facturation à
+  0 $. K3 est le vaisseau amiral généraliste natif de l'API mesurée, pas le
+  défaut CLI.
+- Aucune nouvelle option de dispatch. La réflexion toujours active de K3 est
+  pilotée par le cadran cross-provider `reasoning_effort` existant, transmis
+  par `SuperAgentBackend` comme pour tout autre provider.
 
 ---
 

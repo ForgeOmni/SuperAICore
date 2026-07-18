@@ -433,9 +433,7 @@ class SuperAgentBackend implements Backend
     {
         $perCall = [];
 
-        if (isset($options['idempotency_key']) && is_string($options['idempotency_key']) && $options['idempotency_key'] !== '') {
-            $perCall['idempotency_key'] = $options['idempotency_key'];
-        }
+        $this->putRawString($perCall, $options, 'idempotency_key');
 
         // SDK 0.9.8 — three-tier reasoning effort dial (off / high / max).
         // Routes to the right body shape per upstream inside the provider
@@ -444,19 +442,13 @@ class SuperAgentBackend implements Backend
         // implement `SupportsReasoningEffort` — that set grew in SDK 1.1.2 to
         // include GLM-5.2 (off → thinking disabled; low…high → reasoning_effort
         // high; max → reasoning_effort max), alongside MiniMax M3.
-        if (isset($options['reasoning_effort']) && is_string($options['reasoning_effort']) && $options['reasoning_effort'] !== '') {
-            $perCall['reasoning_effort'] = strtolower(trim($options['reasoning_effort']));
-        }
+        $this->putLoweredString($perCall, $options, 'reasoning_effort');
 
         // Trace context — either a full W3C traceparent string or a TraceContext
         // instance the caller already built. Host middleware typically forwards
         // the inbound `traceparent` header here.
-        if (isset($options['traceparent']) && is_string($options['traceparent']) && $options['traceparent'] !== '') {
-            $perCall['traceparent'] = $options['traceparent'];
-        }
-        if (isset($options['tracestate']) && is_string($options['tracestate']) && $options['tracestate'] !== '') {
-            $perCall['tracestate'] = $options['tracestate'];
-        }
+        $this->putRawString($perCall, $options, 'traceparent');
+        $this->putRawString($perCall, $options, 'tracestate');
         if (isset($options['trace_context'])) {
             $perCall['trace_context'] = $options['trace_context'];
         }
@@ -509,20 +501,50 @@ class SuperAgentBackend implements Backend
         //     thinkingBudget; the provider emits exactly one of the two.
         // All four are read straight off Agent options and silently ignored
         // by providers that don't speak them, so forwarding is safe.
-        if (isset($options['reasoning_mode']) && is_string($options['reasoning_mode']) && $options['reasoning_mode'] !== '') {
-            $perCall['reasoning_mode'] = strtolower(trim($options['reasoning_mode']));
-        }
-        if (isset($options['reasoning_context']) && is_string($options['reasoning_context']) && $options['reasoning_context'] !== '') {
-            $perCall['reasoning_context'] = strtolower(trim($options['reasoning_context']));
-        }
+        $this->putLoweredString($perCall, $options, 'reasoning_mode');
+        $this->putLoweredString($perCall, $options, 'reasoning_context');
         if (isset($options['prompt_cache_options']) && is_array($options['prompt_cache_options']) && $options['prompt_cache_options'] !== []) {
             $perCall['prompt_cache_options'] = $options['prompt_cache_options'];
         }
-        if (isset($options['thinking_level']) && is_string($options['thinking_level']) && $options['thinking_level'] !== '') {
-            $perCall['thinking_level'] = strtolower(trim($options['thinking_level']));
-        }
+        $this->putLoweredString($perCall, $options, 'thinking_level');
 
         return $perCall;
+    }
+
+    /**
+     * Forward a non-empty string option verbatim into the per-call bag.
+     * No-op when the key is absent, non-string, or the empty string —
+     * keeps the run-options shape byte-identical for callers that don't
+     * pass the knob.
+     *
+     * @param array<string,mixed> $perCall  (by-ref) accumulator
+     * @param array<string,mixed> $options  dispatch options
+     */
+    protected function putRawString(array &$perCall, array $options, string $key): void
+    {
+        $value = $options[$key] ?? null;
+        if (is_string($value) && $value !== '') {
+            $perCall[$key] = $value;
+        }
+    }
+
+    /**
+     * Forward a string option, trimmed and lower-cased, into the per-call
+     * bag — the shape every enum-style dial (`reasoning_effort`,
+     * `reasoning_mode`, `reasoning_context`, `thinking_level`) shares so a
+     * stray `Pro`/`HIGH` from a caller normalizes before it reaches the
+     * SDK. No-op when the key is absent, non-string, or blank once trimmed
+     * (so a whitespace-only value never forwards as an empty string).
+     *
+     * @param array<string,mixed> $perCall  (by-ref) accumulator
+     * @param array<string,mixed> $options  dispatch options
+     */
+    protected function putLoweredString(array &$perCall, array $options, string $key): void
+    {
+        $value = $options[$key] ?? null;
+        if (is_string($value) && trim($value) !== '') {
+            $perCall[$key] = strtolower(trim($value));
+        }
     }
 
     /**

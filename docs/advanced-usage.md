@@ -44,6 +44,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 34. [Fable 5 & Sonnet 5 — the adaptive surface and the Anthropic effort dial (1.0.11 / SDK 1.1.5)](#34-fable-5--sonnet-5--the-adaptive-surface-and-the-anthropic-effort-dial-1011--sdk-115)
 35. [ai-dispatch parity — alias send, session resume, run archive (1.1.0)](#35-ai-dispatch-parity--alias-send-session-resume-run-archive-110)
 36. [GPT-5.6 & Grok 4.5 — the new request surfaces and the catalog refresh (1.1.6 / SDK 1.1.6)](#36-gpt-56--grok-45--the-new-request-surfaces-and-the-catalog-refresh-116--sdk-116)
+37. [Kimi K3 — the new Moonshot general flagship (1.1.7 / SDK 1.1.7)](#37-kimi-k3--the-new-moonshot-general-flagship-117--sdk-117)
 
 ---
 
@@ -3884,6 +3885,59 @@ else.
 - Zero-config defaults moved SDK-side: `openai-responses` → `gpt-5.6-sol`,
   `grok` → `grok-4.5`, `gemini` → `gemini-3.5-flash`. Every previously
   shipped id stays reachable by explicit config.
+
+---
+
+## 37. Kimi K3 — the new Moonshot general flagship (1.1.7 / SDK 1.1.7)
+
+SDK 1.1.7 lands **Kimi K3** (`kimi-k3`), Moonshot's new open-weight general
+flagship (released 2026-07-16) and the SDK's new zero-config `kimi` default.
+It's a 2.8T-parameter open-weight MoE (16 of 896 experts active per token) with
+a 1M-token context window, always-on thinking, and image + video input.
+SuperAICore mirrors the new pricing row and forwards the SDK-side default
+untouched — no resolver, engine-seed or provider-type change is required.
+
+### Routing to Kimi K3
+
+The native (metered, BYO-API-key) Moonshot path resolves `kimi-k3` as its
+zero-config default SDK-side, so you don't have to name it:
+
+```php
+$dispatcher->dispatch([
+    'backend'         => 'superagent',
+    'prompt'          => 'Summarise this 400-page spec and flag the ambiguities.',
+    'provider_config' => ['provider' => 'kimi', 'api_key' => env('KIMI_API_KEY')],
+    // no 'model' → SDK's KimiProvider::defaultModel() → kimi-k3
+    'reasoning_effort'=> 'high',   // K3's thinking is always on; the dial tunes depth
+]);
+```
+
+Pin `'model' => 'kimi-k2-6'` if you want the previous general default, or
+`'model' => 'kimi-k2.7-code'` for the coding-focused flagship — both stay
+reachable.
+
+### Pricing
+
+`kimi-k3` is seeded into `model_pricing` at Moonshot's official metered rate so
+`CostCalculator` prices it offline without a `ModelCatalog` round-trip:
+
+| Model | Input / 1M | Cache-hit input / 1M | Output / 1M |
+| --- | --- | --- | --- |
+| `kimi-k3` | $3.00 | $0.30 | $15.00 |
+| `kimi-k2.7-code` | $0.95 | $0.19 | $4.00 |
+
+The retired `kimi-k2-6` carries no explicit row — it resolves through the SDK
+catalog fallback. The subscription `kimi` CLI engine (kimi-code OAuth) is a
+separate surface and still bills $0/token.
+
+### What did *not* change
+
+- The `kimi` **CLI** engine (`EngineCatalog`) — an OAuth-routed subscription
+  surface — keeps its `kimi-code/kimi-for-coding` model and $0 billing. K3 is
+  the native metered-API general flagship, not the CLI default.
+- No new dispatch options. K3's always-on thinking is driven by the existing
+  cross-provider `reasoning_effort` dial, forwarded by `SuperAgentBackend` like
+  every other provider.
 
 ---
 

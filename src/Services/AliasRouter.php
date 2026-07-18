@@ -60,7 +60,13 @@ class AliasRouter
         'kimi_cli', 'qwen_cli', 'cursor_cli', 'grok_cli',
     ];
 
-    /** Model-id substring → engine backend, tried in order. */
+    /**
+     * Model-id substring → engine backend, tried in order. ORDER MATTERS:
+     * `resolve()` returns on the first substring hit, so a brand needle must
+     * precede any generic needle it could contain. In particular `grok` must
+     * come before `composer` — `grok-composer-2.5-fast` (a real Grok CLI id)
+     * contains `composer` and would otherwise misroute to `cursor_cli`.
+     */
     protected const INFERENCE = [
         'claude'   => 'claude_cli',
         'codex'    => 'codex_cli',
@@ -68,8 +74,8 @@ class AliasRouter
         'gemini'   => 'gemini_cli',
         'kimi'     => 'kimi_cli',
         'qwen'     => 'qwen_cli',
-        'composer' => 'cursor_cli',
         'grok'     => 'grok_cli',
+        'composer' => 'cursor_cli',
     ];
 
     public function __construct(

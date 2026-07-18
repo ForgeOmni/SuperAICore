@@ -47,6 +47,25 @@ class UsageRecorderCacheHitRateTest extends TestCase
         $this->assertSame(0.9, $captured['metadata']['cache_hit_rate']);
     }
 
+    public function test_explicit_zero_cache_read_does_not_shadow_legacy_alias(): void
+    {
+        // Regression: `??` let an explicit `cache_read_tokens => 0` (as a
+        // normalised SDK Usage object emits) mask a non-zero `cache_hit_tokens`
+        // raw alias — 0 is not null, so the coalesce never fell through and the
+        // cache slice was silently dropped. First NON-ZERO wins.
+        $captured = $this->captureRecord([
+            'backend'           => 'superagent',
+            'model'             => 'deepseek-v4-pro',
+            'input_tokens'      => 200,
+            'output_tokens'     => 50,
+            'cache_read_tokens' => 0,      // explicit zero
+            'cache_hit_tokens'  => 800,    // raw provider alias — must win
+        ]);
+
+        $this->assertSame(800, $captured['metadata']['cache_read_tokens']);
+        $this->assertSame(0.8, $captured['metadata']['cache_hit_rate']);
+    }
+
     public function test_cache_hit_rate_absent_when_no_cache_read(): void
     {
         // No cache slice — don't stamp 0.0 on the metadata, the

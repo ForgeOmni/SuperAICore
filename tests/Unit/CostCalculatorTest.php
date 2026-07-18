@@ -114,6 +114,31 @@ class CostCalculatorTest extends TestCase
         $this->assertEqualsWithDelta(10.5, $calc->calculate('gemini-3.5-flash', 1_000_000, 1_000_000), 0.0001);
     }
 
+    public function test_kimi_k3_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.7 — kimi-k3 (Moonshot's new general flagship) $3 in / $15
+        // out per 1M, cache-hit input $0.30.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(18.0, $calc->calculate('kimi-k3', 1_000_000, 1_000_000), 0.0001);
+        // Cache-read tokens bill at the $0.30 tier, not the $3 input rate.
+        $this->assertEqualsWithDelta(
+            0.30,
+            $calc->calculate('kimi-k3', 0, 0, null, 1_000_000, 0),
+            0.0001,
+        );
+    }
+
+    public function test_qwen3_coder_next_pricing_from_seeded_config(): void
+    {
+        // Official Alibaba Model Studio (International) base ≤32K tier —
+        // qwen3-coder-next $0.30 in / $1.50 out per 1M. 1M + 1M → $1.80.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(1.80, $calc->calculate('qwen3-coder-next', 1_000_000, 1_000_000), 0.0001);
+        // A qwen usage run must NOT fall through to $0 (the pre-fix bug: the
+        // model was in the qwen engine's available_models with no price row).
+        $this->assertGreaterThan(0.0, $calc->calculate('qwen3-coder-next', 1_000, 1_000, 'qwen_cli'));
+    }
+
     public function test_unknown_model_falls_through_to_superagent_model_catalog(): void
     {
         if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {

@@ -69,6 +69,37 @@ final class SideEffectDetectorTest extends TestCase
         $this->assertStringContainsString('deleted: pre.txt', implode(' ', $result['reasons']));
     }
 
+    public function test_bootstrap_cache_writes_are_skipped(): void
+    {
+        // Laravel writes compiled config/route/package caches under
+        // bootstrap/cache/ during a run. Those must NOT register as run
+        // side-effects (which would wrongly lock a FallbackChain hop). The
+        // 'bootstrap/cache' skip is a multi-segment path, so it must match on
+        // the path tail, not the directory basename.
+        mkdir($this->tmp . '/bootstrap/cache', 0755, true);
+        $d = new SideEffectDetector($this->tmp);
+        $d->snapshotBefore();
+
+        file_put_contents($this->tmp . '/bootstrap/cache/config.php', '<?php return [];');
+        $result = $d->detectAfter('');
+
+        $this->assertFalse($result['detected'], 'bootstrap/cache writes must be ignored');
+    }
+
+    public function test_a_real_write_outside_skip_paths_is_still_detected(): void
+    {
+        // Guard against over-pruning: a plain `cache/` dir at the root (not
+        // under bootstrap/) is NOT a skip path and must still be seen.
+        mkdir($this->tmp . '/cache', 0755, true);
+        $d = new SideEffectDetector($this->tmp);
+        $d->snapshotBefore();
+
+        touch($this->tmp . '/cache/app.txt');
+        $result = $d->detectAfter('');
+
+        $this->assertTrue($result['detected']);
+    }
+
     public function test_stream_json_tool_use_for_write_is_detected(): void
     {
         $d = new SideEffectDetector($this->tmp);

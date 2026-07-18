@@ -26,6 +26,25 @@ final class AliasRouterTest extends TestCase
         $this->assertSame('kimi_cli', $route['candidates'][0]['backend']);
     }
 
+    public function test_grok_composer_model_infers_grok_backend_not_cursor(): void
+    {
+        // `grok-composer-2.5-fast` is a real Grok CLI model id that CONTAINS
+        // the substring "composer"; the INFERENCE map must check `grok`
+        // before `composer` so it routes to grok_cli, not cursor_cli.
+        $route = $this->router()->resolve('grok-composer-2.5-fast');
+        $this->assertSame('inference', $route['source']);
+        $this->assertSame('grok_cli', $route['candidates'][0]['backend']);
+        $this->assertSame('grok-composer-2.5-fast', $route['candidates'][0]['model']);
+    }
+
+    public function test_bare_composer_model_still_infers_cursor(): void
+    {
+        // A cursor composer id (no "grok") must still land on cursor_cli.
+        $route = $this->router()->resolve('composer-2.5');
+        $this->assertSame('inference', $route['source']);
+        $this->assertSame('cursor_cli', $route['candidates'][0]['backend']);
+    }
+
     public function test_config_alias_overrides_builtin(): void
     {
         $route = $this->router([

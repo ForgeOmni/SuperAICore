@@ -4,6 +4,23 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
+## [1.1.7] — 2026-07-17
+
+**Kimi K3 — Moonshot's new open-weight flagship is priced and ready to route.** SuperAgent SDK pin moves to `^1.1.7`; no migrations, nothing breaks. Re-publish the config if you want the new pricing row.
+
+- **Kimi K3 priced and pickable** — `kimi-k3` (released 2026-07-16, a 2.8T open-weight model with a 1M-token context and always-on thinking) is the SDK's new zero-config Kimi default, at the official **$3 in / $0.30 cached / $15 out** per million. Your metered-Moonshot cost rows now bucket it correctly offline, no catalog round-trip. The coding-focused `kimi-k2.7-code` stays exactly where it was; the older `kimi-k2-6` remains reachable by id.
+- **Fixed: the CLI now reports the right version.** `superaicore --version` was stuck at `1.1.5` (it wasn't bumped in the 1.1.6 release); it now reads `1.1.7`.
+- **Grok CLI support hardened** (verified against `grok` 0.2.102):
+  - **Fixed a dispatch failure on high effort** — sending `effort: max` (or `xhigh`) to the Grok CLI used to pass `--effort max`, which grok-4.5's three-level dial *rejects*, failing the whole run. Those values now clamp to `high`, and `off`/`none`/`minimal` send nothing instead of erroring.
+  - **Richer Grok results** — Grok CLI runs now surface `session_id`, turn count, cache-read tokens and the model's reasoning (`thinking`) in the result envelope, matching the other CLI engines. (Subscription billing is unchanged — Grok CLI stays $0/token.)
+  - **Resume a Grok session** — pass `resume_session_id` (or `continue_session` / `fork_session`) to continue a prior Grok conversation, the same way Claude and Codex already work; `superaicore resume` picks it up.
+- **Reliability hardening** (a bug sweep across routing, cost tracking and dispatch — all with new regression tests):
+  - `grok-composer-2.5-fast` now routes to the Grok engine instead of being misdirected to Cursor (it contains the word "composer").
+  - Cost dashboards stop dropping the prompt-cache slice when a provider reports it under the legacy field name, and `qwen3-coder-next` is now priced (was billing $0).
+  - A quota / rate-limit failure on a **streaming** run now cools down the affected account so the next task rotates to a healthy one (it already did for non-streaming runs).
+  - Fixed a crash when an engine is misconfigured to a non-array value, a Cursor streaming edge case that could return an empty result, a fallback path that didn't kick in on silent crashes, and a process-monitor false "dead" for jobs running under another user. Laravel's `bootstrap/cache` writes no longer count as task side-effects.
+- Housekeeping otherwise — an internal cleanup of the dispatch-option forwarding in `SuperAgentBackend` (no behavior change) and its regression tests.
+
 ## [1.1.6] — 2026-07-12
 
 **GPT-5.6, Grok 4.5 and a price-table truth-up — your cost dashboards match what vendors actually bill.** SuperAgent SDK pin moves to `^1.1.6`; no migrations. Re-publish the config if you want the refreshed pricing table.

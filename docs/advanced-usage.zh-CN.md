@@ -44,6 +44,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 34. [Fable 5 与 Sonnet 5 —— 自适应请求面与 Anthropic effort 档位（1.0.11 / SDK 1.1.5）](#34-fable-5-与-sonnet-5--自适应请求面与-anthropic-effort-档位1011--sdk-115)
 35. [ai-dispatch 对齐 —— 短名派单、会话续聊、运行存档（1.1.0）](#35-ai-dispatch-对齐--短名派单会话续聊运行存档110)
 36. [GPT-5.6 与 Grok 4.5 —— 新请求面与目录刷新（1.1.6 / SDK 1.1.6）](#36-gpt-56-与-grok-45--新请求面与目录刷新116--sdk-116)
+37. [Kimi K3 —— Moonshot 新的通用旗舰（1.1.7 / SDK 1.1.7）](#37-kimi-k3--moonshot-新的通用旗舰117--sdk-117)
 
 ---
 
@@ -3691,6 +3692,53 @@ effort 值由 SDK 按模型代次归一化（`gpt-5.6*`：`minimal`→`low`、
   显式配置调用。
 
 ---
+
+## 37. Kimi K3 —— Moonshot 新的通用旗舰（1.1.7 / SDK 1.1.7）
+
+SDK 1.1.7 带来 **Kimi K3**（`kimi-k3`），Moonshot 新的开源通用旗舰
+（2026-07-16 发布），也是 SDK 新的零配置 `kimi` 默认。它是一个 2.8T 参数的
+开源权重 MoE（每 token 激活 896 个专家中的 16 个），带 1M token 上下文窗口、
+常开思考，以及图像 + 视频输入。SuperAICore 镜像新的定价行并原样转发 SDK 侧的
+默认 —— 无需改动任何 resolver、engine-seed 或 provider-type。
+
+### 路由到 Kimi K3
+
+原生（计量、自带 API key）的 Moonshot 通道在 SDK 侧把 `kimi-k3` 解析为其零配置
+默认，因此你无需显式命名：
+
+```php
+$dispatcher->dispatch([
+    'backend'         => 'superagent',
+    'prompt'          => 'Summarise this 400-page spec and flag the ambiguities.',
+    'provider_config' => ['provider' => 'kimi', 'api_key' => env('KIMI_API_KEY')],
+    // 无 'model' → SDK 的 KimiProvider::defaultModel() → kimi-k3
+    'reasoning_effort'=> 'high',   // K3 的思考常开；这个档位调节深度
+]);
+```
+
+若想要此前的通用默认，固定 `'model' => 'kimi-k2-6'`；若要编码向旗舰，固定
+`'model' => 'kimi-k2.7-code'` —— 两者都仍可达。
+
+### 定价
+
+`kimi-k3` 已按 Moonshot 官方计量价格种入 `model_pricing`，`CostCalculator`
+无需回查 `ModelCatalog` 即可离线计价：
+
+| 模型 | 输入 / 1M | 缓存命中输入 / 1M | 输出 / 1M |
+| --- | --- | --- | --- |
+| `kimi-k3` | $3.00 | $0.30 | $15.00 |
+| `kimi-k2.7-code` | $0.95 | $0.19 | $4.00 |
+
+退役的 `kimi-k2-6` 没有显式价格行 —— 它通过 SDK 目录回退解析。订阅制 `kimi`
+CLI 引擎（kimi-code OAuth）是独立的一面，仍按 $0/token 计费。
+
+### 未改变的部分
+
+- `kimi` CLI 引擎（`EngineCatalog`）—— 一个走 OAuth 的订阅面 —— 保持其
+  `kimi-code/kimi-for-coding` 模型与 $0 计费。K3 是原生计量 API 的通用旗舰，
+  并非 CLI 默认。
+- 无新增 dispatch 选项。K3 的常开思考由既有的跨 provider `reasoning_effort`
+  档位驱动，和其他所有 provider 一样由 `SuperAgentBackend` 转发。
 
 ## 另见
 

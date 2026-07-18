@@ -45,8 +45,13 @@ class EngineCatalog
             // model the bundled + user-override catalog knows. Copilot keeps
             // its own list because its IDs use dot separators that don't
             // overlap with the catalog's dash form.
-            $hostSetModels = is_array($overrides[$key] ?? null)
-                && array_key_exists('available_models', $overrides[$key]);
+            // A malformed override (e.g. `super-ai-core.engines.claude => false`
+            // as a mistaken "disable this engine") must not crash the whole
+            // catalog — `?? []` only guards null, not a non-array, so
+            // array_merge() below would TypeError. Coerce to [] like the
+            // host-injected-engines loop below already does.
+            $override = is_array($overrides[$key] ?? null) ? $overrides[$key] : [];
+            $hostSetModels = array_key_exists('available_models', $override);
             if (!$hostSetModels) {
                 $defaults['available_models'] = $this->expandFromCatalog(
                     $key,
@@ -54,7 +59,7 @@ class EngineCatalog
                 );
             }
 
-            $merged = array_merge($defaults, $overrides[$key] ?? []);
+            $merged = array_merge($defaults, $override);
             $this->engines[$key] = new EngineDescriptor(
                 key:                $key,
                 label:              (string) $merged['label'],

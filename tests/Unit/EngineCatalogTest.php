@@ -35,6 +35,20 @@ final class EngineCatalogTest extends TestCase
         $this->assertContains('superagent', $keys);
     }
 
+    public function test_non_array_override_for_seeded_engine_does_not_crash(): void
+    {
+        // A mistaken `super-ai-core.engines.claude => false` (or any non-array
+        // override) must degrade to "no override", not TypeError out of
+        // array_merge() and take down the whole catalog.
+        $catalog = new EngineCatalog(['claude' => false, 'gemini' => 'nope', 'codex' => 7]);
+
+        $keys = $catalog->keys();
+        $this->assertContains('claude', $keys);
+        $this->assertContains('gemini', $keys);
+        $this->assertContains('codex', $keys);
+        $this->assertNotNull($catalog->get('claude'));
+    }
+
     public function test_dispatcher_to_engine_map_includes_copilot(): void
     {
         $catalog = new EngineCatalog([]);

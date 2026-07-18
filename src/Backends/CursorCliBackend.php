@@ -151,7 +151,16 @@ class CursorCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
             return null;
         }
 
-        $parsed = $this->parseAgentOutput($result['captured']);
+        // parseAgentOutput() returns null when the captured buffer is empty or
+        // unparseable (a run that timed out / crashed before emitting valid
+        // output). Guard the null before dereferencing, like every other
+        // streaming backend — otherwise the envelope comes back with
+        // text/tokens = null, violating its own contract and feeding nulls
+        // into the usage/cost path.
+        $parsed = $this->parseAgentOutput($result['captured']) ?? [
+            'text' => '', 'model' => null, 'input_tokens' => 0,
+            'output_tokens' => 0, 'stop_reason' => null,
+        ];
 
         return [
             'text'  => $parsed['text'],

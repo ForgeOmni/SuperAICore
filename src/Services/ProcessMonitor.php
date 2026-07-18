@@ -102,7 +102,17 @@ class ProcessMonitor
     {
         if (!$pid || $pid <= 1) return false;
         if (function_exists('posix_kill')) {
-            return @posix_kill($pid, 0);
+            if (@posix_kill($pid, 0)) return true;
+            // posix_kill(0) returns false for BOTH "no such process" (ESRCH)
+            // and "process exists but is owned by another user" (EPERM). Only
+            // ESRCH means dead — treat EPERM as alive so a subprocess running
+            // under a different uid (sudo, another service account) isn't
+            // wrongly marked finished. EPERM == 1 on every POSIX platform.
+            if (function_exists('posix_get_last_error')) {
+                $eperm = defined('SOCKET_EPERM') ? SOCKET_EPERM : 1;
+                return posix_get_last_error() === $eperm;
+            }
+            return false;
         }
         if (PHP_OS_FAMILY === 'Windows') {
             // posix ext is unavailable on Windows PHP; ask the task table.

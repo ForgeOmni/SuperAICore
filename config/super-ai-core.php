@@ -1018,14 +1018,28 @@ return [
         'qwen3.5-plus'                => ['input' => 0.40,  'output' => 1.20],
         'qwen3.5-flash'               => ['input' => 0.15,  'output' => 0.60],
         'qwen3-coder-plus'            => ['input' => 0.40,  'output' => 1.20],
+        // qwen3-coder-next (GA 2026-02-04): 262K context agentic coder, in the
+        // `qwen` engine's available_models. Official Alibaba Model Studio
+        // (International) tiered rate — base ≤32K tier modelled here; the
+        // higher input-length tiers ($0.50/$2.50 for 32-128K; $0.80/$4 for
+        // 128-256K) are noted but not modelled — override upward for
+        // long-context traffic.
+        'qwen3-coder-next'            => ['input' => 0.30,  'output' => 1.50],
         'qwen3-vl-plus'               => ['input' => 0.78,  'output' => 3.90],
 
-        // ─── Moonshot Kimi (metered API; SDK 1.1.6) ───
-        // kimi-k2.7-code (2026-06-12) is Moonshot's coding flagship — 262K
-        // context / 32K output, thinking forced on, image+video input —
-        // at $0.95 in / $0.19 cache-hit / $4 out per 1M; the highspeed
-        // variant bills exactly 2×. Distinct from the subscription `kimi`
-        // CLI engine (kimi-code OAuth), which stays $0/token.
+        // ─── Moonshot Kimi (metered API; SDK 1.1.7) ───
+        // kimi-k3 (2026-07-16) is Moonshot's new general flagship and the
+        // SDK's zero-config `kimi` default (SDK 1.1.7 moved it off
+        // kimi-k2-6) — a 2.8T open-weight MoE (16/896 experts active), 1M
+        // context, always-on thinking, image+video input — at $3 in /
+        // $0.30 cache-hit / $15 out per 1M. kimi-k2.7-code (2026-06-12) is
+        // the separate coding flagship — 262K context / 32K output, thinking
+        // forced on — at $0.95 in / $0.19 cache-hit / $4 out per 1M; the
+        // highspeed variant bills exactly 2×. The retired kimi-k2-6 general
+        // model stays reachable by id (resolves via the SDK ModelCatalog).
+        // All distinct from the subscription `kimi` CLI engine (kimi-code
+        // OAuth), which stays $0/token.
+        'kimi-k3'                     => ['input' => 3.00,  'output' => 15.00, 'cache_read_input' => 0.30],
         'kimi-k2.7-code'              => ['input' => 0.95,  'output' => 4.00, 'cache_read_input' => 0.19],
         'kimi-k2.7-code-highspeed'    => ['input' => 1.90,  'output' => 8.00, 'cache_read_input' => 0.38],
 

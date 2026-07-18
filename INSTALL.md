@@ -1433,6 +1433,24 @@ worth knowing:
    existing `reasoning_effort` dial gets normalized per model generation
    SDK-side — a stray value never 400s.
 
+**1.1.7 — Kimi K3; no migration; SDK pin moves to `^1.1.7`.** Additive —
+no schema changes; publish the config only if you want the new `model_pricing`
+row. Two things worth knowing:
+
+1. **Kimi K3 is priced and is the new zero-config Kimi default.** `kimi-k3`
+   (Moonshot's new 2.8T open-weight general flagship, 1M context, always-on
+   thinking) resolves as the `kimi` native default SDK-side, at the official
+   **$3 in / $0.30 cached / $15 out** per 1M. The row is seeded into
+   `model_pricing` so `CostCalculator` prices it offline — re-publish the
+   config if your host carries an older copy. The coding-focused
+   `kimi-k2.7-code` is unchanged, and the older `kimi-k2-6` stays reachable by
+   explicit `model` config. The subscription `kimi` CLI engine (kimi-code
+   OAuth, $0/token) is untouched.
+
+2. **`superaicore --version` now reports the real version.** It was stuck at
+   `1.1.5` (not bumped in the 1.1.6 release) and now reads `1.1.7`. No action
+   needed — just less confusing in `doctor` output and bug reports.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

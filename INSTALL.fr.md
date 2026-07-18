@@ -1476,6 +1476,25 @@ de schéma ; publiez la config seulement si vous voulez la table
    génération de modèle côté SDK — une valeur erronée ne provoque jamais de
    400.
 
+**1.1.7 — Kimi K3 ; aucune migration ; le pin SDK passe à `^1.1.7`.**
+Additif — aucun changement de schéma ; publiez la config seulement si vous
+voulez la nouvelle ligne `model_pricing`. Deux choses à savoir :
+
+1. **Kimi K3 est tarifé et devient le nouveau défaut Kimi zéro-config.**
+   `kimi-k3` (le nouveau vaisseau amiral généraliste open-weight de Moonshot,
+   2,8 T de paramètres, 1M de contexte, réflexion toujours active) se résout
+   comme défaut natif `kimi` côté SDK, au tarif officiel **3 $ entrée /
+   0,30 $ en cache / 15 $ sortie** par 1M. La ligne est injectée dans
+   `model_pricing` pour que `CostCalculator` la tarife hors-ligne — republiez
+   la config si votre hôte porte une copie plus ancienne. Le `kimi-k2.7-code`
+   orienté codage est inchangé, et l'ancien `kimi-k2-6` reste joignable en
+   config `model` explicite. Le moteur CLI `kimi` par abonnement (OAuth
+   kimi-code, 0 $/token) est intact.
+
+2. **`superaicore --version` rapporte désormais la vraie version.** Il était
+   bloqué à `1.1.5` (jamais incrémenté dans la release 1.1.6) et affiche
+   maintenant `1.1.7`.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

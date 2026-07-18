@@ -610,12 +610,19 @@ class TaskRunner
 
     protected function failureHaystack(TaskResultEnvelope $result): string
     {
+        // Diagnostic text only — deliberately NOT the exit code. Appending
+        // `(string) $result->exitCode` (a non-nullable int → always "0"/"1"/…)
+        // made the haystack never empty, which dead-lettered the
+        // `$haystack === ''` branch in fallbackReason() — a silent failure
+        // (no error/output/summary/log) with a non-zero exit could then never
+        // be classified retryable, defeating the "crash ⇒ try the next
+        // engine" safety net. The exit code isn't useful for word-pattern
+        // matching anyway; fallbackReason() reads `$result->exitCode` directly.
         return mb_strtolower(trim(implode("\n", array_filter([
             $result->error,
             $result->output,
             $result->summary,
             $result->logFile ? $this->readTail($result->logFile, 8192) : null,
-            (string) $result->exitCode,
         ], fn($value) => $value !== null && $value !== ''))));
     }
 
