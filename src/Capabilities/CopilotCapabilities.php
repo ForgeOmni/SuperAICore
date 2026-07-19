@@ -36,7 +36,8 @@ class CopilotCapabilities implements BackendCapabilities
 
     /**
      * Copilot's MCP config is JSON with the same `mcpServers` shape Claude uses,
-     * living at `$XDG_CONFIG_HOME/copilot/mcp-config.json` (fallback `~/.copilot/`).
+     * living at `$COPILOT_HOME/mcp-config.json` when that override is set,
+     * else `$XDG_CONFIG_HOME/copilot/mcp-config.json` (fallback `~/.copilot/`).
      *
      * Merge policy is more conservative than Claude's: we only touch the
      * server keys we own (the ones in `$servers`) and leave every other
@@ -51,7 +52,7 @@ class CopilotCapabilities implements BackendCapabilities
     public function renderMcpConfig(array $servers): string
     {
         $existing = [];
-        foreach ([self::xdgPath(), self::homeDir() . '/.copilot/mcp-config.json'] as $candidate) {
+        foreach ([self::copilotHomePath(), self::xdgPath(), self::homeDir() . '/.copilot/mcp-config.json'] as $candidate) {
             if ($candidate && is_file($candidate) && is_readable($candidate)) {
                 $decoded = json_decode((string) @file_get_contents($candidate), true);
                 if (is_array($decoded)) {
@@ -74,6 +75,13 @@ class CopilotCapabilities implements BackendCapabilities
         }
 
         return json_encode($existing, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    /** `COPILOT_HOME` relocates the whole state dir (defaults to ~/.copilot). */
+    private static function copilotHomePath(): ?string
+    {
+        $home = getenv('COPILOT_HOME');
+        return $home ? rtrim($home, '/\\') . '/mcp-config.json' : null;
     }
 
     private static function xdgPath(): ?string

@@ -370,9 +370,14 @@ class CliStatusDetector
             $envToken = $env['COPILOT_GITHUB_TOKEN'] ?? $env['GH_TOKEN'] ?? $env['GITHUB_TOKEN'] ?? null;
             $home = self::resolvedHome();
             $xdg = $env['XDG_CONFIG_HOME'] ?? ($home ? $home . '/.config' : '');
+            // COPILOT_HOME (documented since 1.0.x, verified 1.0.71) overrides
+            // the whole state dir; check it first so relocated installs count.
+            $copilotHome = $env['COPILOT_HOME'] ?? '';
             $configDir = $xdg ? $xdg . '/copilot' : '';
             $homeDir   = $home ? $home . '/.copilot' : '';
-            $hasState  = ($configDir && is_dir($configDir)) || ($homeDir && is_dir($homeDir));
+            $hasState  = ($copilotHome && is_dir($copilotHome))
+                || ($configDir && is_dir($configDir))
+                || ($homeDir && is_dir($homeDir));
 
             $result = [
                 'loggedIn' => (bool) $envToken || $hasState,
@@ -394,15 +399,19 @@ class CliStatusDetector
         }
 
         if ($binary === 'cursor-agent') {
-            // `cursor-agent login` (browser OAuth) writes
-            // ~/.cursor/agent-cli-state.json; headless runners export
-            // CURSOR_API_KEY. The generic probe misses this because the
-            // binary name ('cursor-agent') doesn't match the dir ('.cursor').
+            // cursor-agent keeps OAuth credentials in the OS keychain — no
+            // file to probe. ~/.cursor/agent-cli-state.json is written the
+            // first time the CLI itself runs, so its presence means "CLI has
+            // run here" (status stays the honest 'config-present'). Do NOT
+            // fall back to a bare ~/.cursor dir check: the Cursor IDE creates
+            // that dir without the CLI ever having been used. Headless
+            // runners export CURSOR_API_KEY instead. The generic probe misses
+            // all this because the binary name ('cursor-agent') doesn't
+            // match the dir ('.cursor').
             $envKey = $env['CURSOR_API_KEY'] ?? null;
             $home = self::resolvedHome();
             $stateFile = $home ? $home . '/.cursor/agent-cli-state.json' : '';
-            $hasState = ($stateFile !== '' && is_file($stateFile))
-                || ($home && is_dir($home . '/.cursor'));
+            $hasState = $stateFile !== '' && is_file($stateFile);
             return [
                 'loggedIn' => (bool) $envKey || $hasState,
                 'status'   => $envKey ? 'env-key' : ($hasState ? 'config-present' : 'not-logged-in'),

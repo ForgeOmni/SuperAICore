@@ -15,7 +15,8 @@ use Symfony\Component\Process\Process;
 
 /**
  * Spawns Cursor's `cursor-agent` CLI — the headless "Composer" agent
- * (verified against cursor-agent 2026.05.28).
+ * (verified against cursor-agent 2026.07.16; json + stream-json shapes
+ * re-captured live 2026-07-19 — unchanged, camelCase usage keys and all).
  *
  * Auth is owned by the binary: `cursor-agent login` (browser OAuth) writes
  * `~/.cursor/agent-cli-state.json`; headless runners can instead export

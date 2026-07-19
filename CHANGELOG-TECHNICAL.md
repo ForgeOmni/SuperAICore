@@ -4,6 +4,97 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.10] — 2026-07-19
+
+**Second-wave CLI drift audit: copilot 1.0.71, cursor-agent 2026.07.16,
+kiro-cli 2.13.0, kimi (legacy uv kimi-cli) 1.49.0.** Live-verified against
+the installed binaries (help surfaces, `models` / `--list-models` output,
+wire captures, and — for kimi — the installed Python package source);
+the copilot roster additionally against the "Copilot CLI" column of
+GitHub's supported-models reference, parsed from the live HTML table. No
+SDK bump, no migrations, no new config keys required.
+
+### Added
+
+- **`cli:install kiro`** — kiro joins `CliInstaller::INSTALLABLE_BACKENDS`
+  with the official script (`curl -fsSL https://cli.kiro.dev/install |
+  bash`) as default and `--via=brew` (`brew install --cask kiro-cli`)
+  fallback. Copilot gains a brew source too (`--via=brew` →
+  `brew install --cask copilot-cli`).
+
+### Changed
+
+- **`Services\CopilotModelResolver`** — FAMILIES/CATALOG refreshed to the
+  1.0.71 roster per GitHub's supported-models CLI column:
+  `sonnet→claude-sonnet-5`, new `fable→claude-fable-5`,
+  `opus→claude-opus-4.8` (4.7 / 4.6 / 4.5 kept as rows — the earlier
+  in-session claim that opus-4.6 "never existed" was wrong),
+  `gpt→gpt-5.6-sol` (Sol/Luna/Terra trio + 5.5 / 5.4 / 5.4-mini /
+  5.3-codex / 5-mini), `gemini→gemini-3.5-flash` (+ 3.1-pro row), new
+  `kimi→kimi-k2.7-code`, new `mai→mai-code-1-flash`. Removed: gpt-4.1,
+  gpt-5, gpt-5.1 (retired upstream 2026-04-15; `familyFromName()` now
+  degrades it to the gpt default), gpt-5.1-codex*, gemini-3-pro-preview.
+  Slug caveat documented: the 5.6 trio ids follow display names (codex
+  convention); Opus 4.8 fast-mode (preview) has no published slug and is
+  deliberately absent. `familyFromName()` learns `fable`.
+- **`config/super-ai-core.php`** — copilot cost rows converted from
+  dash-keyed (`copilot:claude-sonnet-4-5`) to the dot ids the wire
+  actually reports (`copilot:claude-sonnet-4.6`, …); rows added for the
+  full current roster (opus 4.6–4.8, gpt-5.5/5.6 trio, gemini-3.1-pro).
+  Cursor: new `cursor:cursor-grok-4.5-high` row; legacy `grok-4.5-xhigh`
+  key retained so historical usage rows stay priced.
+- **`Services\EngineCatalog`** — copilot seed `available_models` mirrors
+  the new resolver catalog (re-verified 2026-07-19); cursor seed grok row
+  → `cursor-grok-4.5-high`; stale kiro slug comment fixed.
+- **`Services\CursorModelResolver`** — upstream renamed grok rows to
+  `cursor-grok-4.5-{low,medium,high}[-fast]` and dropped the `xhigh`
+  tier; family alias + catalog row updated, `familyFromName()` matches
+  `cursor-grok-*` so stale saved configs resolve.
+- **`Services\KiroModelResolver`** — STATIC_FALLBACK mirrors the live
+  2.13.0 list (9 models; all Opus SKUs, claude-sonnet-4.6 and
+  claude-opus-4.5 dropped upstream); unknown families keep fail-closed
+  passthrough (documented + test-pinned).
+- **`Services\CliStatusDetector`** — cursor: a bare `~/.cursor` dir no
+  longer counts as config-present (IDE creates it); only
+  `~/.cursor/agent-cli-state.json` does. Copilot: honors `COPILOT_HOME`.
+- **`Capabilities\CopilotCapabilities`** — MCP config path resolution
+  honors `COPILOT_HOME`.
+- **`Backends\CopilotCliBackend`** — `buildEnv()` pins
+  `COPILOT_AUTO_UPDATE=false` for headless dispatches (CLI self-updates
+  outside CI). Wire schema re-verified live: `session.tools_updated`,
+  `result.exitCode`, `result.usage.premiumRequests` unchanged.
+- **`Services\CliSkillBridge`** — kimi promoted to `native_dir` for BOTH
+  variants (legacy `~/.kimi/skills/`, kimi-code `~/.kimi-code/skills/`);
+  the legacy instructions-digest (`~/.kimi/super-team-skills.md`) was
+  never read by any CLI generation — new one-time `pruneKimiDigest()`
+  removes it after manifest-confirmed ownership.
+- **Doc comments / docs** — `CursorCliBackend` (2026.07.16, ~193 slugs),
+  `KiroCliBackend` (2.13 slugs; MCP path corrected to
+  `~/.kiro/settings/mcp.json`), `KimiCliBackend` +
+  `Capabilities\KimiCapabilities` + `Support\KimiRuntime` (1.49 re-verify
+  notes incl. kosong single-part string-collapse serialization),
+  `docs/copilot-cli-backend.md`, `docs/kimi-cli-backend.md` §10.
+
+### Tests
+
+- `CursorModelResolverTest` (renamed grok slugs + legacy-slug resolution),
+  `KiroModelResolverTest` (LIVE_PAYLOAD replaced with 2026-07-19 capture;
+  opus fail-closed passthrough pinned), `EngineCatalogTest` (kiro slug
+  pin 4.6→4.5; copilot pins gpt-5.1 → gpt-5.6-sol / claude-opus-4.8),
+  `CliInstallerTest` (kiro default = script; absent-source case moved to
+  copilot+uv), `CliSkillBridgeDescriptorTest` (kimi legacy →
+  `native_dir` `.kimi/skills`). Full suite: 803 passed, 5 skipped.
+
+### Verification limits
+
+- Copilot premium-model acceptance verified against GitHub's docs table
+  and CLI changelog only (machine plan is mini-tier; named premium models
+  return plan errors — indistinguishable from unknown slugs, so the
+  gpt-5.6-{sol,luna,terra} and opus-4.8 fast-mode slugs could not be
+  wire-confirmed). Cursor named-SKU live runs blocked the same way (Free
+  plan). Kiro's `▸ Credits:` summary-line format not re-captured live
+  (no credits spent); its loose parser left untouched.
+
 ## [1.1.9] — 2026-07-19
 
 **Antigravity CLI engine + four-CLI live audit.** Two workstreams, no SDK

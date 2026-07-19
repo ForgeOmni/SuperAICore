@@ -111,10 +111,12 @@ final class KimiRuntime
     }
 
     /**
-     * kimi-code's user-scope auto-discovered skills dir, `$HOME`-relative
-     * (kimi-code only — legacy kimi-cli has no skills dir; it reads
-     * `.claude/skills/` natively). Same outside-`$HOME` fallback rule as
-     * {@see mcpConfigRelPath()}.
+     * The active generation's user-scope auto-discovered skills dir,
+     * `$HOME`-relative: `.kimi-code/skills` for kimi-code, `.kimi/skills`
+     * for legacy kimi-cli (native discovery re-verified against v1.49.0,
+     * which merges all brand dirs — kimi/claude/codex — by default via
+     * `merge_all_available_skills=true`). Same outside-`$HOME` fallback
+     * rule as {@see mcpConfigRelPath()}.
      */
     public static function skillsRelPath(): string
     {

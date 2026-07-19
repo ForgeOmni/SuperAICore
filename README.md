@@ -37,6 +37,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [Kimi K3 wave (1.1.7 / SDK 1.1.7)](#kimi-k3-wave-117--sdk-117)
   - [Kimi Code 0.27 support refresh wave (1.1.8)](#kimi-code-027-support-refresh-wave-118)
   - [Antigravity CLI + four-CLI audit wave (1.1.9)](#antigravity-cli--four-cli-audit-wave-119)
+  - [Copilot / Cursor / Kiro / Kimi audit wave (1.1.10)](#copilot--cursor--kiro--kimi-audit-wave-1110)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -111,6 +112,41 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### Copilot / Cursor / Kiro / Kimi audit wave (1.1.10)
+
+No SDK bump. 1.1.9 audited claude / codex / gemini / grok / antigravity;
+this wave live-verifies the remaining four engines against the binaries
+actually shipping (copilot 1.0.71, cursor-agent 2026.07.16, kiro-cli
+2.13.0, kimi 1.49.0) and fixes the drift.
+
+- **Copilot catalog & cost rows** — the model pickers now mirror the
+  "Copilot CLI" column of GitHub's supported-models table: Sonnet
+  5/4.6/4.5, Fable 5, Opus 4.8/4.7/4.6/4.5, Haiku 4.5, GPT-5.6
+  (Sol/Luna/Terra), GPT-5.5/5.4/5.4-mini/5.3-codex/5-mini, Gemini 3.5
+  Flash & 3.1 Pro, Kimi K2.7 Code, MAI-Code-1 Flash. gpt-5.1 (retired
+  upstream 2026-04-15) now degrades to the gpt family default instead of
+  erroring. Cost attribution had never matched — config rows keyed with
+  dashes while the wire reports dot ids; every copilot run now books
+  correctly. `COPILOT_HOME` honored; `COPILOT_AUTO_UPDATE=false` pinned
+  for headless dispatches; two new family aliases (`fable`, `mai`).
+- **Cursor grok tier rename absorbed** — upstream renamed the rows to
+  `cursor-grok-4.5-{low,medium,high}[-fast]` and dropped `xhigh`; the
+  `grok` alias now routes `cursor-grok-4.5-high`, stale saved slugs
+  still resolve, historical usage rows keep pricing. Login detection
+  requires the CLI's own `agent-cli-state.json` (a bare `~/.cursor` dir
+  is just the IDE).
+- **Kiro 2.13 model list** — Opus and sonnet-4.6 are gone upstream; the
+  static fallback mirrors the live nine SKUs, dropped families
+  fail-closed (you see Kiro's real error, not a silent substitute), and
+  `cli:install kiro` finally exists (official script, `--via=brew`
+  fallback).
+- **Kimi legacy skills un-no-op'd** — the legacy (Python) kimi CLI
+  natively reads `~/.kimi/skills/`; the digest file previous releases
+  wrote was never read by any generation. Skills now install natively
+  for both generations, and the inert digest is pruned once ownership is
+  confirmed. Dispatch contract on 1.49: zero changes needed
+  (source-level re-verification).
 
 ### Antigravity CLI + four-CLI audit wave (1.1.9)
 

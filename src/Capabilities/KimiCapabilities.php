@@ -42,9 +42,14 @@ use SuperAICore\Support\KimiRuntime;
  * which generation is active from the on-disk layout.
  *
  * **Skills/agents.**
- *   - legacy kimi-cli (verified 2026-04-22 on v1.38.0): `.claude/skills/`
- *     IS auto-loaded natively; agents live under `~/.kimi/agents/` in
- *     Kimi's own YAML format (bridged by `KimiAgentSync`).
+ *   - legacy kimi-cli (verified v1.38.0; re-verified v1.49.0 from the
+ *     installed package source): skills discovery is native — user-scope
+ *     brand dirs `~/.kimi/skills/` > `~/.claude/skills/` > `~/.codex/skills/`
+ *     (ALL merged by default via `merge_all_available_skills=true`) plus
+ *     generic `~/.agents/skills/`, SKILL.md format. `CliSkillBridge`
+ *     installs wrappers into `~/.kimi/skills/`. Agents live under
+ *     `~/.kimi/agents/` in Kimi's own YAML format (bridged by
+ *     `KimiAgentSync`).
  *   - kimi-code (verified v0.27.0 docs): `.claude/skills/` is NOT read.
  *     Discovery is `.kimi-code/skills/` + `.agents/skills/` (project) and
  *     `~/.kimi-code/skills/` + `~/.agents/skills/` (user), SKILL.md

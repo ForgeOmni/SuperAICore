@@ -27,15 +27,25 @@ use Symfony\Component\Process\Process;
  * NOT exposed here — that path routes through the `superagent` backend
  * via the SDK's KimiProvider under separate provider types.
  *
- * ── Headless surface, legacy kimi-cli (verified against kimi v1.38.0) ──
- *   - `--print` is a boolean flag (no value); implicitly enables `--yolo`
+ * ── Headless surface, legacy kimi-cli (verified against kimi v1.38.0;
+ *    re-verified live against v1.49.0 on 2026-07-19 — every flag below
+ *    unchanged) ──
+ *   - `--print` is a boolean flag (no value); auto-approves tool calls
+ *     and auto-dismisses AskUserQuestion for the invocation
  *   - `--output-format stream-json` → NDJSON on stdout, one line per event
- *   - `--prompt "..."` (or `-p`) delivers the user message
+ *   - `--prompt "..."` (or `-p`; v1.49 adds `--command`/`-c` aliases)
+ *     delivers the user message
  *   - `--work-dir <dir>` (`-w`) overrides cwd independently of env
  *   - `--max-steps-per-turn <N>` caps the agentic loop (default 500)
  *   - `--mcp-config-file <path>` repeatable, per-run MCP injection
  *   - assistant `content` is an ARRAY of typed blocks (`text` / `think`)
+ *     — EXCEPT when a message holds a single text part, which the wire
+ *     serializer collapses to a plain STRING (kosong `Message`
+ *     `_serialize_content`, confirmed in the v1.49 source); parsing must
+ *     accept both shapes even within one dialect
  *   - resume hint goes to stderr (does not pollute the NDJSON stream)
+ *   - v1.49 also grew `--final-message-only`, `--quiet`, `--continue`,
+ *     `--agent <default|okabe>` and `--skills-dir` — none needed here
  *
  * ── Headless surface, new kimi-code (verified v0.6.0; re-verified live
  *    against v0.27.0 on 2026-07-19 — contract unchanged) ──
@@ -324,7 +334,7 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     }
 
     /**
-     * Legacy MoonshotAI/kimi-cli (verified against kimi v1.38.0): `--print`
+     * Legacy MoonshotAI/kimi-cli (verified v1.38.0, re-verified v1.49.0): `--print`
      * triggers headless mode, with `--max-steps-per-turn` and per-run
      * `--mcp-config-file`. Long-form `--prompt` keeps the command readable in
      * logs + Process Monitor.

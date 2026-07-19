@@ -12,15 +12,17 @@ use Symfony\Component\Process\Process;
  * fixed set of model IDs via `--model` and exposes the authoritative
  * list through `cursor-agent models` (one `slug - Display Name` per line).
  * Account tier decides which rows are routable; the picker here is a
- * curated headline subset of the ~189-slug lineup verified 2026-07-12
- * against cursor-agent 2026.05.28 (the full list adds per-effort and
+ * curated headline subset of the ~193-slug lineup verified 2026-07-19
+ * against cursor-agent 2026.07.16 (the full list adds per-effort and
  * `-fast` variants of every family — use `liveCatalog()` for those).
  *
  * Cursor's "Composer" model family (`composer-2.5`, the account's
  * "current" pick; `composer-2.5-fast` alongside) is the headline tier;
  * the CLI also proxies Anthropic (Fable 5 / Sonnet 5 / Opus 4.x thinking
  * SKUs — Fable rows are flagged NO ZDR upstream), OpenAI (GPT-5.6
- * Sol/Terra/Luna, `gpt-5.x-codex`), xAI (`grok-4.5-xhigh`), Google
+ * Sol/Terra/Luna, `gpt-5.x-codex`), xAI (`cursor-grok-4.5-high` — the
+ * 2026.07 release renamed the grok rows from `grok-4.5-*` and capped the
+ * effort ladder at `high`), Google
  * (`gemini-3.5-flash`), Moonshot (`kimi-k2.7-code`) and Z.ai
  * (`glm-5.2-high`/`-max`) SKUs plus the `auto` router.
  *
@@ -46,7 +48,7 @@ class CursorModelResolver
         'sonnet'   => 'claude-sonnet-5-thinking-high',
         'opus'     => 'claude-opus-4-8-thinking-high',
         'gpt'      => 'gpt-5.6-sol-high',
-        'grok'     => 'grok-4.5-xhigh',
+        'grok'     => 'cursor-grok-4.5-high',
         'gemini'   => 'gemini-3.5-flash',
         'kimi'     => 'kimi-k2.7-code',
         'glm'      => 'glm-5.2-high',
@@ -78,7 +80,7 @@ class CursorModelResolver
         ['slug' => 'gpt-5.3-codex-high',                'display_name' => 'Codex 5.3 High',           'family' => 'gpt'],
         ['slug' => 'gpt-5.2',                           'display_name' => 'GPT-5.2',                  'family' => 'gpt'],
         // xAI / Google / Moonshot / Z.ai (proxied)
-        ['slug' => 'grok-4.5-xhigh',                    'display_name' => 'Cursor Grok 4.5',          'family' => 'grok'],
+        ['slug' => 'cursor-grok-4.5-high',              'display_name' => 'Cursor Grok 4.5',          'family' => 'grok'],
         ['slug' => 'gemini-3.5-flash',                  'display_name' => 'Gemini 3.5 Flash',         'family' => 'gemini'],
         ['slug' => 'gemini-3.1-pro',                    'display_name' => 'Gemini 3.1 Pro',           'family' => 'gemini'],
         ['slug' => 'kimi-k2.7-code',                    'display_name' => 'Kimi K2.7 Code',           'family' => 'kimi'],
@@ -202,7 +204,9 @@ class CursorModelResolver
         if (str_contains($slug, 'sonnet'))   return 'sonnet';
         if (str_contains($slug, 'opus'))     return 'opus';
         if (str_starts_with($slug, 'gpt'))   return 'gpt';
-        if (str_starts_with($slug, 'grok'))  return 'grok';
+        // Both slug generations: `grok-4.5-xhigh` (≤2026.05) and the
+        // current `cursor-grok-4.5-*` rows.
+        if (str_contains($slug, 'grok'))     return 'grok';
         if (str_starts_with($slug, 'gemini')) return 'gemini';
         if (str_starts_with($slug, 'kimi'))  return 'kimi';
         if (str_starts_with($slug, 'glm'))   return 'glm';

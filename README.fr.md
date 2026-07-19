@@ -37,6 +37,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague Kimi K3 (1.1.7 / SDK 1.1.7)](#vague-kimi-k3-117--sdk-117)
   - [Vague rafraîchissement du support Kimi Code 0.27 (1.1.8)](#vague-rafraîchissement-du-support-kimi-code-027-118)
   - [Vague Antigravity CLI + audit des quatre CLI (1.1.9)](#vague-antigravity-cli--audit-des-quatre-cli-119)
+  - [Vague audit des quatre autres CLI (1.1.10)](#vague-audit-des-quatre-autres-cli-1110)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -111,6 +112,58 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague audit des quatre autres CLI (1.1.10)
+
+Pas de bump SDK, pas de migration. 1.1.9 avait revérifié claude / codex /
+gemini / grok / antigravity contre les binaires réellement installés ;
+cette vague fait de même pour copilot 1.0.71, cursor-agent 2026.07.16,
+kiro-cli 2.13.0 et kimi 1.49.0 — et corrige tout ce qui avait dérivé en
+silence.
+
+- **Copilot 1.0.71 — catalogue en retard de deux générations, lignes de
+  coût jamais appariées.** Les sélecteurs reflètent désormais la colonne
+  « Copilot CLI » de la table supported-models de GitHub : Claude Sonnet
+  5 / 4.6 / 4.5, Claude Fable 5, Claude Opus 4.8 / 4.7 / 4.6 / 4.5,
+  Claude Haiku 4.5, GPT-5.6 (Sol / Luna / Terra), GPT-5.5 / 5.4 /
+  5.4-mini / 5.3-codex / 5-mini, Gemini 3.5 Flash & 3.1 Pro, Kimi K2.7
+  Code et MAI-Code-1 Flash. Retirés en amont et supprimés ici : gpt-4.1,
+  gpt-5, gpt-5.1 (mort depuis le 2026-04-15 — le demander dégrade
+  désormais vers le défaut GPT courant au lieu d'échouer),
+  gpt-5.1-codex*, gemini-3-pro-preview. L'attribution des coûts était
+  silencieusement morte pour chaque run copilot — la config indexait les
+  modèles avec des tirets alors que le wire rapporte des points
+  (`claude-sonnet-4.6`) ; toutes les lignes correspondent désormais.
+  `COPILOT_HOME` est honoré pour la détection de connexion et la synchro
+  MCP, les dispatches headless épinglent `COPILOT_AUTO_UPDATE=false`
+  (pas d'auto-mise-à-jour en plein run), et
+  `cli:install copilot --via=brew` fonctionne sous macOS.
+- **Cursor 2026.07.16 — l'amont a renommé les paliers Grok ; le nôtre
+  pointait vers un slug mort.** `grok` mappe désormais
+  `cursor-grok-4.5-high` (l'ancien `grok-4.5-xhigh` n'existe plus — le
+  CLI le rejette), les configs sauvegardées se résolvent toujours et les
+  lignes d'usage historiques gardent leur tarification. La détection de
+  connexion ne compte plus un simple dossier `~/.cursor` (créé par
+  l'IDE) comme « connecté » — seul le fichier d'état écrit par le CLI
+  compte. Parsing streaming/JSON revérifié inchangé contre des runs
+  réels et la liste complète des 193 modèles.
+- **Kiro 2.13.0 — Opus a disparu en amont ; notre liste de repli et nos
+  tests l'épinglaient encore.** La liste reflète les neuf modèles réels
+  (sonnet-4.5/4, haiku-4.5, deepseek-3.2, minimax-m2.5/m2.1, glm-5,
+  qwen3-coder-next, auto) ; demander une famille disparue passe en
+  fail-closed pour que l'erreur réelle de Kiro apparaisse au lieu d'un
+  substitut silencieux. Chemin MCP documenté corrigé
+  (`~/.kiro/settings/mcp.json`). Et Kiro rejoint enfin `cli:install` :
+  `superaicore cli:install kiro` lance l'installateur officiel (repli
+  cask brew via `--via=brew`).
+- **Kimi 1.49 — zéro changement de dispatch, mais vos skills
+  n'atteignaient jamais le CLI legacy.** Le contrat headless (sonde de
+  variante, flags, stream-json) revérifié au niveau source contre le
+  paquet 1.49 installé. Vraie correction : le pont de skills en variante
+  legacy écrivait un fichier digest que le CLI ne lit jamais ; les
+  skills s'installent désormais nativement dans `~/.kimi/skills/` (même
+  format SKILL.md que Claude), et le digest inerte est nettoyé une fois
+  la propriété confirmée via le manifest.
 
 ### Vague Antigravity CLI + audit des quatre CLI (1.1.9)
 

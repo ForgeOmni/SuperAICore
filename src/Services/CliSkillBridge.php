@@ -13,12 +13,9 @@ use SuperAICore\Contracts\SkillLibrary;
  *                      directory of `SKILL.md` packs. We drop one thin
  *                      wrapper dir per skill (prefixed, so we never touch
  *                      the user's own skills).
- *   - `instructions` — copilot/kiro (and legacy kimi-cli) have no skills
- *                      dir but auto-load a custom-instructions file; we
- *                      write a digest that tells the model how to load any
- *                      skill on demand. (Current kimi-code has a real
- *                      skills dir, so `kimi` is promoted to `native_dir`
- *                      by descriptor() when that install is detected.)
+ *   - `instructions` — copilot/kiro have no skills dir but auto-load a
+ *                      custom-instructions file; we write a digest that
+ *                      tells the model how to load any skill on demand.
  *   - `source`       — claude reads the host's `.claude/skills` directly;
  *                      nothing to install.
  *
@@ -50,10 +47,12 @@ class CliSkillBridge
         'cursor' => ['mode' => 'native_dir', 'dir' => '.cursor/skills-cursor', 'prefix' => 'super-team-'],
         'qwen'   => ['mode' => 'native_dir', 'dir' => '.qwen/skills',          'prefix' => 'super-team-'],
         'copilot' => ['mode' => 'instructions', 'file' => '.copilot/super-team-skills.md'],
-        // Legacy kimi-cli shape. The current kimi-code auto-discovers a real
-        // skills dir (~/.kimi-code/skills, SKILL.md packs) — descriptor()
-        // swaps this entry to native_dir when that layout is active.
-        'kimi'    => ['mode' => 'instructions', 'file' => '.kimi/super-team-skills.md'],
+        // BOTH kimi generations auto-discover a skills dir of SKILL.md
+        // packs: kimi-code under ~/.kimi-code/skills, legacy kimi-cli
+        // (re-verified v1.49.0) under ~/.kimi/skills — its earlier
+        // instructions-digest file was never auto-loaded by the CLI.
+        // descriptor() swaps `dir` to the active generation's layout.
+        'kimi'    => ['mode' => 'native_dir', 'dir' => '.kimi/skills', 'prefix' => 'super-team-'],
         'kiro'    => ['mode' => 'instructions', 'file' => '.kiro/super-team-skills.md'],
         'claude'  => ['mode' => 'source'],
         // agy's extension surface is `agy plugin` (no verified writable
@@ -89,16 +88,17 @@ class CliSkillBridge
      */
     /**
      * Live bridge descriptor for a backend. Identical to the BACKENDS
-     * entry except for `kimi`, whose surface depends on which CLI
-     * generation is installed: kimi-code gets a first-class skills dir,
-     * legacy kimi-cli keeps the instructions-digest file.
+     * entry except for `kimi`, whose skills dir follows the installed CLI
+     * generation's state home: `~/.kimi-code/skills` for kimi-code,
+     * `~/.kimi/skills` for legacy kimi-cli (native skills discovery
+     * re-verified against v1.49.0).
      *
      * @return array{mode:string,dir?:string,file?:string,prefix?:string}|null
      */
     public function descriptor(string $backend): ?array
     {
         $desc = self::BACKENDS[$backend] ?? null;
-        if ($backend === 'kimi' && $desc !== null && \SuperAICore\Support\KimiRuntime::isKimiCode()) {
+        if ($backend === 'kimi' && $desc !== null) {
             return [
                 'mode'   => 'native_dir',
                 'dir'    => \SuperAICore\Support\KimiRuntime::skillsRelPath(),
@@ -172,6 +172,9 @@ class CliSkillBridge
         if ($home === '') { $row['error'] = 'HOME unknown'; return $row; }
 
         try {
+            if ($backend === 'kimi') {
+                $this->pruneKimiDigest($home);
+            }
             if ($desc['mode'] === 'native_dir') {
                 $this->syncNativeDir($backend, $desc, $home, $row);
             } elseif ($desc['mode'] === 'instructions') {
@@ -181,6 +184,24 @@ class CliSkillBridge
             $row['error'] = $e->getMessage();
         }
         return $row;
+    }
+
+    /**
+     * One-time migration: releases before the kimi native_dir promotion
+     * bridged legacy kimi-cli via an instructions digest
+     * (`~/.kimi/super-team-skills.md`) that the CLI never auto-loads.
+     * Remove that inert artifact — and the instructions-mode manifest
+     * that proves we wrote it — so it can't shadow the real bridge.
+     */
+    protected function pruneKimiDigest(string $home): void
+    {
+        $dir = self::join($home, '.kimi');
+        $manifest = $dir . '/' . self::MANIFEST;
+        if (!is_file($manifest)) return;
+        $j = json_decode((string) @file_get_contents($manifest), true);
+        if (($j['file'] ?? null) !== 'super-team-skills.md') return;
+        @unlink($dir . '/super-team-skills.md');
+        @unlink($manifest);
     }
 
     // ─── native_dir mode ───────────────────────────────────────────────

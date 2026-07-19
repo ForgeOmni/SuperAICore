@@ -33,9 +33,10 @@ use Symfony\Component\Process\Process;
  *
  * to capture usage. When a model is supplied, it is passed through via
  * `--model <id>` — Kiro accepts any of the slugs returned by `kiro-cli
- * chat --list-models` (claude-sonnet-4.6, deepseek-3.2, minimax-m2.5,
- * glm-5, qwen3-coder-next, auto, …). Omitting --model lets Kiro's
- * router pick based on the subscription tier.
+ * chat --list-models` (claude-sonnet-4.5, claude-haiku-4.5, deepseek-3.2,
+ * minimax-m2.5, glm-5, qwen3-coder-next, auto, …; re-verified live on
+ * 2.13.0, 2026-07-19 — the Opus SKUs and claude-sonnet-4.6 are gone).
+ * Omitting --model lets Kiro's router pick based on the subscription tier.
  */
 class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
@@ -139,7 +140,8 @@ class KiroCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
      * line at exit. Same args as generate(), with usage envelope expanded
      * with log_file / duration_ms / exit_code.
      *
-     * MCP injection: Kiro 2.x supports MCP via `~/.kiro/mcp.json`. The
+     * MCP injection: Kiro 2.x supports MCP via `~/.kiro/settings/mcp.json`
+     * (global) / `.kiro/settings/mcp.json` (workspace). The
      * `mcp_mode` knob is currently a no-op for Kiro because the CLI
      * doesn't expose a per-invocation `--mcp-config` flag — operators
      * who need an empty MCP set should rename the file out before

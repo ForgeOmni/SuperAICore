@@ -231,7 +231,7 @@ npm i -g @anthropic-ai/claude-code
 brew install codex        # or: cargo install codex
 npm i -g @google/gemini-cli
 npm i -g @github/copilot   # then `copilot login` (OAuth device flow)
-# kiro-cli — download from https://kiro.dev/cli/ then `kiro-cli login`
+curl -fsSL https://cli.kiro.dev/install | bash  # kiro-cli, then `kiro-cli login` (1.1.10+: `cli:install kiro`)
 # (or export KIRO_API_KEY=ksk_... for headless Pro / Pro+ / Power subscribers)
 curl https://cursor.com/install -fsS | bash   # then `cursor-agent login` (1.0.0+)
 curl -fsSL https://grok.com/install.sh | bash  # then `grok login` (1.0.0+)
@@ -1499,6 +1499,37 @@ unchanged.** No schema, no new required config. Four things worth knowing:
    reads; the old `mcpServers` key our previous releases wrote into
    `~/.claude/settings.json` was never read and can be removed by hand if
    you want a tidy file.
+
+**1.1.10 — second-wave CLI audit (copilot / cursor / kiro / kimi); no
+migration; SDK pin unchanged.** No schema, no new required config. Four
+things worth knowing:
+
+1. **Copilot cost rows start matching.** Cost attribution for copilot runs
+   was silently dead (dash-keyed config rows vs dot ids on the wire) —
+   fixed on upgrade, no action needed. The model pickers now mirror
+   GitHub's supported-models "Copilot CLI" column (Opus 4.8/4.7/4.6,
+   GPT-5.6 Sol/Luna/Terra, Gemini 3.1 Pro, MAI-Code-1 Flash, …); a saved
+   `gpt-5.1` (retired upstream 2026-04-15) degrades to the current GPT
+   default instead of erroring. If you relocate copilot state, set
+   `COPILOT_HOME` — login detection and MCP sync follow it now.
+
+2. **`cli:install kiro` exists** (official `cli.kiro.dev` script;
+   `--via=brew` for the cask), and `cli:install copilot --via=brew`
+   installs the macOS cask. Kiro's model list follows kiro-cli 2.13
+   (Opus SKUs removed upstream — a pinned `opus` model on the kiro
+   engine now surfaces Kiro's own error instead of a silent substitute).
+
+3. **Saved cursor grok models keep working.** Upstream renamed the tiers
+   to `cursor-grok-4.5-{low,medium,high}[-fast]` and dropped `xhigh`;
+   old slugs in saved configs resolve to the new rows automatically. If
+   the providers page previously showed cursor as logged-in on a machine
+   where only the IDE ran, that over-report is fixed (the CLI's
+   `agent-cli-state.json` is what counts now).
+
+4. **Kimi skills go native on legacy installs too.** The digest file
+   previous releases wrote for the Python kimi CLI was never read;
+   skills now land in `~/.kimi/skills/` (kimi-code: `~/.kimi-code/skills/`)
+   and the stale digest is cleaned up automatically on next sync.
 
 ## Troubleshooting
 

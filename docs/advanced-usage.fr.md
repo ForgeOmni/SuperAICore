@@ -47,6 +47,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 37. [Kimi K3 — le nouveau modèle phare généraliste de Moonshot (1.1.7 / SDK 1.1.7)](#37-kimi-k3--le-nouveau-modèle-phare-généraliste-de-moonshot-117--sdk-117)
 38. [Kimi Code 0.27 — la sonde de disposition et les surfaces de support par génération (1.1.8)](#38-kimi-code-027--la-sonde-de-disposition-et-les-surfaces-de-support-par-génération-118)
 39. [Antigravity CLI — le successeur de gemini-cli comme moteur de dispatch (1.1.9)](#39-antigravity-cli--le-successeur-de-gemini-cli-comme-moteur-de-dispatch-119)
+40. [Audit de dérive seconde vague — copilot, cursor, kiro, kimi (1.1.10)](#40-audit-de-dérive-seconde-vague--copilot-cursor-kiro-kimi-1110)
 
 ---
 
@@ -4085,6 +4086,89 @@ MCP/extensions passe par `agy plugin` ; aucun fichier de config
 inscriptible vérifié, donc `supportsMcp()` est false et l'entrée du pont
 de skills est `none`. agy orchestre ses propres agents (spawn-plan
 fast-exit), comme Claude / Grok / Kiro.
+
+---
+
+## 40. Audit de dérive seconde vague — copilot, cursor, kiro, kimi (1.1.10)
+
+*Depuis 1.1.10.*
+
+Même méthode que la vague 1.1.9 (vérification en direct contre les
+binaires installés), appliquée aux quatre moteurs restants : copilot
+1.0.71, cursor-agent 2026.07.16, kiro-cli 2.13.0, kimi 1.49.0 (kimi-cli
+Python legacy via uv). Pour kimi, la vérification est allée jusqu'au
+niveau source du paquet installé ; pour copilot, le référentiel de
+modèles est la colonne « Copilot CLI » de la table supported-models de
+GitHub, parsée depuis le HTML réel.
+
+### Familles de modèles copilot — `fable`, `mai`, et la dégradation de gpt-5.1
+
+`CopilotModelResolver` connaît désormais sept familles : `sonnet` →
+`claude-sonnet-5`, `fable` → `claude-fable-5`, `opus` →
+`claude-opus-4.8` (4.7 / 4.6 / 4.5 restent sélectionnables), `haiku`,
+`gpt` → `gpt-5.6-sol` (trio Sol / Luna / Terra + 5.5 / 5.4 / 5.4-mini /
+5.3-codex / 5-mini), `gemini` → `gemini-3.5-flash` (+ `gemini-3.1-pro`),
+`kimi` → `kimi-k2.7-code`, `mai` → `mai-code-1-flash` :
+
+```bash
+./vendor/bin/superaicore send copilot "..." --model=fable    # → claude-fable-5
+./vendor/bin/superaicore send copilot "..." --model=gpt-5.1  # → gpt-5.6-sol (retiré le 2026-04-15)
+```
+
+Un slug retiré ne tue plus le run : `familyFromName()` le rabat sur le
+défaut de sa famille. Les SKUs hors colonne CLI (raptor-mini,
+gpt-5.4-nano, gemini-2.5-pro, gemini-3-flash) passent inchangés et
+échouent avec l'erreur du CLI lui-même (fail-closed). Réserve
+documentée : les ids du trio 5.6 suivent les noms d'affichage
+(convention codex) — invérifiables en direct sur un plan mini-tier, où
+modèle hors plan et slug inconnu produisent le même message d'erreur.
+
+Côté coûts, les lignes `copilot:*` sont désormais indexées avec les ids
+à points que le wire rapporte réellement (`session.tools_updated.data.
+model`) — avant 1.1.10, la recherche exacte de `CostCalculator` ne
+trouvait jamais les clés à tirets, et chaque run copilot était facturé
+sans ligne. Les dispatches headless épinglent aussi
+`COPILOT_AUTO_UPDATE=false` : le CLI s'auto-met à jour hors CI, et un
+binaire remplacé en plein run est une source de pannes intraçables.
+
+### `cli:install` — kiro rejoint la matrice, copilot gagne brew
+
+```bash
+./vendor/bin/superaicore cli:install kiro                 # script officiel cli.kiro.dev
+./vendor/bin/superaicore cli:install kiro --via=brew      # cask kiro-cli (macOS)
+./vendor/bin/superaicore cli:install copilot --via=brew   # cask copilot-cli (macOS)
+```
+
+La liste de repli de `KiroModelResolver` reflète les neuf modèles réels
+de 2.13.0 (`--list-models`) : sonnet-4.5 / 4, haiku-4.5, deepseek-3.2,
+minimax-m2.5 / m2.1, glm-5, qwen3-coder-next, auto. Demander `opus`
+passe en fail-closed — l'erreur de Kiro remonte au lieu d'un substitut
+silencieux.
+
+### Renommage des paliers Grok de cursor — configs sauvegardées
+
+L'amont a renommé `grok-4.5-{low,medium,high,xhigh}[-fast]` en
+`cursor-grok-4.5-{low,medium,high}[-fast]` (le palier `xhigh` disparaît).
+La famille `grok` mappe désormais `cursor-grok-4.5-high`, et
+`familyFromName()` reconnaît le préfixe `cursor-grok-*` — une config
+sauvegardée sous l'ancien nom se résout donc sans intervention. La ligne
+de tarification legacy `cursor:grok-4.5-xhigh` est conservée pour que
+les lignes d'usage historiques restent valorisées. Détection de
+connexion durcie au passage : seul `~/.cursor/agent-cli-state.json`
+(écrit par le CLI) compte — le dossier `~/.cursor` seul est un artefact
+de l'IDE.
+
+### Skills Kimi natifs pour la variante legacy
+
+Le pont de skills écrivait, pour la variante legacy, un digest
+`~/.kimi/super-team-skills.md` qu'aucune génération du CLI n'a jamais
+lu (vérifié dans les sources : seul l'AGENTS.md projet est auto-chargé).
+Le descripteur `kimi` retourne désormais `native_dir` pour les DEUX
+générations — `~/.kimi/skills/` (legacy, fusionné par
+`merge_all_available_skills` avec `~/.claude/skills` sans masquage) et
+`~/.kimi-code/skills/` (kimi-code) — même format SKILL.md que Claude.
+Une migration unique `pruneKimiDigest()` supprime le digest inerte après
+confirmation de propriété via le manifest.
 
 ---
 

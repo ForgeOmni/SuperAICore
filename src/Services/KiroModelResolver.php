@@ -21,8 +21,8 @@ use Symfony\Component\Process\Process;
  *      when `kiro-cli` is missing from $PATH entirely (fresh install, or a
  *      host app running against a read-only filesystem).
  *
- * Kiro uses **dot-separated** versioning (`claude-sonnet-4.6`, not
- * `claude-sonnet-4-6`) — unlike Claude Code CLI. Passing a dash-format ID
+ * Kiro uses **dot-separated** versioning (`claude-sonnet-4.5`, not
+ * `claude-sonnet-4-5`) — unlike Claude Code CLI. Passing a dash-format ID
  * results in a silent server-side rejection, so `resolve()` translates.
  *
  * Shape mirrors `CopilotModelResolver` / `ClaudeModelResolver` so any UI
@@ -36,16 +36,14 @@ class KiroModelResolver
     private static ?array $memoCatalog = null;
 
     /**
-     * Static fallback — the 12 models Kiro shipped at 0.6.2 cut. Kept in
-     * sync with `kiro-cli chat --list-models` so builds without the CLI
-     * installed still get a reasonable picker. NOT authoritative when the
-     * CLI is available — the live catalog always wins.
+     * Static fallback — the 9 models `kiro-cli chat --list-models` served
+     * at the 2.13.0 cut (captured live 2026-07-19; Kiro dropped the Opus
+     * SKUs and claude-sonnet-4.6 upstream). Kept in sync so builds without
+     * the CLI installed still get a reasonable picker. NOT authoritative
+     * when the CLI is available — the live catalog always wins.
      */
     private const STATIC_FALLBACK = [
         ['slug' => 'auto',             'display_name' => 'Auto (Kiro router picks the cheapest model)', 'family' => null],
-        ['slug' => 'claude-opus-4.6',  'display_name' => 'Claude Opus 4.6',                              'family' => 'opus'],
-        ['slug' => 'claude-sonnet-4.6','display_name' => 'Claude Sonnet 4.6 (1M context)',               'family' => 'sonnet'],
-        ['slug' => 'claude-opus-4.5',  'display_name' => 'Claude Opus 4.5',                              'family' => 'opus'],
         ['slug' => 'claude-sonnet-4.5','display_name' => 'Claude Sonnet 4.5',                            'family' => 'sonnet'],
         ['slug' => 'claude-sonnet-4',  'display_name' => 'Claude Sonnet 4',                              'family' => 'sonnet'],
         ['slug' => 'claude-haiku-4.5', 'display_name' => 'Claude Haiku 4.5',                             'family' => 'haiku'],
@@ -55,6 +53,7 @@ class KiroModelResolver
         ['slug' => 'glm-5',            'display_name' => 'GLM-5',                                        'family' => 'glm'],
         ['slug' => 'qwen3-coder-next', 'display_name' => 'Qwen3 Coder Next (preview)',                   'family' => 'qwen'],
     ];
+
 
     /**
      * Family → latest full model ID. Computed from the catalog: the first
@@ -122,10 +121,10 @@ class KiroModelResolver
      * Resolve a family alias or foreign model name to the concrete ID
      * `kiro-cli chat --model` accepts.
      *
-     *   resolve('sonnet')                → 'claude-sonnet-4.6'  (family default)
-     *   resolve('claude-sonnet-4-6')     → 'claude-sonnet-4.6'  (dash → dot)
-     *   resolve('claude-sonnet-4-7')     → 'claude-sonnet-4.6'  (fallback: 4.7 not in kiro yet)
-     *   resolve('claude-opus-4-7[1m]')   → 'claude-opus-4.6'    (strip [1m] + fallback)
+     *   resolve('sonnet')                → 'claude-sonnet-4.5'  (family default)
+     *   resolve('claude-sonnet-4-5')     → 'claude-sonnet-4.5'  (dash → dot)
+     *   resolve('claude-sonnet-4-7')     → 'claude-sonnet-4.5'  (fallback: 4.7 not in kiro)
+     *   resolve('claude-opus-4-7[1m]')   → passthrough          (Kiro 2.13 dropped Opus; CLI errors)
      *   resolve('claude-sonnet-4.5')     → 'claude-sonnet-4.5'  (already valid)
      *   resolve('auto')                  → 'auto'               (routing primitive)
      *   resolve(null)                    → null                 (caller uses engine default)
@@ -150,7 +149,7 @@ class KiroModelResolver
             return $stripped;
         }
 
-        // `claude-sonnet-4-6` → `claude-sonnet-4.6`
+        // `claude-sonnet-4-5` → `claude-sonnet-4.5`
         $dot = self::dashToDot($stripped);
         if ($dot !== null && self::inCatalog($dot)) {
             return $dot;

@@ -6,19 +6,22 @@ use PHPUnit\Framework\TestCase;
 use SuperAICore\Services\CliSkillBridge;
 
 /**
- * Pins the generation-dependent bridge surface for `kimi`: legacy
- * kimi-cli keeps the instructions-digest file, the current kimi-code is
- * promoted to a first-class skills dir (auto-discovered by the CLI).
+ * Pins the generation-dependent bridge surface for `kimi`: both CLI
+ * generations natively discover a skills dir of SKILL.md packs — the
+ * descriptor only swaps WHICH dir per the installed layout
+ * (~/.kimi-code/skills for kimi-code, ~/.kimi/skills for legacy
+ * kimi-cli, whose native discovery was re-verified against v1.49.0).
  * Other backends must pass through the static BACKENDS entry untouched.
  */
 final class CliSkillBridgeDescriptorTest extends TestCase
 {
-    public function test_kimi_descriptor_is_instructions_on_legacy_layout(): void
+    public function test_kimi_descriptor_is_native_dir_on_legacy_layout(): void
     {
         $desc = $this->withSandboxHome(['.kimi'], fn () => (new CliSkillBridge())->descriptor('kimi'));
 
-        $this->assertSame('instructions', $desc['mode']);
-        $this->assertSame('.kimi/super-team-skills.md', $desc['file']);
+        $this->assertSame('native_dir', $desc['mode']);
+        $this->assertSame('.kimi/skills', $desc['dir']);
+        $this->assertSame('super-team-', $desc['prefix']);
     }
 
     public function test_kimi_descriptor_is_native_dir_on_kimi_code_layout(): void

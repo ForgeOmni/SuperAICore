@@ -7,7 +7,7 @@ namespace SuperAICore\Services;
  *
  * The copilot CLI (github/copilot-cli) accepts a fixed set of model IDs
  * via `--model`. Its identifiers use **dot** separators (e.g.
- * `claude-sonnet-4.5`, `gpt-5.1`) — unlike the Anthropic Claude CLI which
+ * `claude-sonnet-4.5`, `gpt-5.4`) — unlike the Anthropic Claude CLI which
  * uses **dash** separators (`claude-sonnet-4-6`). When a host pipes a
  * Claude-shaped model name through the copilot backend, it silently
  * rejects it with "Model '...' from --model flag is not available" and
@@ -22,7 +22,30 @@ namespace SuperAICore\Services;
  *     can render a family-aware dropdown.
  *
  * Keep this file up to date when copilot CLI adds new routed models.
- * Last verified against copilot CLI 1.0.32 (2026-04-19).
+ * Last verified against copilot CLI 1.0.71 (2026-07-19). Roster source:
+ * GitHub's supported-models reference, "Copilot CLI" column (parsed from
+ * the live per-client table), cross-checked with the CLI changelog
+ * (Claude Fable 5 in 1.0.61, Claude Sonnet 5 in 1.0.67, kimi-k2.7-code
+ * in 1.0.68, GPT-5.6 in 1.0.70). gpt-5.1 was retired upstream on
+ * 2026-04-15 (resolve() degrades it to the gpt family default).
+ * Since ~1.0.64 the CLI also accepts family aliases (`sonnet`, `opus`,
+ * `haiku`, `gpt`, `gemini`) natively, so an unresolved alias reaching the
+ * binary is no longer fatal — this resolver still maps them so hosts see
+ * the concrete slug (cost rows, dropdowns) instead of an alias.
+ *
+ * Slug caveats (plan-gated accounts can't live-verify premium slugs —
+ * an off-plan model and an unknown slug fail with the same message):
+ * the GPT-5.6 SKUs ship as three named builds (Luna/Sol/Terra); their
+ * dot ids follow the display names (`gpt-5.6-sol`, …) per the same
+ * convention codex uses. "Claude Opus 4.8 (fast mode)" is preview-only
+ * with no published slug — deliberately absent below.
+ *
+ * Note: model *availability* is plan-gated server-side. Free/Student
+ * plans only route Auto/mini SKUs; `--model` outside the plan fails with
+ * "Model '...' from --model flag is not available" — same message as an
+ * unknown slug. Docs-listed SKUs outside Copilot CLI's column
+ * (raptor-mini, gpt-5.4-nano, gemini-2.5-pro, gemini-3-flash) pass
+ * through resolve() untouched and fail with the CLI's own error.
  */
 class CopilotModelResolver
 {
@@ -31,16 +54,19 @@ class CopilotModelResolver
      */
     const FAMILIES = [
         // Claude — copilot routes these server-side via a GitHub subscription.
-        'sonnet' => 'claude-sonnet-4.6',
-        'opus'   => 'claude-opus-4.5',
+        'sonnet' => 'claude-sonnet-5',
+        'fable'  => 'claude-fable-5',
+        'opus'   => 'claude-opus-4.8',
         'haiku'  => 'claude-haiku-4.5',
-        // OpenAI — copilot ships its own gpt-5 lineup.
-        'gpt'    => 'gpt-5.1',
-        // Gemini — copilot's catalog surfaces the 3-pro-preview, which we
-        // keep as the family default. Note gemini-3.5-pro never publicly
-        // shipped (SDK 1.1.6 catalog correction); the live API flagship is
-        // gemini-3.5-flash. Upgrade once copilot gateways route a newer slug.
-        'gemini' => 'gemini-3-pro-preview',
+        // OpenAI — copilot ships its own gpt-5 lineup (Sol is the
+        // balanced default of the 5.6 trio, mirroring codex's default).
+        'gpt'    => 'gpt-5.6-sol',
+        // Gemini — flash is the routed flagship; 3.1 Pro also available.
+        'gemini' => 'gemini-3.5-flash',
+        // Moonshot — single routed SKU, added copilot 1.0.68.
+        'kimi'   => 'kimi-k2.7-code',
+        // Microsoft — single routed SKU.
+        'mai'    => 'mai-code-1-flash',
     ];
 
     /**
@@ -50,35 +76,47 @@ class CopilotModelResolver
      */
     const CATALOG = [
         // Claude — Sonnet
+        ['slug' => 'claude-sonnet-5',   'display_name' => 'Sonnet 5',   'family' => 'sonnet'],
         ['slug' => 'claude-sonnet-4.6', 'display_name' => 'Sonnet 4.6', 'family' => 'sonnet'],
         ['slug' => 'claude-sonnet-4.5', 'display_name' => 'Sonnet 4.5', 'family' => 'sonnet'],
-        ['slug' => 'claude-sonnet-4',   'display_name' => 'Sonnet 4',   'family' => 'sonnet'],
+        // Claude — Fable (Mythos-class tier above Opus, copilot 1.0.61+)
+        ['slug' => 'claude-fable-5',    'display_name' => 'Fable 5',    'family' => 'fable'],
         // Claude — Opus
+        ['slug' => 'claude-opus-4.8',   'display_name' => 'Opus 4.8',   'family' => 'opus'],
+        ['slug' => 'claude-opus-4.7',   'display_name' => 'Opus 4.7',   'family' => 'opus'],
         ['slug' => 'claude-opus-4.6',   'display_name' => 'Opus 4.6',   'family' => 'opus'],
         ['slug' => 'claude-opus-4.5',   'display_name' => 'Opus 4.5',   'family' => 'opus'],
         // Claude — Haiku
         ['slug' => 'claude-haiku-4.5',  'display_name' => 'Haiku 4.5',  'family' => 'haiku'],
-        // OpenAI
-        ['slug' => 'gpt-5.1',           'display_name' => 'GPT-5.1',          'family' => 'gpt'],
-        ['slug' => 'gpt-5.1-codex',     'display_name' => 'GPT-5.1 Codex',    'family' => 'gpt'],
-        ['slug' => 'gpt-5.1-codex-mini','display_name' => 'GPT-5.1 Codex Mini','family' => 'gpt'],
-        ['slug' => 'gpt-5',             'display_name' => 'GPT-5',            'family' => 'gpt'],
+        // OpenAI (gpt-5.1 retired upstream 2026-04-15 — degraded via FAMILIES)
+        ['slug' => 'gpt-5.6-sol',       'display_name' => 'GPT-5.6 Sol',      'family' => 'gpt'],
+        ['slug' => 'gpt-5.6-luna',      'display_name' => 'GPT-5.6 Luna',     'family' => 'gpt'],
+        ['slug' => 'gpt-5.6-terra',     'display_name' => 'GPT-5.6 Terra',    'family' => 'gpt'],
+        ['slug' => 'gpt-5.5',           'display_name' => 'GPT-5.5',          'family' => 'gpt'],
+        ['slug' => 'gpt-5.4',           'display_name' => 'GPT-5.4',          'family' => 'gpt'],
+        ['slug' => 'gpt-5.4-mini',      'display_name' => 'GPT-5.4 mini',     'family' => 'gpt'],
+        ['slug' => 'gpt-5.3-codex',     'display_name' => 'GPT-5.3 Codex',    'family' => 'gpt'],
         ['slug' => 'gpt-5-mini',        'display_name' => 'GPT-5 mini',       'family' => 'gpt'],
-        ['slug' => 'gpt-4.1',           'display_name' => 'GPT-4.1',          'family' => 'gpt'],
-        // Gemini (preview, gated)
-        ['slug' => 'gemini-3-pro-preview', 'display_name' => 'Gemini 3 Pro (preview)', 'family' => 'gemini'],
+        // Gemini
+        ['slug' => 'gemini-3.5-flash',  'display_name' => 'Gemini 3.5 Flash', 'family' => 'gemini'],
+        ['slug' => 'gemini-3.1-pro',    'display_name' => 'Gemini 3.1 Pro',   'family' => 'gemini'],
+        // Moonshot
+        ['slug' => 'kimi-k2.7-code',    'display_name' => 'Kimi K2.7 Code',   'family' => 'kimi'],
+        // Microsoft
+        ['slug' => 'mai-code-1-flash',  'display_name' => 'MAI-Code-1 Flash', 'family' => 'mai'],
     ];
 
     /**
      * Resolve a family alias or a foreign (e.g. Claude-CLI dash) model
      * name into the concrete ID the copilot CLI accepts.
      *
-     *   resolve('sonnet')                → 'claude-sonnet-4.6'  (family default)
+     *   resolve('sonnet')                → 'claude-sonnet-5'    (family default)
      *   resolve('claude-sonnet-4-6')     → 'claude-sonnet-4.6'  (dash → dot)
-     *   resolve('claude-sonnet-4-7')     → 'claude-sonnet-4.6'  (fallback: 4.7 not in copilot yet)
-     *   resolve('claude-opus-4-7[1m]')   → 'claude-opus-4.5'    (strip context tag + fallback)
+     *   resolve('claude-sonnet-4-7')     → 'claude-sonnet-5'    (fallback: 4.7 not in copilot)
+     *   resolve('claude-opus-4-7[1m]')   → 'claude-opus-4.7'    (strip context tag, dash → dot)
      *   resolve('claude-sonnet-4.5')     → 'claude-sonnet-4.5'  (already valid, passthrough)
-     *   resolve('gpt-5.1')               → 'gpt-5.1'            (passthrough)
+     *   resolve('gpt-5.6-sol')           → 'gpt-5.6-sol'        (already valid, passthrough)
+     *   resolve('gpt-5.1')               → 'gpt-5.6-sol'        (retired 2026-04-15 → family default)
      *   resolve(null)                    → null                 (caller uses engine default)
      */
     public static function resolve(?string $model): ?string
@@ -163,6 +201,7 @@ class CopilotModelResolver
     private static function familyFromName(string $slug): ?string
     {
         if (str_contains($slug, 'sonnet')) return 'sonnet';
+        if (str_contains($slug, 'fable'))  return 'fable';
         if (str_contains($slug, 'opus'))   return 'opus';
         if (str_contains($slug, 'haiku'))  return 'haiku';
         if (str_starts_with($slug, 'gpt')) return 'gpt';

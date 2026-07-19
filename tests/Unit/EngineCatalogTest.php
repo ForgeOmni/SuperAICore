@@ -83,7 +83,8 @@ final class EngineCatalogTest extends TestCase
         // Copilot uses dot-separated model IDs (not Claude CLI's dashes).
         $this->assertNotEmpty($copilotModels);
         $this->assertContains('claude-sonnet-4.6', $copilotModels);
-        $this->assertContains('gpt-5.1', $copilotModels);
+        $this->assertContains('gpt-5.6-sol', $copilotModels);
+        $this->assertContains('claude-opus-4.8', $copilotModels);
     }
 
     public function test_models_for_unknown_engine_returns_empty(): void
@@ -155,7 +156,7 @@ final class EngineCatalogTest extends TestCase
         // CopilotModelResolver ships family aliases alongside the full catalog.
         $this->assertSame('(inherit default)', $opts['']);
         $this->assertArrayHasKey('claude-sonnet-4.6', $opts);
-        $this->assertArrayHasKey('gpt-5.1', $opts);
+        $this->assertArrayHasKey('gpt-5.6-sol', $opts);
         // At least one family alias should be present (shape, not exact key).
         $hasFamily = array_filter(
             array_keys($opts),
@@ -181,8 +182,8 @@ final class EngineCatalogTest extends TestCase
         $this->assertSame('(inherit default)', $opts['']);
         $this->assertArrayHasKey('sonnet', $opts);
         $this->assertArrayHasKey('auto', $opts);
-        $this->assertArrayHasKey('claude-sonnet-4.6', $opts);
-        $this->assertArrayNotHasKey('claude-sonnet-4-6', $opts, 'Dash-format Claude slug must NOT appear in Kiro picker');
+        $this->assertArrayHasKey('claude-sonnet-4.5', $opts);
+        $this->assertArrayNotHasKey('claude-sonnet-4-5', $opts, 'Dash-format Claude slug must NOT appear in Kiro picker');
 
         $nonAnthropic = array_filter(
             array_keys($opts),
@@ -313,6 +314,6 @@ final class EngineCatalogTest extends TestCase
         $this->assertNotContains('claude-haiku-4-5-20251001', $models);
         // Seed dot-form IDs remain.
         $this->assertContains('claude-sonnet-4.6', $models);
-        $this->assertContains('gpt-5.1', $models);
+        $this->assertContains('gpt-5.6-sol', $models);
     }
 }

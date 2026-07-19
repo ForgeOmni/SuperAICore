@@ -220,14 +220,14 @@ php artisan superaicore:sync-cli --skills-only --backends=codex,gemini
 所以这条命令是给手动 / cron / git-hook 刷新用的。没有绑定 `SkillLibrary` 时,
 它打印一行 skip 信息,什么都不做。
 
-不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`、`copilot`、`kiro-cli`、`cursor-agent`、`grok`）—— 按需装：
+不需要额外配置。不带 `--dry-run` 时会 shell out 到真实的后端 CLI（`claude`、`codex`、`gemini`、`copilot`、`kiro-cli`、`cursor-agent`、`grok`、`kimi`、`agy`）—— 按需装：
 
 ```bash
 npm i -g @anthropic-ai/claude-code
 brew install codex        # 或 cargo install codex
 npm i -g @google/gemini-cli
 npm i -g @github/copilot   # 然后 `copilot login`（OAuth device flow）
-# kiro-cli —— 按 https://kiro.dev/cli/ 安装，然后 `kiro-cli login`
+curl -fsSL https://cli.kiro.dev/install | bash   # 或 ./vendor/bin/superaicore cli:install kiro（1.1.10+）；然后 `kiro-cli login`
 # （或 export KIRO_API_KEY=ksk_... 走 Pro / Pro+ / Power 订阅的 headless 模式）
 curl https://cursor.com/install -fsS | bash   # 然后 `cursor-agent login`（1.0.0+）
 curl -fsSL https://grok.com/install.sh | bash  # 然后 `grok login`（1.0.0+）
@@ -1442,6 +1442,34 @@ standalone + artisan 命令 `send`、`resume`、`runs`、`aliases`、
    同步，让服务器落到 Claude Code 真正读取的文件；此前版本写进
    `~/.claude/settings.json` 的 `mcpServers` 键从未被读取，介意的话可以
    手动删掉。
+
+**1.1.10 —— 第二波 CLI 审计（copilot / cursor / kiro / kimi）；无迁移；
+SDK pin 不变。** 无 schema、无新 config 键。升级时四件值得了解的事：
+
+1. **Copilot 的成本行开始真正命中了。** 此前 config 里的
+   `copilot:claude-sonnet-4-5` 式连字符 key 与 wire 上报的点号 id
+   （`claude-sonnet-4.6`）永远对不上，每次 copilot 运行的成本归因都静默
+   落空 —— 升级即修复，无需操作。模型 picker 同步刷新到 GitHub
+   supported-models 参考页的 "Copilot CLI" 列（含 Opus 4.8 / 4.7 / 4.6、
+   GPT-5.6 三 SKU）；`gpt-5.1` 已上游退役，请求它会自动降级到 gpt 家族
+   默认（`gpt-5.6-sol`）。
+
+2. **`superaicore cli:install kiro` 上线** —— 默认走官方脚本
+   （`curl -fsSL https://cli.kiro.dev/install | bash`），macOS 可
+   `--via=brew`（cask `kiro-cli`）。装完跑 `kiro-cli login`（或设
+   `KIRO_API_KEY` 走 headless）。copilot 同样补了 `--via=brew`
+   （cask `copilot-cli`）。
+
+3. **Cursor 下如果你固定过 `grok` 模型**：上游把档位改名为
+   `cursor-grok-4.5-*` 并删掉了 xhigh 档；旧的存档配置会自动解析到
+   `cursor-grok-4.5-high`，无需改配置。providers 页若此前把从未登录过
+   CLI 的机器显示为"已登录"（IDE 创建的裸 `~/.cursor` 目录所致），
+   升级后会恢复真实状态。
+
+4. **Kimi（legacy Python CLI）用户的技能真正装进去了。** 此前技能桥写的
+   摘要文件 kimi 从来不读；升级后 `superaicore:sync-cli` 会把技能逐个
+   装进 `~/.kimi/skills/`（kimi-code 则是 `~/.kimi-code/skills/`），并
+   自动清理确认无效的旧摘要文件。重跑一次同步即可生效。
 
 ## 常见问题
 

@@ -255,7 +255,10 @@ class CopilotCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacke
      */
     protected function buildEnv(array $providerConfig): array
     {
-        $env = [];
+        // Copilot self-updates by default outside CI (COPILOT_AUTO_UPDATE,
+        // verified 1.0.71). A download kicking in mid-dispatch adds
+        // unbounded latency to a timed headless run, so pin it off.
+        $env = ['COPILOT_AUTO_UPDATE' => 'false'];
         $type = $providerConfig['type'] ?? 'builtin';
 
         if ($type !== 'builtin' && !empty($providerConfig['api_key'])) {

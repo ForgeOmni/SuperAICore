@@ -239,7 +239,7 @@ npm i -g @anthropic-ai/claude-code
 brew install codex        # ou : cargo install codex
 npm i -g @google/gemini-cli
 npm i -g @github/copilot   # puis `copilot login` (OAuth device flow)
-# kiro-cli — télécharger depuis https://kiro.dev/cli/ puis `kiro-cli login`
+curl -fsSL https://cli.kiro.dev/install | bash  # kiro-cli, puis `kiro-cli login` (1.1.10+ : `cli:install kiro`)
 # (ou export KIRO_API_KEY=ksk_... pour le mode headless Pro / Pro+ / Power)
 curl https://cursor.com/install -fsS | bash   # puis `cursor-agent login` (1.0.0+)
 curl -fsSL https://grok.com/install.sh | bash  # puis `grok login` (1.0.0+)
@@ -1551,6 +1551,37 @@ Quatre choses à savoir :
    `mcpServers` que les versions précédentes écrivaient dans
    `~/.claude/settings.json` n'était jamais lue et peut être supprimée à
    la main.
+
+**1.1.10 — audit des quatre autres CLI (copilot / cursor / kiro / kimi) ;
+aucune migration ; pin SDK inchangé.** Aucun schéma, aucune config
+requise. Quatre choses à savoir :
+
+1. **Les coûts copilot se remplissent enfin.** Les lignes de tarification
+   étaient indexées avec des tirets alors que le wire rapporte des ids à
+   points — chaque run copilot passait à côté de sa ligne. Corrigé à la
+   mise à jour, rien à faire ; le catalogue de modèles suit désormais la
+   colonne « Copilot CLI » de la table supported-models de GitHub
+   (gpt-5.1, retiré en amont le 2026-04-15, dégrade vers le défaut GPT).
+   Si vous utilisez `COPILOT_HOME`, la détection de connexion et la
+   synchro MCP le respectent désormais.
+
+2. **`cli:install kiro` existe désormais** (script officiel
+   `https://cli.kiro.dev/install`, repli `--via=brew`), et
+   `cli:install copilot --via=brew` installe le cask macOS.
+
+3. **Configs cursor sauvegardées : rien à faire pour le renommage Grok.**
+   L'amont a renommé les paliers (`grok-4.5-xhigh` → gamme
+   `cursor-grok-4.5-*`) ; les anciens noms de famille se résolvent
+   automatiquement vers `cursor-grok-4.5-high`. Si la page providers
+   affichait cursor « connecté » sans que le CLI ne le soit, c'était le
+   dossier `~/.cursor` créé par l'IDE — la sonde exige désormais le
+   fichier d'état du CLI.
+
+4. **Skills Kimi (variante legacy) : relancez une synchro de skills.**
+   Les versions précédentes écrivaient un fichier digest que le CLI ne
+   lit jamais ; vos skills s'installent désormais nativement dans
+   `~/.kimi/skills/` (kimi-code : `~/.kimi-code/skills/`, inchangé). Le
+   digest inerte est nettoyé automatiquement.
 
 ## Dépannage
 

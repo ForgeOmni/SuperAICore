@@ -27,6 +27,7 @@ final class CliInstallerTest extends TestCase
             // installers, not npm.
             'cursor'      => CliInstaller::SOURCE_SCRIPT,
             'grok'        => CliInstaller::SOURCE_SCRIPT,
+            'kiro'        => CliInstaller::SOURCE_SCRIPT,
             'antigravity' => CliInstaller::SOURCE_SCRIPT,
         ];
         foreach (CliInstaller::INSTALLABLE_BACKENDS as $b) {
@@ -69,8 +70,8 @@ final class CliInstallerTest extends TestCase
 
     public function test_resolve_source_returns_null_when_named_source_absent(): void
     {
-        // copilot only has npm — asking for brew should report nothing
-        $this->assertNull(CliInstaller::resolveSource('copilot', CliInstaller::SOURCE_BREW));
+        // copilot ships via npm/brew only — asking for uv should report nothing
+        $this->assertNull(CliInstaller::resolveSource('copilot', CliInstaller::SOURCE_UV));
     }
 
     public function test_install_hint_is_human_readable_shell_command(): void

@@ -37,6 +37,7 @@
   - [Kimi K3 波次（1.1.7 / SDK 1.1.7）](#kimi-k3-波次117--sdk-117)
   - [Kimi Code 0.27 支持刷新波次（1.1.8）](#kimi-code-027-支持刷新波次118)
   - [Antigravity CLI + 四 CLI 审计波次（1.1.9）](#antigravity-cli--四-cli-审计波次119)
+  - [第二波 CLI 审计波次（1.1.10）](#第二波-cli-审计波次1110)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -111,6 +112,39 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### 第二波 CLI 审计波次（1.1.10）
+
+无 SDK bump。1.1.9 审计了 claude / codex / gemini / grok / antigravity;
+本波把其余四个引擎也对齐到本机实测版本 —— copilot 1.0.71、cursor-agent
+2026.07.16、kiro-cli 2.13.0、kimi(legacy uv)1.49.0。
+
+- **Copilot 模型目录落后两代 + 成本行从未命中** —— picker 现在照搬
+  GitHub supported-models 参考页 "Copilot CLI" 列(实时表格解析):
+  Sonnet 5 / 4.6 / 4.5、Fable 5、**Opus 4.8 / 4.7 / 4.6 / 4.5**、Haiku
+  4.5、GPT-5.6(Sol / Luna / Terra)、GPT-5.5 / 5.4 / 5.4-mini /
+  5.3-codex / 5-mini、Gemini 3.5 Flash & 3.1 Pro、Kimi K2.7 Code、
+  MAI-Code-1 Flash。gpt-5.1 已于 2026-04-15 上游退役 —— 现在自动降级到
+  gpt 家族默认而非报错。成本归因此前全部落空(config 用连字符 key,
+  wire 报点号 id)—— 已全量对齐。另:`COPILOT_HOME` 被登录检测与 MCP
+  同步识别;headless 派发钉住 `COPILOT_AUTO_UPDATE=false` 防运行中自
+  更新;新家族别名 `fable` / `mai` / `kimi`。
+- **Cursor 上游改名 Grok 档位** —— `grok` 别名从已不存在的
+  `grok-4.5-xhigh`(CLI 直接拒绝)改指 `cursor-grok-4.5-high`;旧存档
+  配置仍可解析,历史用量行保持计价。登录检测不再把 IDE 创建的裸
+  `~/.cursor` 目录当"已登录"(只认 CLI 自己写的
+  `agent-cli-state.json`)。流式解析对 193 行实时模型列表复验不变。
+- **Kiro 2.13 上游砍掉 Opus 全系** —— 静态回退表镜像实测九模型
+  (sonnet-4.5 / 4、haiku-4.5、deepseek-3.2、minimax-m2.5 / m2.1、
+  glm-5、qwen3-coder-next、auto);请求已下架家族 fail-closed 透传,
+  你会看到 Kiro 的真实报错而非静默替换。`cli:install kiro` 上线
+  (官方脚本默认,`--via=brew` 备选);copilot 也补了
+  `--via=brew`。
+- **Kimi 1.49 派发契约零改动,但技能桥修了个真 bug** —— legacy 变体
+  此前写的 instructions 摘要文件 CLI 从来不读;现在两代都原生逐技能
+  安装(legacy `~/.kimi/skills/`、kimi-code `~/.kimi-code/skills/`),
+  确认归属后自动清理无效摘要。变体探测、旗标、stream-json 双形解析
+  逐项源码级复验通过。
 
 ### Antigravity CLI + 四 CLI 审计波次（1.1.9）
 

@@ -403,3 +403,21 @@ Total:9 个新文件 + 12 个修改 = **21 个文件变动**。全套测试 **45
   agent 机制,等价物是 skills;如需把 `.claude/agents/*.md` 桥到 kimi-code,
   应生成 SKILL.md 包(独立特性,未在本轮范围)。
 - `max_steps_per_turn` 配置项:kimi-code 无对应 flag,该 dialect 下忽略。
+
+## 10. legacy kimi-cli 1.49.0 复核(2026-07-19)
+
+**背景**:本机 `kimi`(uv 装的 legacy Python `kimi-cli`)从 v1.38.0 升到 v1.49.0,对照安装包源码(`~/.local/share/uv/tools/kimi-cli/.../kimi_cli/`)逐项复核 dispatch 契约。
+
+**结论:dispatch 契约不变,零代码改动**——
+
+- 变体探测仍正确:1.49 的 `--help` 仍含 `--print` ⇒ 判为 legacy。
+- backend 用到的全部 flag 原样保留:`--print`、`--output-format stream-json`、`--prompt`(新增别名 `--command`/`-c`)、`-w`、`--max-steps-per-turn`、`--mcp-config-file`、`--model`、`-r/--resume`。
+- stream-json 形状确认(源码级,`kosong/message.py::_serialize_content`):assistant `content` **单个 text part 时折叠为纯字符串**,多 part 时才是 typed block 数组(`text`/`think`)。`extractAssistantText()` 本就双形兼容,无需改。
+- print 流仍不报 usage(`JsonPrinter` 无 token 字段),$0 订阅计费模型不变。
+- 1.49 新增但本层不用:`--final-message-only`、`--quiet`、`--continue`、`--agent <default|okabe>`、`--skills-dir`、`kimi mcp`/`plugin`/`export`/`web` 子命令。
+
+**一处真修复:legacy 的 skills 桥从 instructions 摘要升级为 native_dir**。
+
+- 源码证实(`kimi_cli/skill/__init__.py`)legacy 1.49 原生发现 `~/.kimi/skills/`(brand 组 kimi > claude > codex;`merge_all_available_skills` 默认 **true**,全部合并,不会互相遮蔽),SKILL.md 包格式与 Claude 相同。
+- 而旧的 instructions 摘要文件 `~/.kimi/super-team-skills.md` **CLI 从来不读**(它只自动加载项目级 `AGENTS.md`/`.kimi/AGENTS.md`)——一直是静默 no-op。
+- `CliSkillBridge::descriptor('kimi')` 现在两代都返回 `native_dir`,目录由 `KimiRuntime::skillsRelPath()` 按布局给出(`.kimi/skills` / `.kimi-code/skills`);`syncBackend('kimi')` 顺带做一次性迁移:凭 instructions-mode manifest 确认归我们所有后,删掉 inert 的摘要文件。

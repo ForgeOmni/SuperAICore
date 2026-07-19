@@ -21,7 +21,7 @@ final class CursorModelResolverTest extends TestCase
     {
         $this->assertSame('claude-fable-5-thinking-high', CursorModelResolver::resolve('fable'));
         $this->assertSame('claude-sonnet-5-thinking-high', CursorModelResolver::resolve('sonnet'));
-        $this->assertSame('grok-4.5-xhigh', CursorModelResolver::resolve('grok'));
+        $this->assertSame('cursor-grok-4.5-high', CursorModelResolver::resolve('grok'));
         $this->assertSame('gemini-3.5-flash', CursorModelResolver::resolve('gemini'));
         $this->assertSame('kimi-k2.7-code', CursorModelResolver::resolve('kimi'));
         $this->assertSame('glm-5.2-high', CursorModelResolver::resolve('glm'));
@@ -51,6 +51,14 @@ final class CursorModelResolverTest extends TestCase
     public function test_unknown_passes_through_for_cli_to_reject(): void
     {
         $this->assertSame('totally-made-up', CursorModelResolver::resolve('totally-made-up'));
+    }
+
+    public function test_legacy_grok_slug_maps_to_renamed_row(): void
+    {
+        // cursor-agent 2026.07 renamed grok-4.5-* to cursor-grok-4.5-* and
+        // capped effort at high; stale configs keep resolving.
+        $this->assertSame('cursor-grok-4.5-high', CursorModelResolver::resolve('grok-4.5-xhigh'));
+        $this->assertSame('cursor-grok-4.5-high', CursorModelResolver::resolve('cursor-grok-4.5-high'));
     }
 
     public function test_catalog_and_default(): void

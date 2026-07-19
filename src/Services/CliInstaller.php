@@ -32,7 +32,7 @@ final class CliInstaller
     public const SOURCE_PIP    = 'pip';
 
     /** Backends we know how to install. Superagent is intentionally absent. */
-    public const INSTALLABLE_BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'cursor', 'grok', 'antigravity'];
+    public const INSTALLABLE_BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'cursor', 'grok', 'kiro', 'antigravity'];
 
     /**
      * Install-command matrix. Each backend maps to a list of `{source, argv}`
@@ -59,7 +59,8 @@ final class CliInstaller
                 ['source' => self::SOURCE_NPM, 'argv' => ['npm', 'install', '-g', '@google/gemini-cli']],
             ],
             'copilot' => [
-                ['source' => self::SOURCE_NPM, 'argv' => ['npm', 'install', '-g', '@github/copilot']],
+                ['source' => self::SOURCE_NPM,  'argv' => ['npm', 'install', '-g', '@github/copilot']],
+                ['source' => self::SOURCE_BREW, 'argv' => ['brew', 'install', '--cask', 'copilot-cli'], 'note' => 'macOS only'],
             ],
             // Moonshot's official kimi-code installer drops the single
             // `kimi` binary into ~/.kimi-code/bin (Windows installs via
@@ -80,6 +81,15 @@ final class CliInstaller
             // Google's Antigravity CLI installer drops `agy` into ~/.local/bin.
             'antigravity' => [
                 ['source' => self::SOURCE_SCRIPT, 'argv' => ['sh', '-c', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'], 'note' => 'POSIX only'],
+            ],
+            // AWS's official Kiro CLI installer drops `kiro-cli` into
+            // ~/.local/bin. Heads-up: on macOS it prompts on /dev/tty
+            // before replacing an existing Kiro.app, so upgrades need a
+            // real terminal. The brew cask tends to trail the script by
+            // a release.
+            'kiro' => [
+                ['source' => self::SOURCE_SCRIPT, 'argv' => ['sh', '-c', 'curl -fsSL https://cli.kiro.dev/install | bash'], 'note' => 'POSIX only'],
+                ['source' => self::SOURCE_BREW,   'argv' => ['brew', 'install', '--cask', 'kiro-cli'], 'note' => 'macOS only'],
             ],
         ];
     }

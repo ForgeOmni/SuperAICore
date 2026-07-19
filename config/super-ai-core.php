@@ -1085,17 +1085,33 @@ return [
         // ─── GitHub Copilot CLI (subscription billed; per-token cost is $0) ───
         // The dashboard reports these under a separate "Subscription engines"
         // section so monthly USD totals stay accurate.
-        'copilot:claude-sonnet-4-5'   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:claude-opus-4-5'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:claude-haiku-4-5'    => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:claude-sonnet-4'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:gpt-5'               => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:gpt-5.1'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:gpt-5.1-codex'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:gpt-5.1-codex-mini'  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        // Keys use copilot's own dot-separated ids — that's what the JSONL
+        // `session.tools_updated` event reports, and the prefixed lookup in
+        // CostCalculator::resolveRate() is exact-match. (Rows before SDK
+        // 1.1.10 used Claude-CLI dash ids the copilot wire never emits.)
+        'copilot:claude-sonnet-5'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-sonnet-4.6'   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-sonnet-4.5'   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-fable-5'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-opus-4.8'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-opus-4.7'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-opus-4.6'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-opus-4.5'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:claude-haiku-4.5'    => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.6-sol'         => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.6-luna'        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.6-terra'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.6'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.5'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.4'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.4-mini'        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gpt-5.3-codex'       => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'copilot:gpt-5-mini'          => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:gpt-4.1'             => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
-        'copilot:gemini-3-pro-preview'=> ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gemini-3.5-flash'    => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:gemini-3.1-pro'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:kimi-k2.7-code'      => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:mai-code-1-flash'    => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'copilot:raptor-mini'         => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
 
         // ─── AWS Kiro CLI (credit-based subscription) ───
         // Kiro bills by per-response "credits" (plans: Free 50 / Pro 1k /
@@ -1136,6 +1152,8 @@ return [
         'cursor:gpt-5.5-high'                   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'cursor:gpt-5.3-codex'                  => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'cursor:gpt-5.2'                        => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        'cursor:cursor-grok-4.5-high'           => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
+        // Legacy grok slug (≤ cursor-agent 2026.05) — keeps historical usage rows priced.
         'cursor:grok-4.5-xhigh'                 => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'cursor:gemini-3.5-flash'               => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'cursor:kimi-k2.7-code'                 => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],

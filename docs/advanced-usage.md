@@ -47,6 +47,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 37. [Kimi K3 — the new Moonshot general flagship (1.1.7 / SDK 1.1.7)](#37-kimi-k3--the-new-moonshot-general-flagship-117--sdk-117)
 38. [Kimi Code 0.27 — the layout probe and generation-aware support surfaces (1.1.8)](#38-kimi-code-027--the-layout-probe-and-generation-aware-support-surfaces-118)
 39. [Antigravity CLI — the gemini-cli successor as a dispatch engine (1.1.9)](#39-antigravity-cli--the-gemini-cli-successor-as-a-dispatch-engine-119)
+40. [Second-wave CLI audit — copilot, cursor, kiro, kimi against the live binaries (1.1.10)](#40-second-wave-cli-audit--copilot-cursor-kiro-kimi-against-the-live-binaries-1110)
 
 ---
 
@@ -4068,6 +4069,81 @@ there is no verified host-writable config file, so `supportsMcp()` is
 false and the skills bridge entry is `none` until agy grows a writable
 surface. agy orchestrates its own agents (spawn-plan fast-exits), like
 Claude / Grok / Kiro.
+
+---
+
+## 40. Second-wave CLI audit — copilot, cursor, kiro, kimi against the live binaries (1.1.10)
+
+1.1.9 audited claude / codex / gemini / grok and added Antigravity; 1.1.10
+runs the same live-verification pass over the remaining four engines
+(copilot 1.0.71, cursor-agent 2026.07.16-899851b, kiro-cli 2.13.0, kimi
+1.49.0 — the legacy uv Python CLI). What changes in practice:
+
+### Installing the CLIs
+
+```bash
+superaicore cli:install kiro                 # official cli.kiro.dev script (new)
+superaicore cli:install kiro --via=brew      # brew install --cask kiro-cli
+superaicore cli:install copilot --via=brew   # brew install --cask copilot-cli (new)
+```
+
+### Copilot model routing
+
+`CopilotModelResolver` now mirrors the "Copilot CLI" column of GitHub's
+supported-models reference. Family aliases and where they land:
+
+```php
+'model' => 'sonnet',   // → claude-sonnet-5
+'model' => 'fable',    // → claude-fable-5        (new family)
+'model' => 'opus',     // → claude-opus-4.8       (4.7 / 4.6 / 4.5 selectable)
+'model' => 'gpt',      // → gpt-5.6-sol           (Luna / Terra selectable)
+'model' => 'gemini',   // → gemini-3.5-flash      (gemini-3.1-pro selectable)
+'model' => 'kimi',     // → kimi-k2.7-code
+'model' => 'mai',      // → mai-code-1-flash      (new family)
+```
+
+A stored `gpt-5.1` (retired upstream 2026-04-15) no longer errors — it
+degrades through `familyFromName()` to the gpt default. Claude-CLI dash
+ids keep translating (`claude-opus-4-7[1m]` → `claude-opus-4.7`). Two
+runtime hardenings: `COPILOT_HOME` is honored by login detection and MCP
+sync, and every headless dispatch pins `COPILOT_AUTO_UPDATE=false` so the
+CLI can't swap its own binary mid-run. Cost rows are keyed by the dot ids
+the wire reports — before 1.1.10 no copilot run ever matched a rate row.
+
+### Cursor: the grok tier rename
+
+cursor-agent renamed its Grok rows to `cursor-grok-4.5-{low,medium,high}`
+(+`-fast` variants) and dropped the `xhigh` tier. The `grok` family alias
+routes `cursor-grok-4.5-high`; legacy `grok-4.5-*` slugs in saved configs
+resolve via `familyFromName()`; `cursor:grok-4.5-xhigh` cost keys are
+retained so historical usage stays priced. Login detection only trusts
+`~/.cursor/agent-cli-state.json` — the IDE creates `~/.cursor/` on its
+own, which previously read as "logged in" on CLI-less machines.
+
+### Kiro: fail-closed on dropped families
+
+kiro-cli 2.13 removed every Opus SKU plus claude-sonnet-4.6/opus-4.5
+upstream (live list: auto, claude-sonnet-4.5/4, claude-haiku-4.5,
+deepseek-3.2, minimax-m2.5/m2.1, glm-5, qwen3-coder-next). A pinned
+`opus` on the kiro engine passes through unchanged and surfaces Kiro's
+own rejection — deliberately no silent degrade, matching the fail-closed
+retry policy. The static fallback and the `--list-models` cache both
+mirror the live list; MCP config docs corrected to
+`~/.kiro/settings/mcp.json`.
+
+### Kimi: native skills for the legacy CLI
+
+The legacy Python kimi CLI natively merges `~/.kimi/skills/` (SKILL.md
+packages, same format as Claude) — the digest file earlier releases wrote
+(`~/.kimi/super-team-skills.md`) was never read by any generation.
+`CliSkillBridge` now returns `native_dir` for both generations
+(`.kimi/skills` legacy, `.kimi-code/skills` kimi-code) and prunes the
+inert digest once a manifest confirms we wrote it. The 1.49 dispatch
+contract itself needed zero changes — variant probe (`--help` contains
+`--print` ⇒ legacy), flags, and the stream-json shapes were re-verified
+against the installed package source, including kosong's single-part
+string-collapse serialization that `extractAssistantText()` already
+handles.
 
 ---
 

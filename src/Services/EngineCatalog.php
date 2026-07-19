@@ -284,7 +284,7 @@ class EngineCatalog
                 // LIVE from the binary itself — `kiro-cli chat --list-models
                 // --format json-pretty`. KiroModelResolver memoizes the
                 // probe to `~/.cache/superaicore/kiro-models.json` (24h
-                // TTL). Uses dot-versioned IDs (`claude-sonnet-4.6`) unlike
+                // TTL). Uses dot-versioned IDs (`claude-sonnet-4.5`) unlike
                 // Claude Code CLI's dashes. Covers Anthropic + DeepSeek +
                 // MiniMax + GLM + Qwen + the `auto` routing primitive.
                 if (!class_exists(KiroModelResolver::class)) return null;
@@ -486,24 +486,32 @@ class EngineCatalog
                 // Identifiers use DOT separators (not Claude CLI's dashes).
                 // Authoritative catalog lives in CopilotModelResolver; this
                 // list is a projection so EngineDescriptor.availableModels
-                // stays populated for legacy callers. Last verified 2026-04-19
-                // against copilot CLI 1.0.32.
+                // stays populated for legacy callers. Last verified 2026-07-19
+                // against copilot CLI 1.0.71.
                 'default_model'       => 'claude-sonnet-4.6',
                 'billing_model'       => 'subscription',
                 'available_models'    => [
+                    'claude-sonnet-5',
                     'claude-sonnet-4.6',
                     'claude-sonnet-4.5',
-                    'claude-sonnet-4',
+                    'claude-fable-5',
+                    'claude-opus-4.8',
+                    'claude-opus-4.7',
                     'claude-opus-4.6',
                     'claude-opus-4.5',
                     'claude-haiku-4.5',
-                    'gpt-5.1',
-                    'gpt-5.1-codex',
-                    'gpt-5.1-codex-mini',
-                    'gpt-5',
+                    'gpt-5.6-sol',
+                    'gpt-5.6-luna',
+                    'gpt-5.6-terra',
+                    'gpt-5.5',
+                    'gpt-5.4',
+                    'gpt-5.4-mini',
+                    'gpt-5.3-codex',
                     'gpt-5-mini',
-                    'gpt-4.1',
-                    'gemini-3-pro-preview',
+                    'gemini-3.5-flash',
+                    'gemini-3.1-pro',
+                    'kimi-k2.7-code',
+                    'mai-code-1-flash',
                 ],
                 'process_spec' => new ProcessSpec(
                     binary:           'copilot',
@@ -604,13 +612,14 @@ class EngineCatalog
                 'dispatcher_backends' => ['cursor_cli'],
                 'is_cli'              => true,
                 'cli_binary'          => 'cursor-agent',
-                // Cursor's headless Composer agent (cursor-agent 2026.05.28;
-                // lineup re-verified 2026-07-12 — ~189 slugs live). Subscription-
+                // Cursor's headless Composer agent (cursor-agent 2026.07.16;
+                // lineup re-verified 2026-07-19 — ~193 slugs live). Subscription-
                 // billed via the user's Cursor plan — usage rows emit $0 and the
                 // dashboard surfaces shadow cost. Default composer-2.5 (the
                 // account's "current" pick); the CLI also proxies Anthropic
                 // (Fable 5 / Sonnet 5 / Opus 4.x thinking), OpenAI (GPT-5.6
-                // Sol, gpt-5.x-codex), xAI (grok-4.5), Google (gemini-3.5-flash),
+                // Sol, gpt-5.x-codex), xAI (cursor-grok-4.5 — renamed from
+                // grok-4.5 in the 2026.07 release), Google (gemini-3.5-flash),
                 // Moonshot (kimi-k2.7-code) and Z.ai (glm-5.2) SKUs.
                 // The authoritative list is `cursor-agent models`; this seed is
                 // a curated projection (dot/word slugs, no catalog expansion).
@@ -628,7 +637,7 @@ class EngineCatalog
                     'gpt-5.5-high',
                     'gpt-5.3-codex',
                     'gpt-5.2',
-                    'grok-4.5-xhigh',
+                    'cursor-grok-4.5-high',
                     'gemini-3.5-flash',
                     'kimi-k2.7-code',
                     'glm-5.2-high',
