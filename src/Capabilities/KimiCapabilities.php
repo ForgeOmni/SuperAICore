@@ -5,6 +5,7 @@ namespace SuperAICore\Capabilities;
 use SuperAICore\AgentSpawn\SpawnPlan;
 use SuperAICore\Contracts\BackendCapabilities;
 use SuperAICore\Models\AiProvider;
+use SuperAICore\Support\KimiRuntime;
 
 /**
  * Kimi Code CLI adapter (MoonshotAI/kimi-cli, binary `kimi`).
@@ -31,24 +32,33 @@ use SuperAICore\Models\AiProvider;
  * 500-steps-per-turn cap, or when the caller wants the standard
  * 摘要 / 思维导图 / 流程图 triple produced by our consolidation prompt.
  *
- * **Tool-name translation.** Kimi's built-in tools use PascalCase
- * (`ReadFile` / `WriteFile` / `StrReplaceFile` / `Shell` / …) rather than
- * Claude Code's bare names (`Read` / `Write` / `Edit` / `Bash`). Map below
- * lets skill/agent authors write once in Claude conventions.
+ * **Tool-name translation — generation-dependent.** The legacy Python
+ * kimi-cli used PascalCase tool names (`ReadFile` / `WriteFile` /
+ * `StrReplaceFile` / `Shell` / …). The current kimi-code (verified
+ * v0.27.0 via a live `--output-format stream-json` tool-call capture)
+ * uses Claude Code's bare names — the wire shows `"name":"Bash"` — so
+ * `toolNameMap()` returns the identity (empty) map there and the
+ * PascalCase map only for legacy installs. {@see KimiRuntime} decides
+ * which generation is active from the on-disk layout.
  *
- * **Skills/agents.** Verified 2026-04-22 on kimi v1.38.0:
- *   - `.claude/skills/` IS auto-loaded natively — zero translation needed.
- *   - `.claude/agents/*.md` is NOT auto-loaded — Kimi uses its own YAML
- *     agent format under `~/.kimi/agents/<name>/agent.yaml`. A
- *     `KimiAgentSync` writer to bridge the formats is deferred to MVP-3;
- *     the (b) fallback path here doesn't need it, since we spawn
- *     `kimi --print` as an unstructured child and supply the agent's
- *     system prompt via the preamble text.
+ * **Skills/agents.**
+ *   - legacy kimi-cli (verified 2026-04-22 on v1.38.0): `.claude/skills/`
+ *     IS auto-loaded natively; agents live under `~/.kimi/agents/` in
+ *     Kimi's own YAML format (bridged by `KimiAgentSync`).
+ *   - kimi-code (verified v0.27.0 docs): `.claude/skills/` is NOT read.
+ *     Discovery is `.kimi-code/skills/` + `.agents/skills/` (project) and
+ *     `~/.kimi-code/skills/` + `~/.agents/skills/` (user), SKILL.md
+ *     format — `CliSkillBridge` installs wrappers into the user dir.
+ *     There is no custom-agent YAML; sub-agents are the built-in
+ *     `coder` / `explore` / `plan` trio.
  *
- * **MCP.** Kimi reads `~/.kimi/mcp.json` (+ project `.mcp.json`) in the
- * Claude-compatible shape. `renderMcpConfig()` emits the user-scope file
- * for `McpManager::syncAllBackends()` fan-out, preserving non-`mcpServers`
- * keys on disk so any Kimi-specific config the user pasted in stays put.
+ * **MCP.** Both generations read a Claude-compatible
+ * `{"mcpServers": {...}}` JSON — legacy at `~/.kimi/mcp.json`, kimi-code
+ * at `$KIMI_CODE_HOME/mcp.json` (default `~/.kimi-code/mcp.json`, plus
+ * project-scope `.kimi-code/mcp.json`). `renderMcpConfig()` emits the
+ * user-scope file for `McpManager::syncAllBackends()` fan-out, preserving
+ * non-`mcpServers` keys on disk so any Kimi-specific config the user
+ * pasted in stays put.
  */
 class KimiCapabilities implements BackendCapabilities
 {
@@ -59,6 +69,11 @@ class KimiCapabilities implements BackendCapabilities
 
     public function toolNameMap(): array
     {
+        // kimi-code (≥0.6, verified 0.27.0) adopted Claude Code's bare
+        // tool names on the wire (`Bash`, not `Shell`) — no translation.
+        if (KimiRuntime::isKimiCode()) {
+            return [];
+        }
         return [
             'Read'      => 'ReadFile',
             'Write'     => 'WriteFile',
@@ -91,7 +106,9 @@ class KimiCapabilities implements BackendCapabilities
 
     public function mcpConfigPath(): ?string
     {
-        return '.kimi/mcp.json';
+        // `.kimi-code/mcp.json` for the current kimi-code install,
+        // `.kimi/mcp.json` for legacy kimi-cli (layout-probed).
+        return KimiRuntime::mcpConfigRelPath();
     }
 
     public function transformPrompt(string $prompt): string
@@ -107,16 +124,17 @@ class KimiCapabilities implements BackendCapabilities
         if (str_contains($prompt, '<!-- kimi-preamble-v1 -->')) {
             return $prompt;
         }
-        return self::PREAMBLE . $prompt;
+        return $this->preambleText() . $prompt;
     }
 
     public function renderMcpConfig(array $servers): string
     {
         // Kimi accepts the same `mcpServers` shape as Claude's .mcp.json.
-        // Merge into whatever else the user has in ~/.kimi/mcp.json
-        // (auth tokens, project-specific overrides) so we don't clobber.
+        // Merge into whatever else the user has in the active install's
+        // mcp.json (auth tokens, project-specific overrides) so we don't
+        // clobber.
         $existing = [];
-        $path = self::homeDir() . '/.kimi/mcp.json';
+        $path = KimiRuntime::mcpConfigPath();
         if (is_file($path) && is_readable($path)) {
             $decoded = json_decode((string) @file_get_contents($path), true);
             if (is_array($decoded)) {
@@ -147,7 +165,27 @@ class KimiCapabilities implements BackendCapabilities
 
     public function spawnPreamble(string $outputDir): string
     {
-        return $this->useNativeAgents() ? '' : self::PREAMBLE;
+        return $this->useNativeAgents() ? '' : $this->preambleText();
+    }
+
+    /**
+     * Generation-appropriate preamble. Legacy kimi-cli needs the Claude →
+     * PascalCase tool-name mapping section; kimi-code tools already use
+     * Claude Code names, so the mapping is replaced by a one-line note and
+     * the protocol's tool references drop the PascalCase forms.
+     */
+    protected function preambleText(): string
+    {
+        if (!KimiRuntime::isKimiCode()) {
+            return self::PREAMBLE;
+        }
+        return self::PREAMBLE_HEAD
+            . self::TOOL_SECTION_CODE
+            . str_replace(
+                ['`WriteFile`', '`ReadFile`'],
+                ['`Write`', '`Read`'],
+                self::PREAMBLE_PROTOCOL,
+            );
     }
 
     public function consolidationPrompt(SpawnPlan $plan, array $report, string $outputDir): string
@@ -199,7 +237,8 @@ class KimiCapabilities implements BackendCapabilities
      * ReadFile / WriteFile / StrReplaceFile / Shell rather than
      * Gemini's read_file / write_file / replace / run_shell_command.
      */
-    const PREAMBLE = <<<'TXT'
+    /** Shared preamble opening — sentinel + spawn-plan framing. */
+    const PREAMBLE_HEAD = <<<'TXT'
 <!-- kimi-preamble-v1 -->
 ## Runtime: Kimi CLI — Spawn Plan Mode
 
@@ -208,6 +247,11 @@ spawn / assemble / dispatch N agents, your job here is to **write a plan
 file and stop** — the host will fan out the real child processes in
 parallel and then call you back to consolidate.
 
+
+TXT;
+
+    /** Legacy kimi-cli: Claude → PascalCase tool-name translation table. */
+    const TOOL_SECTION_LEGACY = <<<'TXT'
 ## Tool Name Mapping (Kimi equivalents)
 
 - `Read` → `ReadFile`
@@ -218,6 +262,20 @@ parallel and then call you back to consolidate.
 - `WebSearch` → `SearchWeb`
 - `Glob` / `Grep` — same name
 
+
+TXT;
+
+    /** kimi-code (≥0.6): tool names already match Claude Code conventions. */
+    const TOOL_SECTION_CODE = <<<'TXT'
+## Tool Names
+
+Your tools use Claude Code naming (`Read` / `Write` / `Edit` / `Bash` /
+`Glob` / `Grep` / `WebFetch` / `WebSearch`) — use them as-is.
+
+
+TXT;
+
+    const PREAMBLE_PROTOCOL = <<<'TXT'
 ## Spawn Plan Protocol
 
 **Step 1.** Decide which agents to spawn (2–5 unless the skill says
@@ -269,4 +327,11 @@ exactly as the skill requires.
 ---
 
 TXT;
+
+    /**
+     * Legacy kimi-cli preamble — byte-identical to the pre-split constant
+     * so existing sentinel/idempotence behaviour is unchanged. kimi-code
+     * runs get the composed variant from {@see preambleText()} instead.
+     */
+    const PREAMBLE = self::PREAMBLE_HEAD . self::TOOL_SECTION_LEGACY . self::PREAMBLE_PROTOCOL;
 }

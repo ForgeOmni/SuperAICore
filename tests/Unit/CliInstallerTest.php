@@ -11,9 +11,10 @@ final class CliInstallerTest extends TestCase
     {
         $matrix = CliInstaller::sources();
 
-        // Default source varies per backend — most use npm, but Kimi ships
-        // as a Python package on PyPI so its default is `uv tool install`
-        // (with pip as a fallback). Keep the map explicit so a future
+        // Default source varies per backend — most use npm. Kimi's default
+        // is Moonshot's official kimi-code install script (single binary
+        // into ~/.kimi-code/bin); uv/pip remain only as explicit legacy
+        // kimi-cli escape hatches. Keep the map explicit so a future
         // distribution-channel change surfaces as a test failure instead
         // of silently re-defaulting.
         $expectedDefault = [
@@ -21,7 +22,7 @@ final class CliInstallerTest extends TestCase
             'codex'   => CliInstaller::SOURCE_NPM,
             'gemini'  => CliInstaller::SOURCE_NPM,
             'copilot' => CliInstaller::SOURCE_NPM,
-            'kimi'    => CliInstaller::SOURCE_UV,
+            'kimi'    => CliInstaller::SOURCE_SCRIPT,
             // Cursor + Grok ship via vendor curl|bash installers, not npm.
             'cursor'  => CliInstaller::SOURCE_SCRIPT,
             'grok'    => CliInstaller::SOURCE_SCRIPT,

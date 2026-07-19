@@ -333,16 +333,29 @@ class CliStatusDetector
         }
         if ($binary === 'kimi') {
             // Kimi CLI has no `auth status` subcommand — `kimi login`
-            // writes the OAuth token to ~/.kimi/credentials/kimi-code.json.
-            // The file is 0600 and its mere presence (+ non-zero size)
-            // is sufficient for the logged-in signal. The `work_dirs`
-            // tracker in ~/.kimi/kimi.json is orthogonal and does NOT
-            // indicate auth — it persists even after `kimi logout`.
+            // writes the OAuth token to `credentials/kimi-code.json` under
+            // the CLI's state dir: `$KIMI_CODE_HOME`/`~/.kimi-code/` for
+            // the current kimi-code (verified v0.27.0), `~/.kimi/` for the
+            // legacy Python kimi-cli. The file is 0600 and its mere
+            // presence (+ non-zero size) is sufficient for the logged-in
+            // signal; we accept either location because a host
+            // mid-migration can have either. The `work_dirs` tracker in
+            // `kimi.json` is orthogonal and does NOT indicate auth — it
+            // persists even after logout.
             $home = self::resolvedHome();
-            $credFile = $home ? $home . '/.kimi/credentials/kimi-code.json' : '';
-            $loggedIn = $credFile !== ''
-                && is_file($credFile)
-                && @filesize($credFile) > 0;
+            $codeHome = rtrim((string) (getenv('KIMI_CODE_HOME') ?: ''), '/\\')
+                ?: ($home ? $home . '/.kimi-code' : '');
+            $candidates = array_filter([
+                $codeHome ? $codeHome . '/credentials/kimi-code.json' : null,
+                $home ? $home . '/.kimi/credentials/kimi-code.json' : null,
+            ]);
+            $loggedIn = false;
+            foreach ($candidates as $credFile) {
+                if (is_file($credFile) && @filesize($credFile) > 0) {
+                    $loggedIn = true;
+                    break;
+                }
+            }
             return [
                 'loggedIn' => $loggedIn,
                 'status'   => $loggedIn ? 'oauth-credential-present' : 'not-logged-in',

@@ -13,9 +13,12 @@ use SuperAICore\Contracts\SkillLibrary;
  *                      directory of `SKILL.md` packs. We drop one thin
  *                      wrapper dir per skill (prefixed, so we never touch
  *                      the user's own skills).
- *   - `instructions` — copilot/kimi/kiro have no skills dir but auto-load
- *                      a custom-instructions file; we write a digest that
- *                      tells the model how to load any skill on demand.
+ *   - `instructions` — copilot/kiro (and legacy kimi-cli) have no skills
+ *                      dir but auto-load a custom-instructions file; we
+ *                      write a digest that tells the model how to load any
+ *                      skill on demand. (Current kimi-code has a real
+ *                      skills dir, so `kimi` is promoted to `native_dir`
+ *                      by descriptor() when that install is detected.)
  *   - `source`       — claude reads the host's `.claude/skills` directly;
  *                      nothing to install.
  *
@@ -47,6 +50,9 @@ class CliSkillBridge
         'cursor' => ['mode' => 'native_dir', 'dir' => '.cursor/skills-cursor', 'prefix' => 'super-team-'],
         'qwen'   => ['mode' => 'native_dir', 'dir' => '.qwen/skills',          'prefix' => 'super-team-'],
         'copilot' => ['mode' => 'instructions', 'file' => '.copilot/super-team-skills.md'],
+        // Legacy kimi-cli shape. The current kimi-code auto-discovers a real
+        // skills dir (~/.kimi-code/skills, SKILL.md packs) — descriptor()
+        // swaps this entry to native_dir when that layout is active.
         'kimi'    => ['mode' => 'instructions', 'file' => '.kimi/super-team-skills.md'],
         'kiro'    => ['mode' => 'instructions', 'file' => '.kiro/super-team-skills.md'],
         'claude'  => ['mode' => 'source'],
@@ -78,10 +84,31 @@ class CliSkillBridge
      * re-installs the given backend when the library changed since last
      * sync. Safe to call before every CLI spawn.
      */
+    /**
+     * Live bridge descriptor for a backend. Identical to the BACKENDS
+     * entry except for `kimi`, whose surface depends on which CLI
+     * generation is installed: kimi-code gets a first-class skills dir,
+     * legacy kimi-cli keeps the instructions-digest file.
+     *
+     * @return array{mode:string,dir?:string,file?:string,prefix?:string}|null
+     */
+    public function descriptor(string $backend): ?array
+    {
+        $desc = self::BACKENDS[$backend] ?? null;
+        if ($backend === 'kimi' && $desc !== null && \SuperAICore\Support\KimiRuntime::isKimiCode()) {
+            return [
+                'mode'   => 'native_dir',
+                'dir'    => \SuperAICore\Support\KimiRuntime::skillsRelPath(),
+                'prefix' => 'super-team-',
+            ];
+        }
+        return $desc;
+    }
+
     public function ensureSynced(string $backend): void
     {
         if (!$this->active()) return;
-        $desc = self::BACKENDS[$backend] ?? null;
+        $desc = $this->descriptor($backend);
         if (!$desc || in_array($desc['mode'], ['source', 'none'], true)) return;
         try {
             if ($this->needsSync($backend)) {
@@ -132,7 +159,7 @@ class CliSkillBridge
             $row['error'] = 'no SkillLibrary bound';
             return $row;
         }
-        $desc = self::BACKENDS[$backend] ?? null;
+        $desc = $this->descriptor($backend);
         if (!$desc) { $row['error'] = 'unknown backend'; return $row; }
         $row['mode'] = $desc['mode'];
         if (in_array($desc['mode'], ['source', 'none'], true)) {
@@ -275,7 +302,7 @@ class CliSkillBridge
 
     protected function manifestPath(string $backend): ?string
     {
-        $desc = self::BACKENDS[$backend] ?? null;
+        $desc = $this->descriptor($backend);
         if (!$desc) return null;
         $home = self::home();
         if ($home === '') return null;

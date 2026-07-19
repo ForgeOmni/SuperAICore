@@ -19,8 +19,9 @@ use Symfony\Component\Process\Process;
  * transition a host may have either one installed; this backend probes
  * which dialect is present and adapts its argv + stream-json parsing.
  *
- * Authentication model: only `moonshot-builtin` — `kimi login` (legacy) or
- * `/login` inside `kimi` (kimi-code) has already populated `~/.kimi/…` with
+ * Authentication model: only `moonshot-builtin` — `kimi login` has already
+ * populated `credentials/kimi-code.json` under the CLI's state dir
+ * (`$KIMI_CODE_HOME`/`~/.kimi-code/` for kimi-code, `~/.kimi/` legacy) with
  * the OAuth token. No env injection, same as Claude / Gemini / Kiro builtin.
  * A direct-HTTP `api_key` channel against api.moonshot.ai is intentionally
  * NOT exposed here — that path routes through the `superagent` backend
@@ -36,16 +37,26 @@ use Symfony\Component\Process\Process;
  *   - assistant `content` is an ARRAY of typed blocks (`text` / `think`)
  *   - resume hint goes to stderr (does not pollute the NDJSON stream)
  *
- * ── Headless surface, new kimi-code (verified against v0.6.0) ──
+ * ── Headless surface, new kimi-code (verified v0.6.0; re-verified live
+ *    against v0.27.0 on 2026-07-19 — contract unchanged) ──
  *   - NO `--print`: print mode is triggered by passing `--prompt`; unknown
  *     options are hard-rejected, and `--yolo`/`--auto`/`--plan` may NOT be
- *     combined with `--prompt` (print mode is non-interactive by nature)
+ *     combined with `--prompt` ("error: Cannot combine --prompt with
+ *     --yolo"); prompt mode itself runs under the `auto` permission
+ *     policy, so tools execute without approval anyway
  *   - `--output-format <text|stream-json>` (only valid in prompt mode)
  *   - NO `--max-steps-per-turn`, NO per-run `--mcp-config-file`, NO `-w`
- *     (the step budget and MCP servers are config.toml-driven; cwd is the
- *     process cwd)
- *   - assistant `content` is a plain STRING; a `{"role":"meta",
- *     "type":"session.resume_hint", …}` NDJSON line carries the resume hint
+ *     (the step budget and MCP servers are config-driven — user scope
+ *     `~/.kimi-code/{config.toml,mcp.json}`, project scope
+ *     `.kimi-code/mcp.json`; cwd is the process cwd, plus repeatable
+ *     `--add-dir` for extra workspace dirs)
+ *   - assistant `content` is a plain STRING; tool use arrives as an
+ *     assistant line with an OpenAI-style `tool_calls` array (bare
+ *     Claude-style names, e.g. `"name":"Bash"`) followed by
+ *     `{"role":"tool","tool_call_id":…,"content":…}` result lines
+ *   - a `{"role":"meta","type":"session.resume_hint", …}` NDJSON line
+ *     carries the resume hint (`kimi -r <session_id>`; `-r`/`--resume` is
+ *     a hidden alias of `-S`/`--session`)
  *
  * **Usage is NOT reported** in stream-json (either dialect). We emit zero
  * token counts in the envelope; `CostCalculator` treats Kimi as
@@ -96,7 +107,14 @@ class KimiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     {
         $process = new Process(['which', $this->binary]);
         $process->run();
-        return $process->isSuccessful();
+        if ($process->isSuccessful()) {
+            return true;
+        }
+        // The kimi-code installer's target (~/.kimi-code/bin) is added to
+        // PATH via shell rc files, which non-login PHP processes (fpm,
+        // queue workers, cron) don't source — probe it directly.
+        return !str_contains($this->binary, '/')
+            && is_file(\SuperAICore\Support\KimiRuntime::codeHome() . '/bin/' . $this->binary);
     }
 
     public function generate(array $options): ?array

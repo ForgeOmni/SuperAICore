@@ -15,11 +15,12 @@ use SuperAICore\Services\EngineCatalog;
  * Probe order on Linux/BSD:
  *   1. $HOME/.npm-global/bin/<binary>
  *   2. $HOME/.local/bin/<binary>
- *   3. /usr/local/bin/<binary>
- *   4. /usr/bin/<binary>
- *   5. /snap/bin/<binary>
- *   6. /home/linuxbrew/.linuxbrew/bin/<binary>
- *   7. $HOME/.nvm/versions/node/<active>/bin/<binary>
+ *   3. $KIMI_CODE_HOME/bin/<binary> (default ~/.kimi-code/bin — kimi-code installer)
+ *   4. /usr/local/bin/<binary>
+ *   5. /usr/bin/<binary>
+ *   6. /snap/bin/<binary>
+ *   7. /home/linuxbrew/.linuxbrew/bin/<binary>
+ *   8. $HOME/.nvm/versions/node/<active>/bin/<binary>
  *
  * macOS adds /opt/homebrew/bin (Apple Silicon) before /usr/local/bin
  * (Intel) and includes /opt/local/bin (MacPorts).
@@ -82,6 +83,16 @@ class CliBinaryLocator
         unset($this->cache[$engineKey]);
     }
 
+    /**
+     * `$KIMI_CODE_HOME/bin` (default `~/.kimi-code/bin`) — where the
+     * official kimi-code install script places the `kimi` binary on all
+     * three platforms.
+     */
+    protected static function kimiCodeBin(): string
+    {
+        return KimiRuntime::codeHome() . '/bin';
+    }
+
     /** @return string[] */
     protected function windowsCandidates(string $binary): array
     {
@@ -97,6 +108,8 @@ class CliBinaryLocator
             $appdata ? "{$appdata}/npm" : null,
             $home    ? "{$home}/.local/bin" : null,
             $home    ? "{$home}/.npm-global/bin" : null,
+            // kimi-code installer target (see macCandidates note).
+            $home || getenv('KIMI_CODE_HOME') ? self::kimiCodeBin() : null,
             $localApp ? "{$localApp}/Programs/{$binary}" : null,
             $progFiles ? "{$progFiles}/{$binary}" : null,
             $progFilesX86 ? "{$progFilesX86}/{$binary}" : null,
@@ -121,6 +134,11 @@ class CliBinaryLocator
         if ($home) {
             $candidates[] = "{$home}/.npm-global/bin/{$binary}";
             $candidates[] = "{$home}/.local/bin/{$binary}";
+            // Moonshot's kimi-code installer drops its single binary into
+            // $KIMI_CODE_HOME/bin (default ~/.kimi-code/bin) — a dir only
+            // the `kimi` engine ever populates, so probing it for other
+            // binaries is a cheap miss.
+            $candidates[] = self::kimiCodeBin() . "/{$binary}";
         }
         $candidates[] = "/opt/homebrew/bin/{$binary}";
         $candidates[] = "/usr/local/bin/{$binary}";
@@ -141,6 +159,8 @@ class CliBinaryLocator
         $candidates = [
             "{$home}/.npm-global/bin/{$binary}",
             "{$home}/.local/bin/{$binary}",
+            // kimi-code installer target (see macCandidates note).
+            self::kimiCodeBin() . "/{$binary}",
             "/usr/local/bin/{$binary}",
             "/usr/bin/{$binary}",
             "/snap/bin/{$binary}",

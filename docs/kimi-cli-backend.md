@@ -1,6 +1,6 @@
 # Design: `kimi_cli` Backend
 
-**状态**:MVP-1 + MVP-2 + agent-sync 已实施,0.6.8 基线
+**状态**:MVP-1 + MVP-2 + agent-sync 已实施,0.6.8 基线;§9 kimi-code 0.27.0 支持刷新(2026-07-19)
 **日期**:2026-04-22(RFC);2026-04-22(实施完成)
 **目标版本**:保持当前 0.6.8 基线,不自动 bump
 **相关文档**:`docs/copilot-cli-backend.md`、`docs/spawn-plan-protocol.md`、`docs/streaming-backends.md`、`docs/mcp-sync.md`
@@ -355,3 +355,51 @@ Total:9 个新文件 + 12 个修改 = **21 个文件变动**。全套测试 **45
 
 - **覆盖**:one-shot / streaming / scripted-spawn / streamChat 四条 dispatch 路径,以及 `EngineCatalog` 的 `kimi` `ProcessSpec` 声明形状(随 kimi-code 默认前移,版本探测对两者通用)。
 - **暂未覆盖(独立后续)**:`KimiAgentSync` 仍按 legacy `~/.kimi/agents/<ns>/<name>/`(`agent.yaml` + `system.md`)布局写文件,`KimiSyncCommand` 打的调用提示仍是 legacy 的 `kimi --agent-file … --print …`。kimi-code 的 agent/skill 发现机制不同(`.agents/` + `--skills-dir`,无 `--agent-file`),做到 kimi-code agent-sync 平价是一项独立特性,需单独调研其 agent 文件布局后再开。dispatch 层(用户本次诉求"同时支持两种 CLI")已完整覆盖。
+
+---
+
+## 9. kimi-code 0.27.0 支持刷新(2026-07-19)
+
+在真机(macOS,kimi-code v0.27.0,官方 install.sh 安装)上实测 + 对照官方文档
+(<https://moonshotai.github.io/kimi-code/>)后的一轮支持修正。
+
+### 9.1 实测结论(v0.27.0)
+
+- **headless 契约与 §8 的 kimi-code dialect 完全一致**:`--prompt` 触发 print
+  模式、`--output-format stream-json`、assistant `content` 为纯字符串、
+  `role:meta` resume 提示、未知选项硬拒绝、`--yolo` 不能与 `--prompt` 组合
+  (print 模式本身按 `auto` 权限策略放行工具,无需 yolo)。`KimiCliBackend`
+  **零改动即兼容**,仅更新了注释。
+- **工具名已改为 Claude Code 风格**:tool_calls 线上抓包显示
+  `"name":"Bash"`(OpenAI 风格 `tool_calls` 数组 + `role:tool` 结果行),
+  legacy 的 PascalCase(`Shell`/`ReadFile`)不再适用。
+- **状态目录整体搬家**:`$KIMI_CODE_HOME`(默认 `~/.kimi-code/`),含
+  `bin/kimi`(Node SEA 单二进制)、`config.toml`、`credentials/kimi-code.json`、
+  `mcp.json`、`skills/`。旧 `~/.kimi/` 仅 legacy Python kimi-cli 使用。
+- **MCP 仍是 Claude 兼容 JSON**(`{"mcpServers":{...}}`),但路径变为用户级
+  `~/.kimi-code/mcp.json` + 项目级 `.kimi-code/mcp.json`。
+- **skills 一等公民**:自动发现 `.kimi-code/skills/`、`.agents/skills/`(项目)
+  与 `~/.kimi-code/skills/`、`~/.agents/skills/`(用户),SKILL.md 格式;
+  `.claude/skills/` 不再被读取(legacy 才读)。无自定义 agent YAML,内建
+  `coder`/`explore`/`plan` 三个 subagent。
+- **resume**:`-r`/`--resume` 是 `-S`/`--session` 的隐藏别名;另有 `-c`
+  `--continue`、`--add-dir`、`--skills-dir`、`acp`/`server`/`doctor` 等新面。
+
+### 9.2 本轮落地
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/Support/KimiRuntime.php`(新增) | 目录布局探测:`isKimiCode()`(`$KIMI_CODE_HOME` > `~/.kimi-code` > `~/.kimi`,两者皆无默认新版)、`credentialCandidates()`、`mcpConfigRelPath()`/`mcpConfigPath()`、`skillsRelPath()` |
+| `src/Services/CliStatusDetector.php` | kimi 登录探针改查 `~/.kimi-code/credentials/kimi-code.json`(含 `$KIMI_CODE_HOME`)并回退 legacy 路径 —— 此前 0.27 装机会被误报未登录 |
+| `src/Support/CliBinaryLocator.php` | 三平台候选路径新增 `$KIMI_CODE_HOME/bin`(官方安装目标,非 login shell 的 PATH 不含它) |
+| `src/Backends/KimiCliBackend.php` | `isAvailable()` 在 `which` 失败后直接探 `~/.kimi-code/bin/<binary>`;头注释按 0.27 实测更新 |
+| `src/Services/CliInstaller.php` | kimi 默认源改官方 `curl -fsSL https://code.kimi.com/kimi-code/install.sh \| bash`;uv/pip 降为 legacy 显式逃生口 |
+| `src/Capabilities/KimiCapabilities.php` | `mcpConfigPath()`/`renderMcpConfig()` 按布局选 `.kimi-code/mcp.json` 或 `.kimi/mcp.json`;`toolNameMap()` 在 kimi-code 下返回空映射(名字已同 Claude);(b) 降级 preamble 拆分,kimi-code 版不再注入 PascalCase 工具映射段 |
+| `src/Services/CliSkillBridge.php` | 新增 `descriptor()`:kimi-code 布局下 kimi 升级为 `native_dir`(`~/.kimi-code/skills/` + `super-team-` 前缀);legacy 保持 instructions 摘要文件 |
+
+### 9.3 仍为 legacy-only(有意保留)
+
+- `KimiAgentSync`(`~/.kimi/agents/<ns>/…` + `--agent-file`):kimi-code 无自定义
+  agent 机制,等价物是 skills;如需把 `.claude/agents/*.md` 桥到 kimi-code,
+  应生成 SKILL.md 包(独立特性,未在本轮范围)。
+- `max_steps_per_turn` 配置项:kimi-code 无对应 flag,该 dialect 下忽略。

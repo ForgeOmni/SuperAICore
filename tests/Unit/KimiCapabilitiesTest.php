@@ -22,8 +22,10 @@ final class KimiCapabilitiesTest extends TestCase
 
     public function test_fallback_returns_preamble_with_sentinel(): void
     {
-        $cap = new TestableKimiCapabilities(useNative: false);
-        $out = $cap->spawnPreamble('/tmp/out');
+        // Legacy layout → PascalCase tool-name mapping block is included.
+        $out = $this->withSandboxHome(['.kimi'], function () {
+            return (new TestableKimiCapabilities(useNative: false))->spawnPreamble('/tmp/out');
+        });
 
         $this->assertStringContainsString('<!-- kimi-preamble-v1 -->', $out);
         $this->assertStringContainsString('Spawn Plan Protocol', $out);
@@ -31,6 +33,22 @@ final class KimiCapabilitiesTest extends TestCase
         $this->assertStringContainsString('ReadFile', $out);
         $this->assertStringContainsString('WriteFile', $out);
         $this->assertStringContainsString('StrReplaceFile', $out);
+    }
+
+    public function test_fallback_preamble_on_kimi_code_uses_claude_tool_names(): void
+    {
+        // kimi-code layout → no PascalCase mapping; protocol references
+        // use Claude Code names verbatim.
+        $out = $this->withSandboxHome(['.kimi-code'], function () {
+            return (new TestableKimiCapabilities(useNative: false))->spawnPreamble('/tmp/out');
+        });
+
+        $this->assertStringContainsString('<!-- kimi-preamble-v1 -->', $out);
+        $this->assertStringContainsString('Spawn Plan Protocol', $out);
+        $this->assertStringContainsString('Claude Code naming', $out);
+        $this->assertStringNotContainsString('ReadFile', $out);
+        $this->assertStringNotContainsString('WriteFile', $out);
+        $this->assertStringNotContainsString('StrReplaceFile', $out);
     }
 
     public function test_native_default_returns_empty_consolidation_prompt(): void
@@ -80,11 +98,14 @@ final class KimiCapabilitiesTest extends TestCase
 
     public function test_render_mcp_config_emits_claude_compatible_shape(): void
     {
-        $cap = new TestableKimiCapabilities(useNative: true);
-        $content = $cap->renderMcpConfig([
-            ['key' => 'fetch', 'command' => 'uvx', 'args' => ['mcp-server-fetch'], 'env' => new \stdClass()],
-            ['key' => 'arxiv', 'command' => 'node', 'args' => ['arxiv.mjs'],       'env' => ['KEY' => 'x']],
-        ]);
+        // Sandbox HOME so the merge-read never touches the dev machine's
+        // real ~/.kimi-code/mcp.json.
+        $content = $this->withSandboxHome(['.kimi-code'], function () {
+            return (new TestableKimiCapabilities(useNative: true))->renderMcpConfig([
+                ['key' => 'fetch', 'command' => 'uvx', 'args' => ['mcp-server-fetch'], 'env' => new \stdClass()],
+                ['key' => 'arxiv', 'command' => 'node', 'args' => ['arxiv.mjs'],       'env' => ['KEY' => 'x']],
+            ]);
+        });
         $decoded = json_decode($content, true);
 
         $this->assertIsArray($decoded);
@@ -134,11 +155,11 @@ final class KimiCapabilitiesTest extends TestCase
         }
     }
 
-    public function test_key_and_tool_name_map_basics(): void
+    public function test_key_and_legacy_tool_name_map_basics(): void
     {
         $cap = new KimiCapabilities();
         $this->assertSame('kimi', $cap->key());
-        $map = $cap->toolNameMap();
+        $map = $this->withSandboxHome(['.kimi'], fn () => $cap->toolNameMap());
         $this->assertSame('ReadFile', $map['Read']);
         $this->assertSame('WriteFile', $map['Write']);
         $this->assertSame('StrReplaceFile', $map['Edit']);
@@ -147,14 +168,62 @@ final class KimiCapabilitiesTest extends TestCase
         $this->assertSame('SearchWeb', $map['WebSearch']);
     }
 
-    public function test_mcp_config_path_is_dot_kimi_mcp_json(): void
+    public function test_kimi_code_tool_name_map_is_identity(): void
     {
-        $this->assertSame('.kimi/mcp.json', (new KimiCapabilities())->mcpConfigPath());
+        // kimi-code 0.27 emits Claude-style names on the wire ("Bash") —
+        // an empty map means "no translation".
+        $map = $this->withSandboxHome(['.kimi-code'], fn () => (new KimiCapabilities())->toolNameMap());
+        $this->assertSame([], $map);
+    }
+
+    public function test_mcp_config_path_follows_install_layout(): void
+    {
+        $this->assertSame(
+            '.kimi/mcp.json',
+            $this->withSandboxHome(['.kimi'], fn () => (new KimiCapabilities())->mcpConfigPath()),
+        );
+        $this->assertSame(
+            '.kimi-code/mcp.json',
+            $this->withSandboxHome(['.kimi-code'], fn () => (new KimiCapabilities())->mcpConfigPath()),
+        );
+        // Fresh machine (neither dir) defaults to the current kimi-code.
+        $this->assertSame(
+            '.kimi-code/mcp.json',
+            $this->withSandboxHome([], fn () => (new KimiCapabilities())->mcpConfigPath()),
+        );
     }
 
     public function test_stream_format_is_stream_json(): void
     {
         $this->assertSame('stream-json', (new KimiCapabilities())->streamFormat());
+    }
+
+    /**
+     * Run $fn with HOME pointed at a throwaway dir containing the given
+     * subdirs, so KimiRuntime's layout probe is deterministic regardless
+     * of what the dev machine has installed. Restores HOME afterwards.
+     *
+     * @param string[] $dirs e.g. ['.kimi'] to fake a legacy install
+     */
+    private function withSandboxHome(array $dirs, callable $fn): mixed
+    {
+        $sandbox = sys_get_temp_dir() . '/kimi-cap-home-' . bin2hex(random_bytes(3));
+        mkdir($sandbox, 0755, true);
+        foreach ($dirs as $d) {
+            mkdir($sandbox . '/' . $d, 0755, true);
+        }
+        $prev = getenv('HOME');
+        putenv('HOME=' . $sandbox);
+        try {
+            return $fn();
+        } finally {
+            putenv($prev === false ? 'HOME' : 'HOME=' . $prev);
+            foreach ($dirs as $d) {
+                array_map('unlink', glob($sandbox . '/' . $d . '/*') ?: []);
+                @rmdir($sandbox . '/' . $d);
+            }
+            @rmdir($sandbox);
+        }
     }
 }
 

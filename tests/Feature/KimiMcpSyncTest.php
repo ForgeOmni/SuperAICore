@@ -129,6 +129,30 @@ class KimiMcpSyncTest extends TestCase
         $this->assertArrayNotHasKey('stale', $written['mcpServers']);
     }
 
+    public function test_sync_targets_kimi_code_mcp_json_when_new_layout_present(): void
+    {
+        // A ~/.kimi-code dir marks the current kimi-code install; it wins
+        // over the legacy ~/.kimi dir (also present via setUp) so the sync
+        // must land in ~/.kimi-code/mcp.json where kimi-code 0.27 reads it.
+        mkdir($this->sandboxHome . '/.kimi-code', 0755, true);
+
+        file_put_contents($this->sandboxProject . '/.mcp.json', json_encode([
+            'mcpServers' => [
+                'fetch' => ['type' => 'stdio', 'command' => 'uvx', 'args' => ['mcp-server-fetch']],
+            ],
+        ]));
+
+        $report = McpManager::syncAllBackends(['kimi']);
+
+        $this->assertNull($report[0]['error'] ?? null);
+        $this->assertSame(
+            $this->sandboxHome . '/.kimi-code/mcp.json',
+            $report[0]['path'],
+        );
+        $written = json_decode((string) file_get_contents($report[0]['path']), true);
+        $this->assertArrayHasKey('fetch', $written['mcpServers']);
+    }
+
     public function test_default_list_includes_kimi(): void
     {
         // Drop an empty project catalog so the sync has no work to do, but

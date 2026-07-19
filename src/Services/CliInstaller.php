@@ -24,9 +24,10 @@ final class CliInstaller
     public const SOURCE_NPM    = 'npm';
     public const SOURCE_BREW   = 'brew';
     public const SOURCE_SCRIPT = 'script';
-    // Kimi CLI is distributed as a Python package — not on npm or brew.
-    // Preferred install is `uv tool install` (fast, PEP 668-safe); pip
-    // with `--user` stays as a fallback for hosts without uv.
+    // Legacy-Kimi-only sources. The current `kimi-code` ships as a single
+    // binary via Moonshot's install script (default below); `uv`/`pip`
+    // install the retired Python `kimi-cli` package and stay only as an
+    // explicit `--via` escape hatch for hosts pinned to the old CLI.
     public const SOURCE_UV     = 'uv';
     public const SOURCE_PIP    = 'pip';
 
@@ -57,9 +58,13 @@ final class CliInstaller
             'copilot' => [
                 ['source' => self::SOURCE_NPM, 'argv' => ['npm', 'install', '-g', '@github/copilot']],
             ],
+            // Moonshot's official kimi-code installer drops the single
+            // `kimi` binary into ~/.kimi-code/bin (Windows installs via
+            // `irm https://code.kimi.com/kimi-code/install.ps1 | iex`).
             'kimi' => [
-                ['source' => self::SOURCE_UV,  'argv' => ['uv', 'tool', 'install', 'kimi-cli']],
-                ['source' => self::SOURCE_PIP, 'argv' => ['pip', 'install', '--user', 'kimi-cli'], 'note' => 'fallback when uv unavailable'],
+                ['source' => self::SOURCE_SCRIPT, 'argv' => ['sh', '-c', 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'], 'note' => 'POSIX only'],
+                ['source' => self::SOURCE_UV,  'argv' => ['uv', 'tool', 'install', 'kimi-cli'], 'note' => 'legacy Python kimi-cli'],
+                ['source' => self::SOURCE_PIP, 'argv' => ['pip', 'install', '--user', 'kimi-cli'], 'note' => 'legacy Python kimi-cli; when uv unavailable'],
             ],
             // Cursor's official installer drops `cursor-agent` into ~/.local/bin.
             'cursor' => [
