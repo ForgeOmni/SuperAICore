@@ -45,6 +45,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 35. [Parité ai-dispatch — envoi par alias, reprise de session, archive des runs (1.1.0)](#35-parité-ai-dispatch--envoi-par-alias-reprise-de-session-archive-des-runs-110)
 36. [GPT-5.6 & Grok 4.5 — les nouvelles surfaces de requête et le rafraîchissement du catalogue (1.1.6 / SDK 1.1.6)](#36-gpt-56--grok-45--les-nouvelles-surfaces-de-requête-et-le-rafraîchissement-du-catalogue-116--sdk-116)
 37. [Kimi K3 — le nouveau modèle phare généraliste de Moonshot (1.1.7 / SDK 1.1.7)](#37-kimi-k3--le-nouveau-modèle-phare-généraliste-de-moonshot-117--sdk-117)
+38. [Kimi Code 0.27 — la sonde de disposition et les surfaces de support par génération (1.1.8)](#38-kimi-code-027--la-sonde-de-disposition-et-les-surfaces-de-support-par-génération-118)
 
 ---
 
@@ -3947,6 +3948,76 @@ kimi-code) est une surface distincte et facture toujours 0 $/token.
 - Aucune nouvelle option de dispatch. La réflexion toujours active de K3 est
   pilotée par le cadran cross-provider `reasoning_effort` existant, transmis
   par `SuperAgentBackend` comme pour tout autre provider.
+
+---
+
+## 38. Kimi Code 0.27 — la sonde de disposition et les surfaces de support par génération (1.1.8)
+
+1.1.8 revérifie en conditions réelles le moteur CLI `kimi` par abonnement
+contre kimi-code v0.27.0 et rend chaque surface de support *consciente de la
+génération*. Deux générations de CLI publient le même binaire `kimi` mais
+gardent leur état dans des répertoires différents :
+
+| | kimi-cli legacy (Python, ≤ 1.x) | kimi-code (actuel, ≥ 0.6) |
+| --- | --- | --- |
+| Répertoire d'état | `~/.kimi/` | `$KIMI_CODE_HOME` (défaut `~/.kimi-code/`) |
+| Identifiants | `~/.kimi/credentials/kimi-code.json` | `~/.kimi-code/credentials/kimi-code.json` |
+| Config MCP | `~/.kimi/mcp.json` | `~/.kimi-code/mcp.json` + projet `.kimi-code/mcp.json` |
+| Skills | aucun (lit `.claude/skills/`) | `~/.kimi-code/skills/`, `~/.agents/skills/`, projet `.kimi-code/skills/`, `.agents/skills/` |
+| Noms d'outils | PascalCase (`Shell`, `ReadFile`) | noms Claude Code (`Bash`, `Read`, …) |
+| Agents personnalisés | YAML `~/.kimi/agents/` + `--agent-file` | aucun (`coder`/`explore`/`plan` intégrés ; les skills sont le point d'extension) |
+
+### La sonde de disposition
+
+`Support\KimiRuntime` est l'autorité unique sur la génération active.
+Précédence : `$KIMI_CODE_HOME` défini → kimi-code ; sinon un `~/.kimi-code/`
+existant → kimi-code ; sinon un `~/.kimi/` existant → legacy ; une machine
+vierge prend kimi-code par défaut. C'est une sonde de *répertoires* —
+distincte de `KimiCliBackend::resolveVariant()`, qui sonde le binaire via
+`--help` pour le dialecte argv (épinglable par `AI_CORE_KIMI_CLI_VARIANT`).
+Les deux concordent en pratique, chaque génération n'écrivant que dans son
+propre home ; les consommateurs de fichiers de config utilisent la sonde de
+répertoires, les constructeurs d'argv la sonde de dialecte.
+
+Consommateurs : `CliStatusDetector` (connecté = un candidat d'identifiants
+non vide, nouvelle disposition d'abord),
+`KimiCapabilities::mcpConfigPath()/renderMcpConfig()` (cible de la synchro
+MCP), `CliSkillBridge::descriptor()` (surface skills), `CliBinaryLocator` +
+`KimiCliBackend::isAvailable()` (sondent `~/.kimi-code/bin` même hors PATH —
+fpm / workers / cron).
+
+### Promotion du pont de skills
+
+Sur une disposition kimi-code, `kimi` passe du mode `instructions` (fichier
+digest `.kimi/super-team-skills.md`) au mode `native_dir` : un wrapper
+`super-team-<name>/SKILL.md` par skill hôte sous `~/.kimi-code/skills/`,
+découvert automatiquement par le CLI — traitement identique à
+Codex / Gemini / Grok / Cursor, avec les mêmes écritures sûres vis-à-vis des
+symlinks, la même paresse par empreinte de manifeste et la même garantie de
+n'élaguer que ses propres wrappers. Les installations legacy gardent le
+fichier digest. Rien à configurer ; `ensureSynced('kimi')` choisit la surface
+à chaque spawn.
+
+### La traduction des noms d'outils devient legacy-only
+
+Une capture stream-json en direct sur 0.27 montre des `tool_calls` de style
+OpenAI avec les noms Claude nus (`"name":"Bash"`) ;
+`KimiCapabilities::toolNameMap()` renvoie donc la carte identité (vide) sur
+kimi-code et ne garde la table PascalCase que pour legacy. Le préambule
+d'orchestration du repli (b) (`use_native_agents=false`) suit : les runs
+kimi-code reçoivent une note « les noms d'outils suivent Claude Code » au
+lieu de la table de correspondance obsolète. `KimiAgentSync` (YAML d'agents
+legacy) et la clé `max_steps_per_turn` restent délibérément legacy-only —
+kimi-code n'a pas de flags équivalents.
+
+### Ce qui n'a *pas* changé
+
+Le dispatch. Le contrat headless de 0.27 est identique au dialecte kimi-code
+du §8 — mode print déclenché par `--prompt` (sous la politique de permission
+`auto`), `--output-format stream-json`, `content` chaîne, indice de reprise
+`role:meta` (`kimi -r <session_id>`). `KimiCliBackend` n'a reçu que des mises
+à jour de commentaires. Notes de terrain complètes :
+`docs/kimi-cli-backend.md` §9.
 
 ---
 

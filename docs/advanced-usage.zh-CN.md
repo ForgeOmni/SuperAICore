@@ -45,6 +45,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 35. [ai-dispatch 对齐 —— 短名派单、会话续聊、运行存档（1.1.0）](#35-ai-dispatch-对齐--短名派单会话续聊运行存档110)
 36. [GPT-5.6 与 Grok 4.5 —— 新请求面与目录刷新（1.1.6 / SDK 1.1.6）](#36-gpt-56-与-grok-45--新请求面与目录刷新116--sdk-116)
 37. [Kimi K3 —— Moonshot 新的通用旗舰（1.1.7 / SDK 1.1.7）](#37-kimi-k3--moonshot-新的通用旗舰117--sdk-117)
+38. [Kimi Code 0.27 —— 布局探测与按代际感知的支持面（1.1.8）](#38-kimi-code-027--布局探测与按代际感知的支持面118)
 
 ---
 
@@ -3739,6 +3740,61 @@ CLI 引擎（kimi-code OAuth）是独立的一面，仍按 $0/token 计费。
   并非 CLI 默认。
 - 无新增 dispatch 选项。K3 的常开思考由既有的跨 provider `reasoning_effort`
   档位驱动，和其他所有 provider 一样由 `SuperAgentBackend` 转发。
+
+## 38. Kimi Code 0.27 —— 布局探测与按代际感知的支持面（1.1.8）
+
+1.1.8 对照 kimi-code v0.27.0 真机复验了订阅制 `kimi` CLI 引擎,并把所有支持面
+改为**按代际感知**。两代 CLI 发布同名 `kimi` 二进制,但状态目录不同:
+
+| | legacy kimi-cli(Python,≤ 1.x） | kimi-code（现行,≥ 0.6） |
+| --- | --- | --- |
+| 状态目录 | `~/.kimi/` | `$KIMI_CODE_HOME`（默认 `~/.kimi-code/`） |
+| 凭证 | `~/.kimi/credentials/kimi-code.json` | `~/.kimi-code/credentials/kimi-code.json` |
+| MCP 配置 | `~/.kimi/mcp.json` | `~/.kimi-code/mcp.json` + 项目 `.kimi-code/mcp.json` |
+| Skills | 无（读 `.claude/skills/`） | `~/.kimi-code/skills/`、`~/.agents/skills/`、项目 `.kimi-code/skills/`、`.agents/skills/` |
+| 工具名 | PascalCase（`Shell`、`ReadFile`） | Claude Code 风格（`Bash`、`Read`…） |
+| 自定义 agent | `~/.kimi/agents/` YAML + `--agent-file` | 无（内建 `coder`/`explore`/`plan`;扩展点是 skills） |
+
+### 布局探测
+
+`Support\KimiRuntime` 是"当前活跃哪一代"的唯一裁决者。优先级:设置了
+`$KIMI_CODE_HOME` → kimi-code;否则存在 `~/.kimi-code/` → kimi-code;否则存在
+`~/.kimi/` → legacy;全新机器默认 kimi-code。这是**目录**探测 —— 与
+`KimiCliBackend::resolveVariant()` 的 `--help` 二进制探测（决定 argv dialect,
+可用 `AI_CORE_KIMI_CLI_VARIANT` 固定）相互独立;实践中两者一致,因为每代只写
+自己的 home。配置文件消费方用目录探测,argv 构造方用 dialect 探测。
+
+消费方:`CliStatusDetector`（登录 = 任一凭证候选非空,新布局优先）、
+`KimiCapabilities::mcpConfigPath()/renderMcpConfig()`（MCP 同步目标）、
+`CliSkillBridge::descriptor()`（技能面）、`CliBinaryLocator` +
+`KimiCliBackend::isAvailable()`（即使 PATH 缺失也直接探 `~/.kimi-code/bin`
+—— fpm / 队列 / cron 场景）。
+
+### 技能桥升级
+
+在 kimi-code 布局下,`kimi` 从 `instructions` 模式（`.kimi/super-team-skills.md`
+摘要文件）升级为 `native_dir` 模式:每个宿主技能在 `~/.kimi-code/skills/` 下落
+一个 `super-team-<name>/SKILL.md` 包,由 CLI 自动发现 —— 与
+Codex / Gemini / Grok / Cursor 完全同级,同样的 symlink 安全写入、manifest
+指纹惰性同步、只清理自己安装的包。legacy 装机保留摘要文件。零配置,
+`ensureSynced('kimi')` 每次 spawn 自动选面。
+
+### 工具名翻译现在只作用于 legacy
+
+0.27 的 stream-json 线上抓包显示 OpenAI 风格 `tool_calls` 携带 Claude 裸名
+（`"name":"Bash"`）,因此 `KimiCapabilities::toolNameMap()` 在 kimi-code 下返回
+恒等（空）映射,PascalCase 表只留给 legacy。(b) 降级编排 preamble
+（`use_native_agents=false`）同步跟进:kimi-code 运行注入"工具名与 Claude Code
+一致"的说明,不再是过时的映射表。`KimiAgentSync`（legacy agent YAML）与
+`max_steps_per_turn` 配置项有意保持 legacy-only —— kimi-code 没有对应 flag。
+
+### 没变的部分
+
+dispatch。0.27 的 headless 契约与 §8 的 kimi-code dialect 完全一致 ——
+`--prompt` 触发 print 模式（按 `auto` 权限策略放行工具）、
+`--output-format stream-json`、字符串 `content`、`role:meta` resume 提示
+（`kimi -r <session_id>`）。`KimiCliBackend` 只更新了注释。完整调研:
+`docs/kimi-cli-backend.md` §9。
 
 ## 另见
 

@@ -35,6 +35,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague parité ai-dispatch (1.1.0)](#vague-parité-ai-dispatch-110)
   - [Vague GPT-5.6 + Grok 4.5 rafraîchissement du catalogue (1.1.6 / SDK 1.1.6)](#vague-gpt-56--grok-45-rafraîchissement-du-catalogue-116--sdk-116)
   - [Vague Kimi K3 (1.1.7 / SDK 1.1.7)](#vague-kimi-k3-117--sdk-117)
+  - [Vague rafraîchissement du support Kimi Code 0.27 (1.1.8)](#vague-rafraîchissement-du-support-kimi-code-027-118)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -109,6 +110,44 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague rafraîchissement du support Kimi Code 0.27 (1.1.8)
+
+Pas de bump SDK — un rafraîchissement purement SuperAICore, revérifié en
+conditions réelles contre kimi-code v0.27.0 de Moonshot. Le CLI a déplacé tout
+son répertoire d'état de `~/.kimi/` (kimi-cli Python legacy) vers
+`$KIMI_CODE_HOME` (par défaut `~/.kimi-code/`) ; chaque surface ci-dessous
+sonde désormais la disposition et choisit les bons chemins, les installations
+legacy conservant leur comportement d'origine.
+
+- **Détection de connexion corrigée** — `doctor` / l'UI providers ne
+  regardaient que `~/.kimi/credentials/` ; une installation kimi-code
+  connectée (`~/.kimi-code/credentials/kimi-code.json`) était signalée comme
+  déconnectée. Les deux générations de chemins sont désormais vérifiées.
+- **La synchro MCP atteint à nouveau le CLI** — le fan-out `claude:mcp-sync`
+  écrivait `~/.kimi/mcp.json`, un fichier que kimi-code ne lit jamais ; il
+  cible désormais `~/.kimi-code/mcp.json` (même JSON `mcpServers` compatible
+  Claude, clés éditées à la main préservées) quand la nouvelle disposition
+  est présente.
+- **Binaire trouvé depuis les shells non-login** — l'installateur officiel
+  dépose le binaire unique dans `~/.kimi-code/bin`, absent du PATH de
+  fpm / workers / cron ; `CliBinaryLocator` et
+  `KimiCliBackend::isAvailable()` sondent ce répertoire directement sur les
+  trois plateformes.
+- **Installateur modernisé** — `cli:install kimi` exécute désormais le
+  script d'installation officiel de Moonshot ; `--via=uv` / `--via=pip`
+  restent disponibles pour le CLI Python legacy.
+- **Skills en natif** — kimi-code découvre automatiquement
+  `~/.kimi-code/skills/` (packs SKILL.md) ; le pont de skills promeut donc
+  Kimi du fichier-digest d'instructions vers des installations par skill de
+  premier rang, comme Codex / Gemini / Grok / Cursor.
+- **Noms d'outils corrigés** — kimi-code parle nativement les noms d'outils
+  Claude Code (`Bash`, plus le `Shell` legacy), vérifié par capture réseau ;
+  la traduction ne s'applique plus qu'aux installations legacy.
+- **Dispatch inchangé** — le contrat headless (`--prompt` +
+  `--output-format stream-json`) est identique en 0.27 ; `KimiCliBackend`
+  n'a reçu que des commentaires. Notes de terrain :
+  `docs/kimi-cli-backend.md` §9.
 
 ### Vague Kimi K3 (1.1.7 / SDK 1.1.7)
 

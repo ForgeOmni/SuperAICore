@@ -1495,6 +1495,32 @@ voulez la nouvelle ligne `model_pricing`. Deux choses à savoir :
    bloqué à `1.1.5` (jamais incrémenté dans la release 1.1.6) et affiche
    maintenant `1.1.7`.
 
+**1.1.8 — rafraîchissement du support Kimi Code 0.27 ; aucune migration ;
+pin SDK inchangé.** Comportement d'exécution pur — aucun schéma, aucune clé
+de config. Kimi-code a déplacé son répertoire d'état de `~/.kimi/` vers
+`$KIMI_CODE_HOME` (par défaut `~/.kimi-code/`) ; toutes les surfaces de
+support Kimi sondent désormais la disposition automatiquement. Trois choses à
+savoir à la mise à jour :
+
+1. **Le statut de connexion Kimi devient fiable.** Si `doctor` / l'UI
+   providers prétendait que votre installation kimi-code était déconnectée
+   alors que `kimi` fonctionnait, c'était la sonde obsolète
+   `~/.kimi/credentials/` — corrigé, rien à faire. Les identifiants sous
+   `$KIMI_CODE_HOME/credentials/` sont reconnus.
+
+2. **Relancez une fois votre synchro MCP.** Les versions précédentes
+   écrivaient la config MCP de Kimi dans `~/.kimi/mcp.json`, que kimi-code ne
+   lit jamais. Après la mise à jour, lancez une fois
+   `php artisan claude:mcp-sync` (ou votre point d'entrée habituel) pour que
+   les serveurs atterrissent dans `~/.kimi-code/mcp.json`. Un
+   `~/.kimi/mcp.json` résiduel est inoffensif et ne sert qu'aux
+   installations legacy du kimi-cli Python.
+
+3. **`cli:install kimi` installe désormais kimi-code** via le script
+   d'installation officiel de Moonshot (binaire dans `~/.kimi-code/bin`,
+   auto-sondé même depuis les shells non-login). Si vous avez spécifiquement
+   besoin du CLI Python retiré, épinglez-le avec `--via=uv` ou `--via=pip`.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

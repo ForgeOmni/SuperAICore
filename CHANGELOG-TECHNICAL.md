@@ -4,6 +4,92 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.8] — 2026-07-19
+
+**Kimi Code 0.27 support refresh.** Moonshot's kimi-code relocated its state
+dir from `~/.kimi/` (legacy Python kimi-cli) to `$KIMI_CODE_HOME` (default
+`~/.kimi-code/`) and adopted Claude-style tool names; four SuperAICore support
+surfaces still pointed at the legacy layout. Re-verified live against
+kimi-code v0.27.0 (headless contract byte-compatible — `KimiCliBackend`
+dispatch unchanged). **No SDK bump, no migrations, no config changes**; legacy
+installs are layout-probed and keep their old behavior. Full field notes in
+`docs/kimi-cli-backend.md` §9.
+
+### Added
+
+- **`Support\KimiRuntime`** — single authority for the generation probe and
+  paths, shared by auth detection, MCP sync and the skills bridge.
+  Precedence: `$KIMI_CODE_HOME` env > existing `~/.kimi-code/` > existing
+  `~/.kimi/` > default-to-kimi-code (fresh machine). Exposes `isKimiCode()`,
+  `codeHome()` / `legacyHome()` / `stateDir()`, `credentialCandidates()`,
+  `mcpConfigRelPath()` / `mcpConfigPath()` (with an outside-`$HOME` fallback
+  for the `$HOME`-relative contract) and `skillsRelPath()`. Deliberately a
+  *directory* probe — `KimiCliBackend::resolveVariant()` still `--help`-probes
+  for the argv dialect; the two agree because each generation only writes its
+  own home. Pinned by `KimiRuntimeTest` (6 cases).
+- **`CliSkillBridge::descriptor()`** — live per-backend bridge descriptor.
+  Identical to the static `BACKENDS` entry except `kimi`, which is promoted
+  from `instructions` (`.kimi/super-team-skills.md` digest) to `native_dir`
+  (`~/.kimi-code/skills/` + `super-team-` prefix, SKILL.md packs kimi-code
+  auto-discovers) when the new layout is active. `ensureSynced()` /
+  `syncBackend()` / `manifestPath()` all route through it. Covered by
+  `CliSkillBridgeDescriptorTest`.
+
+### Changed
+
+- **`CliInstaller`** — `kimi` default source is now `SOURCE_SCRIPT`
+  (`curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`, POSIX;
+  Windows uses the documented `install.ps1`). `uv tool install kimi-cli` /
+  `pip install --user kimi-cli` remain as explicit `--via` escape hatches,
+  annotated as legacy-Python-CLI-only.
+- **`Capabilities\KimiCapabilities`** — three generation-aware behaviors:
+  `mcpConfigPath()` returns `.kimi-code/mcp.json` vs `.kimi/mcp.json` by
+  layout; `renderMcpConfig()` merge-reads the same active-layout file;
+  `toolNameMap()` returns the identity (empty) map on kimi-code — a live
+  stream-json capture shows OpenAI-style `tool_calls` with bare Claude names
+  (`"name":"Bash"`) — keeping the PascalCase map (`Shell`/`ReadFile`/…) for
+  legacy only. The (b)-fallback spawn preamble is split into
+  `PREAMBLE_HEAD` + `TOOL_SECTION_LEGACY`/`TOOL_SECTION_CODE` +
+  `PREAMBLE_PROTOCOL`; the legacy `PREAMBLE` const is re-composed
+  byte-identical, and kimi-code runs get a variant without the obsolete
+  mapping table (protocol tool references rewritten `WriteFile`→`Write`,
+  `ReadFile`→`Read`).
+- **`Support\CliBinaryLocator`** — all three platform candidate lists gain
+  `$KIMI_CODE_HOME/bin/<binary>` (default `~/.kimi-code/bin`), the official
+  installer's target, which is PATH-visible only in login shells.
+- **`config/super-ai-core.php`** — `kimi_cli` comments refreshed:
+  `max_steps_per_turn` documented as legacy-dialect-only (kimi-code dropped
+  the flag; its step budget lives in `~/.kimi-code/config.toml`).
+
+### Fixed
+
+- **`CliStatusDetector` false "not-logged-in" for kimi-code** — the auth
+  probe only checked `~/.kimi/credentials/kimi-code.json`; kimi-code writes
+  `~/.kimi-code/credentials/kimi-code.json` (under `$KIMI_CODE_HOME`). Both
+  candidates are checked now, new layout first — a v0.27 install with a valid
+  OAuth token no longer reports as unauthenticated in `doctor` / providers UI.
+- **`McpManager::syncAllBackends(['kimi'])` wrote a dead file on kimi-code**
+  — `~/.kimi/mcp.json` is never read by the new CLI. The fan-out now targets
+  `~/.kimi-code/mcp.json` when that layout is present (`KimiMcpSyncTest`
+  gains a precedence case: both dirs present → new layout wins).
+- **`KimiCliBackend::isAvailable()`** — falls back to probing
+  `~/.kimi-code/bin/<binary>` when `which` misses (non-login PHP processes:
+  fpm, queue workers, cron).
+- **Stale CLI version string** — `Console\Application::VERSION` bumped
+  `1.1.7` → `1.1.8`.
+
+### Deliberately unchanged
+
+- **`KimiAgentSync` stays legacy-only** (`~/.kimi/agents/<ns>/…` +
+  `--agent-file`): kimi-code has no custom-agent YAML surface — its
+  equivalent is skills. Bridging `.claude/agents/*.md` → SKILL.md packs is a
+  separate feature, not attempted here.
+- **`KimiCliBackend` dispatch paths** — v0.27.0 headless behavior matches the
+  §8 kimi-code dialect exactly (`--prompt`-triggered print mode, `--yolo`
+  still rejected alongside `--prompt`, unknown options hard-rejected, string
+  `content`, `role:meta` resume hint). Header comments updated with the
+  tool_calls wire shape and the hidden `-r`/`--resume` alias; no code change.
+
 ## [1.1.7] — 2026-07-17
 
 **SuperAgent SDK bumped to 1.1.7 — Kimi K3 lands as Moonshot's new general

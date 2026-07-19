@@ -4,6 +4,18 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
+## [1.1.8] — 2026-07-19
+
+**Kimi Code 0.27 support refresh — the current `kimi` CLI is now a first-class citizen again.** Moonshot's kimi-code moved its entire state directory from `~/.kimi/` to `~/.kimi-code/` (honoring `$KIMI_CODE_HOME`); this release re-verifies the whole integration live against v0.27.0 and fixes everything that silently pointed at the old layout. No SDK bump, no migrations, nothing breaks — legacy Python kimi-cli installs keep working exactly as before, and every surface below picks the right layout automatically.
+
+- **Fixed: logged-in Kimi installs were reported as logged out.** `superaicore doctor` and the providers dashboard only looked for credentials under `~/.kimi/`; a current kimi-code install keeps them in `~/.kimi-code/credentials/`. Both locations are checked now, so a working login shows as one.
+- **Fixed: MCP sync reached kimi-code again.** `claude:mcp-sync` fan-out wrote `~/.kimi/mcp.json` — a file the new CLI never reads. It now lands in `~/.kimi-code/mcp.json` (same Claude-compatible JSON, hand-edited keys still preserved) whenever the new layout is present.
+- **Fixed: `kimi` found from non-login shells.** The official installer puts the binary in `~/.kimi-code/bin`, which queue workers, fpm and cron don't have on PATH. Binary discovery and availability checks now probe that directory directly on macOS, Linux and Windows.
+- **`superaicore cli:install kimi` installs the real thing** — the default source is now Moonshot's official install script (single binary, millisecond startup). The old `uv` / `pip` routes stay available via `--via=uv` for anyone pinned to the legacy Python CLI.
+- **Your skills now install into Kimi natively.** kimi-code auto-discovers a real skills directory (`~/.kimi-code/skills/`, same SKILL.md format as Claude), so the skill bridge promotes Kimi from a "read this digest file" workaround to first-class per-skill installs — same treatment as Codex / Gemini / Grok / Cursor. Legacy installs keep the digest file.
+- **Tool-name translation corrected** — kimi-code 0.27 speaks Claude Code tool names natively (`Bash`, `Read`, `Write`…), verified from a live wire capture. The old PascalCase translation (`Shell` / `ReadFile`) now applies only to legacy installs, and the orchestration-fallback prompt no longer teaches the new CLI an obsolete mapping.
+- Dispatch itself needed **zero changes** — the headless contract (`--prompt` + `--output-format stream-json`) is unchanged in 0.27, re-verified live. Full findings in `docs/kimi-cli-backend.md` §9.
+
 ## [1.1.7] — 2026-07-17
 
 **Kimi K3 — Moonshot's new open-weight flagship is priced and ready to route.** SuperAgent SDK pin moves to `^1.1.7`; no migrations, nothing breaks. Re-publish the config if you want the new pricing row.

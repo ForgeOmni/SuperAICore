@@ -35,6 +35,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [ai-dispatch parity wave (1.1.0)](#ai-dispatch-parity-wave-110)
   - [GPT-5.6 + Grok 4.5 catalog refresh wave (1.1.6 / SDK 1.1.6)](#gpt-56--grok-45-catalog-refresh-wave-116--sdk-116)
   - [Kimi K3 wave (1.1.7 / SDK 1.1.7)](#kimi-k3-wave-117--sdk-117)
+  - [Kimi Code 0.27 support refresh wave (1.1.8)](#kimi-code-027-support-refresh-wave-118)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -109,6 +110,40 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### Kimi Code 0.27 support refresh wave (1.1.8)
+
+No SDK bump — a SuperAICore-only refresh, re-verified live against Moonshot's
+kimi-code v0.27.0. The CLI moved its whole state dir from `~/.kimi/` (legacy
+Python kimi-cli) to `$KIMI_CODE_HOME` (default `~/.kimi-code/`); everything
+below now probes the layout and picks the right paths, while legacy installs
+keep their old behavior untouched.
+
+- **Login detection fixed** — `doctor` / providers UI checked only
+  `~/.kimi/credentials/`; a logged-in kimi-code install
+  (`~/.kimi-code/credentials/kimi-code.json`) was reported as logged out.
+  Both generations' paths are checked now.
+- **MCP sync lands where the CLI reads it** — the `claude:mcp-sync` fan-out
+  wrote `~/.kimi/mcp.json`, which kimi-code never reads; it now targets
+  `~/.kimi-code/mcp.json` (same Claude-compatible `mcpServers` JSON,
+  hand-edited keys preserved) when the new layout is present.
+- **Binary discovery for non-login shells** — the official installer drops
+  the single binary into `~/.kimi-code/bin`, absent from fpm / queue / cron
+  PATHs; `CliBinaryLocator` and `KimiCliBackend::isAvailable()` probe it
+  directly on all three platforms.
+- **Installer default modernized** — `cli:install kimi` now runs Moonshot's
+  official install script; `--via=uv` / `--via=pip` remain for the legacy
+  Python CLI.
+- **Skills go native** — kimi-code auto-discovers `~/.kimi-code/skills/`
+  (SKILL.md packs), so the CLI skill bridge promotes Kimi from an
+  instructions-digest file to first-class per-skill installs, like
+  Codex / Gemini / Grok / Cursor.
+- **Tool names corrected** — kimi-code speaks Claude Code tool names on the
+  wire (`Bash`, not legacy `Shell`), verified from a live capture;
+  translation now applies to legacy installs only.
+- **Dispatch unchanged** — the headless contract (`--prompt` +
+  `--output-format stream-json`) is identical in 0.27; `KimiCliBackend`
+  needed comments only. Field notes: `docs/kimi-cli-backend.md` §9.
 
 ### Kimi K3 wave (1.1.7 / SDK 1.1.7)
 

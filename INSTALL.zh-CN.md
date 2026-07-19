@@ -1400,6 +1400,26 @@ standalone + artisan 命令 `send`、`resume`、`runs`、`aliases`、
 2. **`superaicore --version` 现在报告真实版本。** 它此前卡在 `1.1.5`
    （1.1.6 发布时漏改），现在正确读取为 `1.1.7`。
 
+**1.1.8 —— Kimi Code 0.27 支持刷新；无迁移；SDK pin 不变。** 纯运行时行为
+—— 无 schema、无新 config 键。kimi-code 把状态目录从 `~/.kimi/` 搬到了
+`$KIMI_CODE_HOME`（默认 `~/.kimi-code/`）；所有 Kimi 支持面现在自动探测目录
+布局。升级时三件值得了解的事：
+
+1. **Kimi 登录状态变得真实。** 如果此前 `doctor` / providers UI 说你的
+   kimi-code 未登录、但 `kimi` 本身用得好好的，那是旧的 `~/.kimi/credentials/`
+   探针所致 —— 已修复，无需任何操作。`$KIMI_CODE_HOME/credentials/` 下的凭证
+   会被识别。
+
+2. **升级后重跑一次 MCP 同步。** 此前版本把 Kimi 的 MCP 配置写到
+   `~/.kimi/mcp.json`，而 kimi-code 根本不读它。升级后运行一次
+   `php artisan claude:mcp-sync`（或你惯用的同步入口），让服务器落到
+   `~/.kimi-code/mcp.json`。残留的 `~/.kimi/mcp.json` 无害，只有 legacy
+   Python kimi-cli 装机才会读。
+
+3. **`cli:install kimi` 现在装的是 kimi-code** —— 走 Moonshot 官方安装脚本
+   （二进制在 `~/.kimi-code/bin`，非 login shell 也能自动探到）。如确需已
+   退役的 Python CLI，用 `--via=uv` 或 `--via=pip` 显式指定。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

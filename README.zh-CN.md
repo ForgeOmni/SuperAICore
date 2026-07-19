@@ -35,6 +35,7 @@
   - [ai-dispatch 对齐波次（1.1.0）](#ai-dispatch-对齐波次110)
   - [GPT-5.6 + Grok 4.5 目录刷新波次（1.1.6 / SDK 1.1.6）](#gpt-56--grok-45-目录刷新波次116--sdk-116)
   - [Kimi K3 波次（1.1.7 / SDK 1.1.7）](#kimi-k3-波次117--sdk-117)
+  - [Kimi Code 0.27 支持刷新波次（1.1.8）](#kimi-code-027-支持刷新波次118)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -109,6 +110,33 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### Kimi Code 0.27 支持刷新波次（1.1.8）
+
+无 SDK bump —— 纯 SuperAICore 刷新,对照 Moonshot kimi-code v0.27.0 真机复验。
+新 CLI 把整个状态目录从 `~/.kimi/`(legacy Python kimi-cli)搬到了
+`$KIMI_CODE_HOME`(默认 `~/.kimi-code/`);以下各面现在按目录布局自动选路径,
+legacy 装机行为原样保留。
+
+- **登录检测修复** —— `doctor` / providers UI 此前只查 `~/.kimi/credentials/`,
+  已登录的 kimi-code 装机(凭证在 `~/.kimi-code/credentials/kimi-code.json`)
+  被误报未登录。现在两代路径都查。
+- **MCP 同步写对文件了** —— `claude:mcp-sync` fan-out 原来写 `~/.kimi/mcp.json`,
+  新 CLI 根本不读;检测到新布局时改写 `~/.kimi-code/mcp.json`(同样的 Claude
+  兼容 `mcpServers` JSON,手工编辑的键继续保留)。
+- **非 login shell 也能找到二进制** —— 官方安装器把单文件二进制装到
+  `~/.kimi-code/bin`,fpm / 队列 / cron 的 PATH 不含它;`CliBinaryLocator` 和
+  `KimiCliBackend::isAvailable()` 三平台直接探测该目录。
+- **安装器默认源现代化** —— `cli:install kimi` 现在跑 Moonshot 官方安装脚本;
+  `--via=uv` / `--via=pip` 保留给 legacy Python CLI。
+- **技能原生落地** —— kimi-code 自动发现 `~/.kimi-code/skills/`(SKILL.md 包),
+  技能桥把 Kimi 从"instructions 摘要文件"升级为逐技能一等安装,与
+  Codex / Gemini / Grok / Cursor 同级。
+- **工具名映射修正** —— 线上抓包证实 kimi-code 的工具名已是 Claude Code 风格
+  (`Bash`,不再是 legacy 的 `Shell`);翻译映射现在只作用于 legacy 装机。
+- **dispatch 零改动** —— headless 契约(`--prompt` +
+  `--output-format stream-json`)在 0.27 完全一致,`KimiCliBackend` 只更新了
+  注释。完整调研见 `docs/kimi-cli-backend.md` §9。
 
 ### Kimi K3 波次（1.1.7 / SDK 1.1.7）
 

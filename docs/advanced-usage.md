@@ -45,6 +45,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 35. [ai-dispatch parity — alias send, session resume, run archive (1.1.0)](#35-ai-dispatch-parity--alias-send-session-resume-run-archive-110)
 36. [GPT-5.6 & Grok 4.5 — the new request surfaces and the catalog refresh (1.1.6 / SDK 1.1.6)](#36-gpt-56--grok-45--the-new-request-surfaces-and-the-catalog-refresh-116--sdk-116)
 37. [Kimi K3 — the new Moonshot general flagship (1.1.7 / SDK 1.1.7)](#37-kimi-k3--the-new-moonshot-general-flagship-117--sdk-117)
+38. [Kimi Code 0.27 — the layout probe and generation-aware support surfaces (1.1.8)](#38-kimi-code-027--the-layout-probe-and-generation-aware-support-surfaces-118)
 
 ---
 
@@ -3938,6 +3939,70 @@ separate surface and still bills $0/token.
 - No new dispatch options. K3's always-on thinking is driven by the existing
   cross-provider `reasoning_effort` dial, forwarded by `SuperAgentBackend` like
   every other provider.
+
+---
+
+## 38. Kimi Code 0.27 — the layout probe and generation-aware support surfaces (1.1.8)
+
+1.1.8 re-verifies the subscription `kimi` CLI engine live against kimi-code
+v0.27.0 and makes every support surface *generation-aware*. Two CLI
+generations publish the same `kimi` binary but keep state in different homes:
+
+| | legacy kimi-cli (Python, ≤ 1.x) | kimi-code (current, ≥ 0.6) |
+| --- | --- | --- |
+| State dir | `~/.kimi/` | `$KIMI_CODE_HOME` (default `~/.kimi-code/`) |
+| Credentials | `~/.kimi/credentials/kimi-code.json` | `~/.kimi-code/credentials/kimi-code.json` |
+| MCP config | `~/.kimi/mcp.json` | `~/.kimi-code/mcp.json` + project `.kimi-code/mcp.json` |
+| Skills | none (reads `.claude/skills/`) | `~/.kimi-code/skills/`, `~/.agents/skills/`, project `.kimi-code/skills/`, `.agents/skills/` |
+| Tool names | PascalCase (`Shell`, `ReadFile`) | Claude Code names (`Bash`, `Read`, …) |
+| Custom agents | `~/.kimi/agents/` YAML + `--agent-file` | none (built-in `coder`/`explore`/`plan`; skills are the extension point) |
+
+### The layout probe
+
+`Support\KimiRuntime` is the single authority for which generation is active.
+Precedence: `$KIMI_CODE_HOME` set → kimi-code; else an existing
+`~/.kimi-code/` → kimi-code; else an existing `~/.kimi/` → legacy; a fresh
+machine defaults to kimi-code. It's a *directory* probe — distinct from
+`KimiCliBackend::resolveVariant()`, which `--help`-probes the binary for the
+argv dialect (`AI_CORE_KIMI_CLI_VARIANT` pins it). The two agree in practice
+because each generation only writes its own home; config-file consumers use
+the directory probe, argv builders use the dialect probe.
+
+Consumers: `CliStatusDetector` (auth = any non-empty credentials candidate,
+new layout first), `KimiCapabilities::mcpConfigPath()/renderMcpConfig()`
+(MCP sync target), `CliSkillBridge::descriptor()` (skills surface),
+`CliBinaryLocator` + `KimiCliBackend::isAvailable()` (probe
+`~/.kimi-code/bin` even when PATH misses it — fpm / queue / cron).
+
+### Skills bridge promotion
+
+On a kimi-code layout, `kimi` is promoted from `instructions` mode (a
+`.kimi/super-team-skills.md` digest) to `native_dir` mode: one
+`super-team-<name>/SKILL.md` wrapper per host skill under
+`~/.kimi-code/skills/`, auto-discovered by the CLI — identical treatment to
+Codex / Gemini / Grok / Cursor, with the same symlink-safe writes, manifest
+fingerprint laziness and prune-only-ours guarantees. Legacy installs keep the
+digest file. Nothing to configure; `ensureSynced('kimi')` picks the surface
+per spawn.
+
+### Tool-name translation is now legacy-only
+
+A live stream-json capture on 0.27 shows OpenAI-style `tool_calls` with bare
+Claude names (`"name":"Bash"`), so `KimiCapabilities::toolNameMap()` returns
+the identity map on kimi-code and the PascalCase table only for legacy. The
+(b)-fallback orchestration preamble (`use_native_agents=false`) follows suit:
+kimi-code runs get a "tool names match Claude Code" note instead of the
+obsolete mapping table. `KimiAgentSync` (legacy agent YAML) and the
+`max_steps_per_turn` config knob remain deliberately legacy-only — kimi-code
+has no equivalent flags.
+
+### What did *not* change
+
+Dispatch. The 0.27 headless contract is byte-compatible with the §8 kimi-code
+dialect — `--prompt`-triggered print mode under the `auto` permission policy,
+`--output-format stream-json`, string `content`, `role:meta` resume hint
+(`kimi -r <session_id>`). `KimiCliBackend` shipped comment updates only. Full
+field notes: `docs/kimi-cli-backend.md` §9.
 
 ---
 
