@@ -37,6 +37,24 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         'CLAUDE_CODE_SSE_PORT',
         'CLAUDE_CODE_EXECPATH',
         'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+        // 2.1.x additions (observed live in a 2.1.215 session): an inherited
+        // session id would collide with our own --session-id handling, the
+        // child marker trips nesting heuristics, and CLAUDE_EFFORT silently
+        // overrides the child's reasoning-effort dial.
+        'CLAUDE_CODE_SESSION_ID',
+        'CLAUDE_CODE_CHILD_SESSION',
+        'CLAUDE_EFFORT',
+        'CLAUDE_PID',
+    ];
+
+    /**
+     * Values `--permission-mode` accepts (claude 2.1.215 `--help`). Notably
+     * `default` was REMOVED as an explicit choice — omitting the flag is how
+     * you get the default mode now, and commander hard-rejects unknown
+     * choices, failing the whole spawn.
+     */
+    public const PERMISSION_MODES = [
+        'acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan',
     ];
 
     public function __construct(
@@ -180,11 +198,23 @@ class ClaudeCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         // approval prompts for Write / Edit / Bash. Required in headless
         // mode; without it, claude blocks waiting for input that never
         // arrives and produces no output files. Hosts that want claude to
-        // ask (e.g. interactive REPL wrappers) can pass `'default'`,
-        // `'plan'`, etc. or omit the option to leave claude's default.
+        // ask (e.g. interactive REPL wrappers) can pass `'manual'`,
+        // `'plan'`, etc. or omit the option to leave claude's default —
+        // NOTE `'default'` is no longer an accepted choice on 2.1.x, so an
+        // unknown/legacy value is dropped here (with a log) instead of
+        // being passed through to a hard commander usage error.
         if (!empty($options['permission_mode'])) {
-            $cmd[] = '--permission-mode';
-            $cmd[] = (string) $options['permission_mode'];
+            $mode = (string) $options['permission_mode'];
+            if (in_array($mode, self::PERMISSION_MODES, true)) {
+                $cmd[] = '--permission-mode';
+                $cmd[] = $mode;
+            } elseif ($this->logger) {
+                $this->logger->warning(
+                    "ClaudeCliBackend: dropping invalid permission_mode '{$mode}' "
+                    . '(claude 2.1.x accepts: ' . implode('|', self::PERMISSION_MODES) . '; '
+                    . 'omit for default mode).',
+                );
+            }
         }
 
         // Allowed tools — comma-separated allowlist passed to claude's

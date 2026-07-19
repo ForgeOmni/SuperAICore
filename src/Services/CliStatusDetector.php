@@ -411,17 +411,40 @@ class CliStatusDetector
                 'expires_at' => null,
             ];
         }
-        if ($binary === 'grok') {
-            // `grok login` (grok.com OAuth) caches credentials under ~/.grok.
-            // The subscription channel; the metered xAI key (XAI_API_KEY) is
-            // the separate API provider, not this CLI.
+        if ($binary === 'agy') {
+            // Antigravity CLI signs in via its interactive TUI (Google
+            // OAuth) and SHARES gemini-cli's credential file
+            // (~/.gemini/oauth_creds.json); its own state lives in
+            // ~/.gemini/antigravity-cli/. Logged-in = creds present AND the
+            // agy state dir exists (creds alone could be a leftover from
+            // the retired gemini-cli tiers).
             $home = self::resolvedHome();
-            $hasState = $home && is_dir($home . '/.grok');
+            $creds = $home && is_file($home . '/.gemini/oauth_creds.json')
+                && @filesize($home . '/.gemini/oauth_creds.json') > 0;
+            $state = $home && is_dir($home . '/.gemini/antigravity-cli');
+            $loggedIn = $creds && $state;
             return [
-                'loggedIn' => (bool) $hasState,
-                'status'   => $hasState ? 'config-present' : 'not-logged-in',
-                'method'   => $hasState ? 'oauth' : null,
-                'config_dir' => $hasState ? $home . '/.grok' : null,
+                'loggedIn' => $loggedIn,
+                'status'   => $loggedIn ? 'oauth-credential-present' : ($state ? 'installed-not-logged-in' : 'not-logged-in'),
+                'method'   => $loggedIn ? 'oauth' : null,
+                'config_dir' => $state ? $home . '/.gemini/antigravity-cli' : null,
+                'expires_at' => null,
+            ];
+        }
+        if ($binary === 'grok') {
+            // `grok login` (grok.com OAuth) writes ~/.grok/auth.json (0600).
+            // That file is the real logged-in signal — the ~/.grok dir itself
+            // exists from install time and survives `grok logout`, so its
+            // mere presence only proves installation. The metered xAI key
+            // (XAI_API_KEY) is the separate API provider, not this CLI.
+            $home = self::resolvedHome();
+            $hasDir  = $home && is_dir($home . '/.grok');
+            $hasAuth = $home && is_file($home . '/.grok/auth.json') && @filesize($home . '/.grok/auth.json') > 0;
+            return [
+                'loggedIn' => $hasAuth,
+                'status'   => $hasAuth ? 'oauth-credential-present' : ($hasDir ? 'installed-not-logged-in' : 'not-logged-in'),
+                'method'   => $hasAuth ? 'oauth' : null,
+                'config_dir' => $hasDir ? $home . '/.grok' : null,
                 'expires_at' => null,
             ];
         }
@@ -536,6 +559,18 @@ class CliStatusDetector
         }
 
         // Local fallback: check the same files without the SuperAgent helper.
+        // oauth_creds.json is what gemini-cli (verified 0.29.5 source: only
+        // OAUTH_FILE + google_accounts.json) actually writes; credentials.json
+        // is kept only for ancient builds and hits nothing on current ones.
+        //
+        // KNOWN FALSE-POSITIVE on gemini-cli ≥0.51: Google retired the
+        // "Gemini Code Assist for individuals" tier — a personal-OAuth
+        // oauth_creds.json still exists on disk (so we report logged-in) but
+        // every run fails with IneligibleTierError ("migrate to the
+        // Antigravity suite", observed live on 0.51.0, exit 55). File
+        // presence can't distinguish an eligible account; the dispatcher's
+        // auth-failure fallthrough is the safety net until the user
+        // re-authenticates with an eligible account or an API key.
         if ($home) {
             foreach (['/.gemini/oauth_creds.json', '/.gemini/credentials.json'] as $rel) {
                 if (is_file($home . $rel)) {

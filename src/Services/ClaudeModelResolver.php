@@ -56,7 +56,9 @@ class ClaudeModelResolver
 
         // Sonnet 4.x (still selectable by id)
         ['slug' => 'claude-sonnet-4-6',      'display_name' => 'Sonnet 4.6',           'family' => 'sonnet'],
-        ['slug' => 'claude-sonnet-4-5-20241022','display_name' => 'Sonnet 4.5',        'family' => 'sonnet'],
+        // NOTE the 20241022 snapshot previously listed here was bogus (that
+        // date belongs to Claude 3.5 Sonnet v2); Sonnet 4.5's real id:
+        ['slug' => 'claude-sonnet-4-5-20250929','display_name' => 'Sonnet 4.5',        'family' => 'sonnet'],
 
         // Haiku
         ['slug' => 'claude-haiku-4-5-20251001','display_name' => 'Haiku 4.5',          'family' => 'haiku'],

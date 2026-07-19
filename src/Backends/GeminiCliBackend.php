@@ -15,15 +15,26 @@ use Symfony\Component\Process\Process;
 /**
  * Spawns Google's `gemini` CLI (open-source at github.com/google-gemini/gemini-cli).
  *
- * Auth modes honoured (same precedence the CLI itself uses):
+ * Auth modes we inject via env:
  *   1. GEMINI_API_KEY / GOOGLE_API_KEY env — direct Google AI Studio
  *   2. Vertex AI: GOOGLE_CLOUD_PROJECT + GOOGLE_CLOUD_LOCATION + GOOGLE_GENAI_USE_VERTEXAI=true
  *   3. `gemini` local login (OAuth with a Google account) — no env vars needed
  *
+ * CAVEAT (verified against gemini-cli 0.29.5 source): in non-interactive
+ * mode the CLI resolves auth as `settings.security.auth.selectedType`
+ * FIRST, env second. On a machine where the user once completed
+ * interactive OAuth login, `~/.gemini/settings.json` pins
+ * `selectedType: "oauth-personal"` and a `GEMINI_API_KEY` we inject is
+ * silently ignored — billing rides the OAuth account, not the supplied
+ * key. generate()/stream() log a warning when they detect this.
+ *
  * Token usage is extracted from `gemini --output-format=json`, whose
  * single-blob response includes per-model `stats.models.<id>.tokens`.
- * We pick the model whose role is "main" (vs. "utility_router" side
- * calls that inflate counts but don't represent the user-facing answer).
+ * Older builds tagged the answering model `roles: "main"`; 0.29.x dropped
+ * the roles key and instead routes every prompt through a
+ * `gemini-2.5-flash-lite` classifier side-call, so pickPrimaryModel()
+ * excludes `*flash-lite*` utility ids before falling back to
+ * max-candidates.
  */
 class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
@@ -48,17 +59,103 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         return $process->isSuccessful();
     }
 
+    /**
+     * Native-skill probe results per binary, so the one-shot
+     * `skills --help` spawn runs at most once per process.
+     *
+     * @var array<string,bool>
+     */
+    protected static array $nativeSkillsCache = [];
+
+    /**
+     * Does this gemini build ship the native skill protocol (`gemini
+     * skills` command group + ~/.gemini/skills auto-discovery)? Introduced
+     * in the 0.29 line; older builds exit non-zero on the unknown command.
+     */
+    public static function supportsNativeSkills(string $binary = 'gemini'): bool
+    {
+        if (!array_key_exists($binary, self::$nativeSkillsCache)) {
+            try {
+                $probe = new Process([$binary, 'skills', '--help']);
+                $probe->setTimeout(10);
+                $probe->run();
+                self::$nativeSkillsCache[$binary] = $probe->isSuccessful();
+            } catch (\Throwable) {
+                self::$nativeSkillsCache[$binary] = false;
+            }
+        }
+        return self::$nativeSkillsCache[$binary];
+    }
+
+    /** Reset the native-skill probe cache (test seam). */
+    public static function forgetNativeSkillsCache(): void
+    {
+        self::$nativeSkillsCache = [];
+    }
+
+    /**
+     * `--help` text per binary for feature sniffing (one spawn per process).
+     *
+     * @var array<string,string>
+     */
+    protected static array $helpCache = [];
+
+    /**
+     * Does this gemini build have the `--skip-trust` flag? gemini-cli ≥0.51
+     * enforces workspace folder trust EVEN IN HEADLESS MODE: in an untrusted
+     * cwd, `--yolo` is silently downgraded to `default` approval ("Approval
+     * mode overridden…", observed live on 0.51.0), which stalls or denies
+     * every tool call in a non-interactive run. `--skip-trust` trusts the
+     * workspace for the session; older builds reject the unknown flag, so it
+     * must be gated on this probe.
+     */
+    public static function supportsSkipTrust(string $binary = 'gemini'): bool
+    {
+        if (!array_key_exists($binary, self::$helpCache)) {
+            try {
+                $probe = new Process([$binary, '--help']);
+                $probe->setTimeout(10);
+                $probe->run();
+                self::$helpCache[$binary] = $probe->getOutput() . "\n" . $probe->getErrorOutput();
+            } catch (\Throwable) {
+                self::$helpCache[$binary] = '';
+            }
+        }
+        return str_contains(self::$helpCache[$binary], '--skip-trust');
+    }
+
+    /** Reset the --help probe cache (test seam). */
+    public static function forgetHelpCache(): void
+    {
+        self::$helpCache = [];
+    }
+
+    /**
+     * The non-interactive base flags: `--yolo`, plus `--skip-trust` on
+     * builds that gate yolo behind folder trust (≥0.51).
+     *
+     * @return list<string>
+     */
+    public static function yoloFlags(string $binary = 'gemini'): array
+    {
+        return self::supportsSkipTrust($binary)
+            ? ['--yolo', '--skip-trust']
+            : ['--yolo'];
+    }
+
     public function generate(array $options): ?array
     {
         $providerConfig = $options['provider_config'] ?? [];
         $prompt = $options['prompt'] ?? '';
         $model = GeminiModelResolver::resolve($options['model'] ?? $providerConfig['model'] ?? null);
 
-        // Pi-style progressive-disclosure skill index — Gemini CLI has no
-        // native Skill protocol, so we prepend the XML index ourselves so
-        // the model can decide when to read a SKILL.md in full. Honors
-        // --no-skills via $options['skills_disabled'].
-        if (empty($options['skills_disabled'])) {
+        // Pi-style progressive-disclosure skill index. gemini-cli ≥0.29 has
+        // a NATIVE skill protocol (`gemini skills`, auto-discovery of
+        // ~/.gemini/skills/*/SKILL.md — where CliSkillBridge installs our
+        // packs — plus an `activate_skill` tool), so on those builds we skip
+        // the XML prepend to avoid exposing every skill twice. Older builds
+        // keep the prepend. Honors --no-skills via $options['skills_disabled'].
+        if (empty($options['skills_disabled']) && !self::supportsNativeSkills($this->binary)) {
             $skillXml = (new \SuperAICore\Services\SkillIndexBuilder())->buildFromConfig();
             if ($skillXml !== '') {
                 $prompt = $skillXml . "\n\n" . $prompt;
@@ -69,7 +166,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         // actual prompt from stdin — same idiom GeminiSkillRunner uses.
         // Avoids Windows cmd-line escaping / 8K length issues for large
         // prompts (see SuperAICore CHANGELOG 0.8.8).
-        $cmd = [$this->binary, '--output-format=json', '--yolo'];
+        $cmd = [$this->binary, '--output-format=json', ...self::yoloFlags($this->binary)];
         if ($model) {
             $cmd[] = '--model';
             $cmd[] = $model;
@@ -80,6 +177,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $env = [];
         if (!empty($providerConfig['api_key'])) {
             $env['GEMINI_API_KEY'] = $providerConfig['api_key'];
+            $this->warnIfSettingsOverrideApiKey();
         } elseif (($providerConfig['type'] ?? 'builtin') === 'builtin' && empty($providerConfig['extra_config']['project_id'])) {
             // builtin = use the local `gemini` OAuth login (~/.gemini). The
             // user supplied no key, so scrub any stale inherited GEMINI_API_KEY
@@ -149,7 +247,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $model = GeminiModelResolver::resolve($options['model'] ?? $providerConfig['model'] ?? null);
 
         // Stdin pipe — see generate() above for rationale.
-        $cmd = [$this->binary, '--output-format=json', '--yolo'];
+        $cmd = [$this->binary, '--output-format=json', ...self::yoloFlags($this->binary)];
         if ($model) {
             $cmd[] = '--model';
             $cmd[] = $model;
@@ -160,6 +258,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
         $env = [];
         if (!empty($providerConfig['api_key'])) {
             $env['GEMINI_API_KEY'] = $providerConfig['api_key'];
+            $this->warnIfSettingsOverrideApiKey();
         } elseif (($providerConfig['type'] ?? 'builtin') === 'builtin' && empty($providerConfig['extra_config']['project_id'])) {
             // builtin = use the local `gemini` OAuth login (~/.gemini). The
             // user supplied no key, so scrub any stale inherited GEMINI_API_KEY
@@ -283,24 +382,62 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
      * back to the model with the highest output (candidates) count, then
      * the first key.
      */
+    /**
+     * gemini-cli (≥0.29, verified in 0.29.5 source) resolves non-interactive
+     * auth as `settings.security.auth.selectedType` FIRST and env second, so
+     * an injected GEMINI_API_KEY is silently ignored once the user has ever
+     * completed interactive OAuth login. We can't override the setting
+     * per-spawn without editing the user's file — log loudly instead.
+     */
+    private function warnIfSettingsOverrideApiKey(): void
+    {
+        if (!$this->logger) return;
+        $home = getenv('HOME') ?: '';
+        $file = $home !== '' ? $home . '/.gemini/settings.json' : '';
+        if ($file === '' || !is_file($file)) return;
+        $j = json_decode((string) @file_get_contents($file), true);
+        if (!is_array($j)) return;
+        // v2 nested key first; legacy flat key as fallback.
+        $selected = $j['security']['auth']['selectedType'] ?? $j['selectedAuthType'] ?? null;
+        if (is_string($selected) && $selected !== '' && $selected !== 'gemini-api-key') {
+            $this->logger->warning(
+                'GeminiCliBackend: provider api_key injected as GEMINI_API_KEY, but '
+                . "~/.gemini/settings.json pins auth selectedType={$selected}, which the CLI "
+                . 'prefers in non-interactive mode — the key may be ignored and billing/quota '
+                . 'will ride that login instead.',
+            );
+        }
+    }
+
     private function pickPrimaryModel(array $models): ?string
     {
         if (!$models) return null;
+        // Pre-0.29 builds tagged the answering model with roles.main.
         foreach ($models as $id => $stats) {
             if (isset($stats['roles']['main'])) {
                 return $id;
             }
         }
+        // 0.29.x dropped `roles` and routes every prompt through a
+        // flash-lite classifier side-call whose token counts can rival the
+        // real answer's — exclude known router/utility ids before the
+        // max-candidates fallback (unless they're all that's left).
+        $candidates = array_filter(
+            $models,
+            static fn ($id) => !str_contains((string) $id, 'flash-lite'),
+            ARRAY_FILTER_USE_KEY,
+        ) ?: $models;
+
         $best = null;
         $bestOut = -1;
-        foreach ($models as $id => $stats) {
+        foreach ($candidates as $id => $stats) {
             $out = (int) ($stats['tokens']['candidates'] ?? 0);
             if ($out > $bestOut) {
                 $best = $id;
                 $bestOut = $out;
             }
         }
-        return $best ?: array_key_first($models);
+        return $best ?: array_key_first($candidates);
     }
 
     // ─── ScriptedSpawnBackend ──────────────────────────────────────────
@@ -339,7 +476,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
 
         // Non-interactive mode: `--prompt ''` + `--yolo` auto-approves
         // tool calls so the stdin pipe isn't blocked waiting on prompts.
-        $flags = ['--prompt', '', '--yolo', '-o', 'stream-json'];
+        $flags = ['--prompt', '', ...self::yoloFlags($this->binary), '-o', 'stream-json'];
         if ($resolvedModel) {
             $flags[] = '--model';
             $flags[] = $resolvedModel;
@@ -368,7 +505,7 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
     public function streamChat(string $prompt, callable $onChunk, array $options = []): string
     {
         $cliPath = app(\SuperAICore\Support\CliBinaryLocator::class)->find(AiProvider::BACKEND_GEMINI);
-        $args = [$cliPath, '--output-format=json', '--yolo'];
+        $args = [$cliPath, '--output-format=json', ...self::yoloFlags($cliPath)];
 
         $resolvedModel = !empty($options['model']) ? GeminiModelResolver::resolve($options['model']) : null;
         if ($resolvedModel) {
@@ -398,10 +535,17 @@ class GeminiCliBackend implements Backend, StreamingBackend, ScriptedSpawnBacken
             $jsonPart = substr($buffer, $startPos);
             $data = json_decode($jsonPart, true);
             if (is_array($data)) {
-                // gemini JSON: response.text OR response.candidates[0].content.parts[*].text
-                $text = $data['response']['text']
-                    ?? $data['response']['candidates'][0]['content']['parts'][0]['text']
-                    ?? '';
+                // gemini ≥0.29 emits `response` as a plain STRING (same shape
+                // parseJson() handles); older builds nested it as
+                // response.text / response.candidates[0].content.parts[*].text.
+                // The string check must come first — the old offset lookups
+                // silently miss on a string and returned '' for every run.
+                $resp = $data['response'] ?? null;
+                $text = is_string($resp)
+                    ? $resp
+                    : ($resp['text']
+                        ?? $resp['candidates'][0]['content']['parts'][0]['text']
+                        ?? '');
                 if (is_string($text) && $text !== '') {
                     $fullResponse = $text;
                     $onChunk($text);

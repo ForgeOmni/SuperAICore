@@ -111,10 +111,12 @@ class ProviderTypeRegistry
                     AiProvider::BACKEND_GEMINI,
                     AiProvider::BACKEND_COPILOT,
                     AiProvider::BACKEND_KIRO,
-                    // Cursor Composer + Grok Build CLIs own their own OAuth
-                    // login (~/.cursor, ~/.grok), so they ride the builtin type.
+                    // Cursor Composer + Grok Build + Antigravity CLIs own
+                    // their own OAuth login (~/.cursor, ~/.grok,
+                    // ~/.gemini/antigravity-cli), so they ride builtin.
                     AiProvider::BACKEND_CURSOR,
                     AiProvider::BACKEND_GROK,
+                    AiProvider::BACKEND_ANTIGRAVITY,
                 ],
                 'needs_api_key'  => false,
                 'needs_base_url' => false,

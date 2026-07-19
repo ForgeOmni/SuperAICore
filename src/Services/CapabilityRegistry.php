@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Services;
 
+use SuperAICore\Capabilities\AntigravityCapabilities;
 use SuperAICore\Capabilities\ClaudeCapabilities;
 use SuperAICore\Capabilities\CodexCapabilities;
 use SuperAICore\Capabilities\CopilotCapabilities;
@@ -36,6 +37,7 @@ class CapabilityRegistry
         $this->register(new KimiCapabilities());
         $this->register(new CursorCapabilities());
         $this->register(new GrokCapabilities());
+        $this->register(new AntigravityCapabilities());
         $this->register(new SuperAgentCapabilities());
     }
 

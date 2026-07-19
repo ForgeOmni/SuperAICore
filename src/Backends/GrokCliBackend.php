@@ -14,7 +14,7 @@ use Symfony\Component\Process\Process;
 
 /**
  * Spawns xAI's `grok` CLI — the "Grok Build" agentic TUI in headless mode
- * (flag surface verified against grok 0.2.102).
+ * (flag surface verified against grok 0.2.103).
  *
  * Auth is owned by the binary: `grok login` (grok.com OAuth) caches
  * credentials under `~/.grok/`. The default `builtin` provider type leaves
@@ -24,9 +24,11 @@ use Symfony\Component\Process\Process;
  *
  * This is DISTINCT from the metered xAI API provider (SDK `GrokProvider`,
  * `AiProvider::TYPE_GROK`, `XAI_API_KEY`, `grok-4.5` usage-billed). Same
- * brand, different channel: this backend is the subscription CLI (grok CLI
- * 0.2.93 routes `grok-4.5` + `grok-composer-2.5-fast` on the Build plan;
- * `grok-build` on older accounts — all $0/token here).
+ * brand, different channel: this backend is the subscription CLI. Model
+ * exposure is account-dependent — on 0.2.103 this Build plan lists only
+ * `grok-4.5` in `grok models` and books usage under the routed SKU
+ * `grok-4.5-build` (`modelUsage`); other plans have exposed
+ * `grok-composer-2.5-fast` / `grok-build`. All $0/token here.
  *
  * Invocation surface used here:
  *   - `-p` / `--single <PROMPT>`   headless single-turn (print + exit)
@@ -39,7 +41,7 @@ use Symfony\Component\Process\Process;
  *                                  grok-4.5's dial is three-level, so the
  *                                  cross-engine `xhigh`/`max` clamp to `high`
  *                                  and `off`/`none`/`minimal` send nothing
- *                                  (0.2.102 `--effort` rejects anything else)
+ *                                  (0.2.103 `--effort` rejects anything else)
  *   - `--always-approve`           auto-approve tools (headless)
  *   - `-r/--resume <id>`           resume a prior session (from a previous
  *                                  envelope's `session_id`); `-c/--continue`
@@ -52,7 +54,11 @@ use Symfony\Component\Process\Process;
  * Headless JSON (`--output-format json`) carries `sessionId`, `stopReason`,
  * `num_turns`, `total_cost_usd`, `usage.cache_read_input_tokens` and a
  * `thought` reasoning channel; the envelope surfaces each when present so
- * `grok_cli` rows reach parity with the other CLI backends.
+ * `grok_cli` rows reach parity with the other CLI backends. NOTE the wire
+ * shape changed in 0.2.103 — the answer field renamed `result` → `text`,
+ * stop reasons went PascalCase, and streaming-json switched to
+ * `{"type":"text"|"thought","data":…}` chunks + a `{"type":"end"}` terminal
+ * event; scanEvents() accepts every generation (see its docblock).
  */
 class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 {
@@ -63,7 +69,7 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     /**
      * Effort levels grok's `--effort` / `--reasoning-effort` dial accepts.
      * grok-4.5 reasons with a three-level dial (verified against grok CLI
-     * 0.2.102: `--effort bogus` → "use one of: high, medium, low"). The
+     * 0.2.103: `--effort bogus` → "use one of: high, medium, low"). The
      * cross-engine `xhigh`/`max` convention clamps up to `high`; `off` /
      * `none` / `minimal` send no flag (see normalizeEffort()).
      */
@@ -323,7 +329,7 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
      * `medium` / `high` pass through; the cross-engine `xhigh` / `max` clamp
      * up to `high` so the strongest reasoning is still requested; everything
      * else (`off` / `none` / `minimal` / blank / unknown) returns null so the
-     * caller sends no `--effort` flag — grok 0.2.102 rejects any other value
+     * caller sends no `--effort` flag — grok 0.2.103 rejects any other value
      * and would fail the whole dispatch on `--effort max`.
      */
     protected function normalizeEffort(?string $effort): ?string
@@ -460,11 +466,17 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
     }
 
     /**
-     * Reduce Claude-Code-shaped events to the canonical envelope. Captures the
-     * full grok headless `json` shape (verified against grok 0.2.102):
-     * `sessionId`, `stopReason`, `num_turns`, `total_cost_usd`, the
-     * `usage.cache_read_input_tokens` tier and the `thought` reasoning
-     * channel — each defaulting to empty so a leaner/older shape still parses.
+     * Reduce grok result events to the canonical envelope, across three wire
+     * generations (re-verified live against grok 0.2.103):
+     *   - ≤0.2.102: Claude-Code-shaped `{"type":"result","result":…}` /
+     *     `{"type":"assistant",…}` events;
+     *   - ≥0.2.103 `json`: ONE bare object — `text` (not `result`), PascalCase
+     *     `stopReason` (`"EndTurn"`, normalized to snake_case here),
+     *     `sessionId`, `num_turns`, `total_cost_usd`, `usage.*`, `thought`,
+     *     and `modelUsage` keyed by the routed SKU (`grok-4.5-build`);
+     *   - ≥0.2.103 `streaming-json`: `{"type":"text"|"thought","data":…}`
+     *     chunks + a terminal `{"type":"end",…}` metadata event.
+     * Each field defaults to empty so a leaner/older shape still parses.
      *
      * @param array<int,array<string,mixed>> $events
      * @return array{text:string,model:?string,input_tokens:int,output_tokens:int,cache_read_input_tokens:int,cost_usd:float,turns:int,session_id:?string,thinking:string,stop_reason:?string}
@@ -489,9 +501,32 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
 
             $type = $ev['type'] ?? null;
 
-            if ($type === 'result' || isset($ev['result'])) {
+            // grok ≥0.2.103 streaming-json chunk events:
+            // {"type":"text"|"thought","data":"…"} — accumulate in order.
+            if (($type === 'text' || $type === 'thought')
+                && isset($ev['data']) && is_string($ev['data'])) {
+                if ($type === 'text') {
+                    $text .= $ev['data'];
+                } else {
+                    $thinking .= $ev['data'];
+                }
+                continue;
+            }
+
+            // Result-shaped events, across CLI generations:
+            //   ≤0.2.102  {"type":"result","result":"…",…}
+            //   ≥0.2.103 json           bare object: {"text":"…","usage":…} (no `type`)
+            //   ≥0.2.103 streaming-json terminal {"type":"end",…} (metadata, no text)
+            $resultShaped = $type === 'result'
+                || $type === 'end'
+                || isset($ev['result'])
+                || (isset($ev['text']) && is_string($ev['text'])
+                    && (isset($ev['usage']) || isset($ev['num_turns']) || isset($ev['stopReason'])));
+            if ($resultShaped) {
                 if (isset($ev['result']) && is_string($ev['result']) && $ev['result'] !== '') {
                     $text = $ev['result'];
+                } elseif ($type !== 'end' && isset($ev['text']) && is_string($ev['text']) && $ev['text'] !== '') {
+                    $text = $ev['text'];
                 }
                 $usage = $ev['usage'] ?? [];
                 if (is_array($usage)) {
@@ -501,8 +536,8 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
                 }
                 $cost   = (float) ($ev['total_cost_usd'] ?? $ev['cost_usd'] ?? $cost);
                 $turns  = (int) ($ev['num_turns'] ?? $ev['turns'] ?? $turns);
-                $stop   = $ev['stopReason'] ?? $ev['stop_reason'] ?? $ev['subtype'] ?? $stop;
-                $model ??= $ev['model'] ?? null;
+                $stop   = self::normalizeStopReason($ev['stopReason'] ?? $ev['stop_reason'] ?? $ev['subtype'] ?? null) ?? $stop;
+                $model ??= $ev['model'] ?? self::routedModelFromUsage($ev);
                 $thought = $ev['thought'] ?? null;
                 if (is_string($thought) && $thought !== '') $thinking = $thought;
                 continue;
@@ -565,5 +600,33 @@ class GrokCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             if (is_string($v) && $v !== '') return $v;
         }
         return null;
+    }
+
+    /**
+     * Canonicalize a stop reason to the cross-backend snake_case convention.
+     * grok ≥0.2.103 reports PascalCase (`"EndTurn"`); earlier builds and the
+     * other CLI backends use `end_turn` — downstream comparisons expect the
+     * latter. Already-snake values pass through unchanged.
+     */
+    private static function normalizeStopReason(mixed $v): ?string
+    {
+        if (!is_string($v) || $v === '') return null;
+        return strtolower(preg_replace('/(?<=[a-z0-9])([A-Z])/', '_$1', $v) ?? $v);
+    }
+
+    /**
+     * The actually-routed model SKU from a result event's `modelUsage` map
+     * (grok ≥0.2.103 keys it by routed id, e.g. requesting `grok-4.5` on a
+     * Build plan books under `grok-4.5-build`). More truthful in the envelope
+     * than echoing the requested alias; null when absent.
+     *
+     * @param array<string,mixed> $ev
+     */
+    private static function routedModelFromUsage(array $ev): ?string
+    {
+        $mu = $ev['modelUsage'] ?? null;
+        if (!is_array($mu) || $mu === []) return null;
+        $first = array_key_first($mu);
+        return is_string($first) && $first !== '' ? $first : null;
     }
 }

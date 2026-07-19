@@ -32,7 +32,7 @@ final class CliInstaller
     public const SOURCE_PIP    = 'pip';
 
     /** Backends we know how to install. Superagent is intentionally absent. */
-    public const INSTALLABLE_BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'cursor', 'grok'];
+    public const INSTALLABLE_BACKENDS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'cursor', 'grok', 'antigravity'];
 
     /**
      * Install-command matrix. Each backend maps to a list of `{source, argv}`
@@ -50,7 +50,10 @@ final class CliInstaller
             ],
             'codex' => [
                 ['source' => self::SOURCE_NPM,  'argv' => ['npm', 'install', '-g', '@openai/codex']],
-                ['source' => self::SOURCE_BREW, 'argv' => ['brew', 'install', 'codex'], 'note' => 'macOS only'],
+                // codex moved from a brew formula to a cask; bare
+                // `brew install codex` still works via cask fallback, but
+                // the explicit form is future-proof.
+                ['source' => self::SOURCE_BREW, 'argv' => ['brew', 'install', '--cask', 'codex'], 'note' => 'macOS only'],
             ],
             'gemini' => [
                 ['source' => self::SOURCE_NPM, 'argv' => ['npm', 'install', '-g', '@google/gemini-cli']],
@@ -73,6 +76,10 @@ final class CliInstaller
             // xAI's Grok Build CLI installer drops `grok` into ~/.local/bin.
             'grok' => [
                 ['source' => self::SOURCE_SCRIPT, 'argv' => ['sh', '-c', 'curl -fsSL https://grok.com/install.sh | bash'], 'note' => 'POSIX only'],
+            ],
+            // Google's Antigravity CLI installer drops `agy` into ~/.local/bin.
+            'antigravity' => [
+                ['source' => self::SOURCE_SCRIPT, 'argv' => ['sh', '-c', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'], 'note' => 'POSIX only'],
             ],
         ];
     }

@@ -557,6 +557,18 @@ return [
             'timeout'        => 300,
             'always_approve' => (bool) env('AI_CORE_GROK_ALWAYS_APPROVE', true),
         ],
+        'antigravity_cli' => [
+            // Google Antigravity CLI (`agy`, verified 1.1.4). Subscription
+            // engine — Google-account sign-in via the interactive TUI
+            // (shared ~/.gemini/oauth_creds.json; state in
+            // ~/.gemini/antigravity-cli/). The official successor to
+            // gemini-cli's retired consumer tiers (individual OAuth dead
+            // since 2026-06-18). Plain-text print mode; models span Gemini
+            // 3.5/3.1, Claude 4.6 and GPT-OSS via AntigravityModelResolver.
+            'enabled' => env('AI_CORE_ANTIGRAVITY_CLI_ENABLED', true),
+            'binary'  => env('ANTIGRAVITY_CLI_BIN', 'agy'),
+            'timeout' => 300,
+        ],
         'gemini_api' => [
             'enabled' => env('AI_CORE_GEMINI_API_ENABLED', true),
             'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com'),
@@ -676,12 +688,12 @@ return [
         ) ?? false,
         'chain' => array_values(array_filter(array_map('trim', explode(',', (string) env('AI_CORE_TASK_FALLBACK_CHAIN', ''))))),
         'chains_by_profile' => [
-            'coding' => ['claude_cli', 'codex_cli', 'gemini_cli'],
-            'research' => ['claude_cli', 'kimi_cli', 'gemini_cli'],
-            'summarise' => ['claude_cli', 'kimi_cli', 'gemini_cli'],
-            'maintenance' => ['codex_cli', 'gemini_cli', 'openai_api'],
-            'cheap' => ['gemini_cli', 'kimi_cli', 'openai_api'],
-            'fast' => ['codex_cli', 'gemini_cli', 'openai_api'],
+            'coding' => ['claude_cli', 'codex_cli', 'gemini_cli', 'antigravity_cli'],
+            'research' => ['claude_cli', 'kimi_cli', 'gemini_cli', 'antigravity_cli'],
+            'summarise' => ['claude_cli', 'kimi_cli', 'gemini_cli', 'antigravity_cli'],
+            'maintenance' => ['codex_cli', 'gemini_cli', 'antigravity_cli', 'openai_api'],
+            'cheap' => ['gemini_cli', 'antigravity_cli', 'kimi_cli', 'openai_api'],
+            'fast' => ['codex_cli', 'gemini_cli', 'antigravity_cli', 'openai_api'],
             'headless' => ['anthropic_api', 'openai_api', 'gemini_api'],
         ],
         'chains_by_task_type' => [
@@ -691,18 +703,22 @@ return [
             // 'summarise' => ['claude_cli', 'kimi_cli'],
             // 'code' => ['claude_cli', 'codex_cli', 'gemini_cli'],
         ],
+        // `antigravity_cli` rides directly behind `gemini_cli` in every
+        // chain: it is Google's successor to gemini-cli's retired consumer
+        // tiers, so hosts whose gemini OAuth died (IneligibleTierError)
+        // fall through to the same models via the agy subscription.
         'chains_by_metadata' => [
             'task_kind' => [
-                'coding' => ['claude_cli', 'codex_cli', 'gemini_cli'],
-                'research' => ['claude_cli', 'kimi_cli', 'gemini_cli'],
+                'coding' => ['claude_cli', 'codex_cli', 'gemini_cli', 'antigravity_cli'],
+                'research' => ['claude_cli', 'kimi_cli', 'gemini_cli', 'antigravity_cli'],
                 'summarise' => ['claude_cli', 'kimi_cli'],
             ],
             'priority' => [
-                'cheap' => ['gemini_cli', 'kimi_cli', 'openai_api'],
-                'fast' => ['codex_cli', 'gemini_cli', 'openai_api'],
+                'cheap' => ['gemini_cli', 'antigravity_cli', 'kimi_cli', 'openai_api'],
+                'fast' => ['codex_cli', 'gemini_cli', 'antigravity_cli', 'openai_api'],
             ],
             'requires_tools' => [
-                'true' => ['claude_cli', 'codex_cli', 'gemini_cli'],
+                'true' => ['claude_cli', 'codex_cli', 'gemini_cli', 'antigravity_cli'],
                 'false' => ['anthropic_api', 'openai_api', 'gemini_api'],
             ],
         ],
@@ -733,6 +749,7 @@ return [
             'claude_cli',
             'codex_cli',
             'gemini_cli',
+            'antigravity_cli',
             'kimi_cli',
             'copilot_cli',
             'kiro_cli',

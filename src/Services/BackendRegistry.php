@@ -3,6 +3,7 @@
 namespace SuperAICore\Services;
 
 use SuperAICore\Backends\AnthropicApiBackend;
+use SuperAICore\Backends\AntigravityCliBackend;
 use SuperAICore\Backends\ClaudeCliBackend;
 use SuperAICore\Backends\CodexCliBackend;
 use SuperAICore\Backends\CopilotCliBackend;
@@ -138,6 +139,16 @@ class BackendRegistry
                 $config['grok_cli']['binary'] ?? 'grok',
                 $config['grok_cli']['timeout'] ?? 300,
                 $config['grok_cli']['always_approve'] ?? true,
+                $logger,
+            ));
+        }
+        // Antigravity CLI (`agy`). Subscription engine — Google-account
+        // sign-in (shared ~/.gemini creds); the successor to gemini-cli's
+        // retired consumer tiers. Plain-text print mode.
+        if ($config['antigravity_cli']['enabled'] ?? true) {
+            $this->register(new AntigravityCliBackend(
+                $config['antigravity_cli']['binary'] ?? 'agy',
+                $config['antigravity_cli']['timeout'] ?? 300,
                 $logger,
             ));
         }

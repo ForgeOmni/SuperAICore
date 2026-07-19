@@ -23,9 +23,11 @@ final class CliInstallerTest extends TestCase
             'gemini'  => CliInstaller::SOURCE_NPM,
             'copilot' => CliInstaller::SOURCE_NPM,
             'kimi'    => CliInstaller::SOURCE_SCRIPT,
-            // Cursor + Grok ship via vendor curl|bash installers, not npm.
-            'cursor'  => CliInstaller::SOURCE_SCRIPT,
-            'grok'    => CliInstaller::SOURCE_SCRIPT,
+            // Cursor + Grok + Antigravity ship via vendor curl|bash
+            // installers, not npm.
+            'cursor'      => CliInstaller::SOURCE_SCRIPT,
+            'grok'        => CliInstaller::SOURCE_SCRIPT,
+            'antigravity' => CliInstaller::SOURCE_SCRIPT,
         ];
         foreach (CliInstaller::INSTALLABLE_BACKENDS as $b) {
             $this->assertArrayHasKey($b, $matrix, "missing source entry for {$b}");
@@ -56,7 +58,8 @@ final class CliInstallerTest extends TestCase
     {
         $opt = CliInstaller::resolveSource('codex', CliInstaller::SOURCE_BREW);
         $this->assertSame(CliInstaller::SOURCE_BREW, $opt['source']);
-        $this->assertSame(['brew', 'install', 'codex'], $opt['argv']);
+        // codex ships as a brew CASK since ~0.144 — the explicit form.
+        $this->assertSame(['brew', 'install', '--cask', 'codex'], $opt['argv']);
     }
 
     public function test_resolve_source_returns_null_for_unknown_backend(): void

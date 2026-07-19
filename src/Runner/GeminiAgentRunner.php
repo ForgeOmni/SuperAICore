@@ -29,10 +29,13 @@ final class GeminiAgentRunner implements AgentRunner
         $prompt = (new GeminiCapabilities())->transformPrompt($prompt);
 
         if ($agent->allowedTools) {
-            $this->emit("[note] allowed-tools declared (" . implode(',', $agent->allowedTools) . ") — gemini has no enforcement flag; relying on model obedience.\n");
+            // gemini ≥0.29 has --allowed-tools, but it's a skip-confirmation
+            // list (not a strict allowlist) and is moot under --yolo — so
+            // tool restriction still relies on model obedience.
+            $this->emit("[note] allowed-tools declared (" . implode(',', $agent->allowedTools) . ") — gemini has no strict enforcement flag; relying on model obedience.\n");
         }
 
-        $cmd = [$this->binary, '--prompt', '', '--yolo'];
+        $cmd = [$this->binary, '--prompt', '', ...\SuperAICore\Backends\GeminiCliBackend::yoloFlags($this->binary)];
         if ($agent->model) {
             $cmd[] = '--model';
             $cmd[] = $agent->model;

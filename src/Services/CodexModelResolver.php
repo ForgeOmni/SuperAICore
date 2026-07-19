@@ -29,8 +29,14 @@ class CodexModelResolver
     protected static ?string $cachedUserDefault = null;
     protected static ?array $cachedCatalog = null;
 
-    /** Last-resort defaults if no CLI state files are found. */
-    const BUILTIN_FALLBACKS = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.2'];
+    /**
+     * Last-resort defaults if no CLI state files are found. Refreshed
+     * 2026-07-19 against codex-cli 0.144.0's models_cache.json: the 5.6
+     * generation is current; gpt-5.4/-mini remain API-supported (though
+     * de-listed, visibility:hide); the old gpt-5.3-codex / gpt-5.2 slugs
+     * no longer exist in the cache at all.
+     */
+    const BUILTIN_FALLBACKS = ['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'];
 
     /**
      * Validate & possibly rewrite a requested codex model.

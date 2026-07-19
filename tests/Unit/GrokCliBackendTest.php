@@ -120,6 +120,74 @@ final class GrokCliBackendTest extends TestCase
         $this->assertNotContains('--continue', $cmd);
     }
 
+    public function test_parses_0_2_103_bare_json_object(): void
+    {
+        // grok ≥0.2.103 `--output-format json` emits ONE bare object: the
+        // answer moved `result` → `text`, stop reasons went PascalCase, and
+        // `modelUsage` is keyed by the actually-routed SKU. Captured live.
+        $raw = json_encode([
+            'text'           => 'OK',
+            'stopReason'     => 'EndTurn',
+            'sessionId'      => 'sess-103',
+            'requestId'      => 'req-1',
+            'thought'        => 'thinking…',
+            'usage'          => [
+                'input_tokens'            => 12637,
+                'cache_read_input_tokens' => 100,
+                'output_tokens'           => 29,
+                'reasoning_tokens'        => 24,
+                'total_tokens'            => 12666,
+            ],
+            'num_turns'      => 1,
+            'total_cost_usd' => 0.025448,
+            'modelUsage'     => ['grok-4.5-build' => ['inputTokens' => 12637, 'outputTokens' => 29, 'modelCalls' => 1]],
+        ]);
+        $p = $this->backend()->parseAgentOutput($raw);
+
+        $this->assertSame('OK', $p['text']);
+        $this->assertSame(12637, $p['input_tokens']);
+        $this->assertSame(29, $p['output_tokens']);
+        $this->assertSame(100, $p['cache_read_input_tokens']);
+        $this->assertSame(1, $p['turns']);
+        $this->assertSame('sess-103', $p['session_id']);
+        $this->assertSame('thinking…', $p['thinking']);
+        // PascalCase normalized to the cross-backend snake_case convention.
+        $this->assertSame('end_turn', $p['stop_reason']);
+        // Routed SKU harvested from modelUsage keys.
+        $this->assertSame('grok-4.5-build', $p['model']);
+    }
+
+    public function test_parses_0_2_103_streaming_chunks_and_end_event(): void
+    {
+        // ≥0.2.103 streaming-json: {"type":"text"|"thought","data":…} chunks
+        // + a terminal {"type":"end"} carrying the metadata (no text).
+        $lines = [
+            json_encode(['type' => 'thought', 'data' => 'hm ']),
+            json_encode(['type' => 'thought', 'data' => 'ok.']),
+            json_encode(['type' => 'text', 'data' => 'Hello ']),
+            json_encode(['type' => 'text', 'data' => 'world']),
+            json_encode([
+                'type'           => 'end',
+                'stopReason'     => 'EndTurn',
+                'sessionId'      => 'sess-stream',
+                'usage'          => ['input_tokens' => 500, 'output_tokens' => 19],
+                'num_turns'      => 2,
+                'total_cost_usd' => 0.02,
+                'modelUsage'     => ['grok-4.5-build' => ['modelCalls' => 1]],
+            ]),
+        ];
+        $p = $this->backend()->parseAgentOutput(implode("\n", $lines));
+
+        $this->assertSame('Hello world', $p['text']);
+        $this->assertSame('hm ok.', $p['thinking']);
+        $this->assertSame(500, $p['input_tokens']);
+        $this->assertSame(19, $p['output_tokens']);
+        $this->assertSame(2, $p['turns']);
+        $this->assertSame('sess-stream', $p['session_id']);
+        $this->assertSame('end_turn', $p['stop_reason']);
+        $this->assertSame('grok-4.5-build', $p['model']);
+    }
+
     public function test_rich_result_json_surfaces_session_cache_turns_and_thinking(): void
     {
         $raw = json_encode([

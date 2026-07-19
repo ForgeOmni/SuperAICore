@@ -10,12 +10,14 @@ use Symfony\Component\Process\Process;
  *
  * The `grok` binary (xAI's "Grok Build" agentic CLI) authenticates against
  * a grok.com subscription (`grok login`, OAuth) and routes model IDs via
- * `-m/--model`. Its authoritative list comes from `grok models`; as of
- * grok CLI 0.2.93 (verified 2026-07-12) the Build plan routes `grok-4.5`
- * as the default plus `grok-composer-2.5-fast`, so `grok-4.5` is the
- * static default here. The older single-model `grok-build` id stays in the
- * catalog for accounts still on that lineup; hosts pick up their exact
- * account list through `liveCatalog()`.
+ * `-m/--model`. Its authoritative list comes from `grok models` and is
+ * account-dependent: as of grok CLI 0.2.103 (re-verified 2026-07-19) this
+ * Build plan lists ONLY `grok-4.5` (booked under the routed SKU
+ * `grok-4.5-build` in `modelUsage`); other plans have exposed
+ * `grok-composer-2.5-fast` (0.2.93-era Build) or the single-model
+ * `grok-build` lineup. `grok-4.5` is the static default here; the other
+ * ids stay routable for accounts that carry them, and hosts pick up their
+ * exact list through `liveCatalog()`.
  *
  * This is DISTINCT from the metered xAI **API** provider (the SDK's
  * `GrokProvider`, `AiProvider::TYPE_GROK`, `XAI_API_KEY`, `grok-4.5`):
@@ -38,9 +40,12 @@ class GrokModelResolver
     ];
 
     /**
-     * Ordered, user-facing catalog — the grok CLI 0.2.93 subscription
-     * lineup (`grok-4.5` default + the Composer fast tier), with the
-     * legacy `grok-build` id kept routable for older accounts.
+     * Ordered, user-facing catalog — superset of account lineups seen
+     * across grok CLI 0.2.93 → 0.2.103 (`grok-4.5` default everywhere;
+     * Composer / legacy `grok-build` only on plans that expose them —
+     * 0.2.103 on this account lists `grok-4.5` alone). Prefer
+     * `liveCatalog()` for the account truth; unknown ids pass through so
+     * the CLI raises its own error.
      */
     const CATALOG = [
         ['slug' => 'grok-4.5',               'display_name' => 'Grok 4.5',               'family' => 'grok'],

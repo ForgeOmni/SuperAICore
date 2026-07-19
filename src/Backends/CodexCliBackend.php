@@ -216,6 +216,12 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
             $cmd[] = 'resume';
             $cmd[] = (string) $options['resume_session_id'];
         }
+        // NOTE `--full-auto` disappeared from `--help` in codex-cli 0.144
+        // but is parse-verified still accepted (on `exec` AND `exec resume`,
+        // where the documented `--sandbox`/`-a` replacements are NOT valid).
+        // If a future release drops it, migrate to
+        // `-c sandbox_mode="workspace-write" -c approval_policy="never"`,
+        // which works on every subcommand.
         array_push($cmd, '-', '--json', '--full-auto', '--skip-git-repo-check');
         if ($model) {
             $cmd[] = '--model';
@@ -228,7 +234,9 @@ class CodexCliBackend implements Backend, StreamingBackend, ScriptedSpawnBackend
      * Parse the JSONL event stream codex-rs emits under `exec --json`.
      * Public for testing.
      *
-     * Events observed (0.x schema, 2026-04):
+     * Events observed (re-verified live against codex-cli 0.144.0,
+     * 2026-07-19 — schema unchanged since the 2026-04 capture; 0.144 adds
+     * an additive `usage.reasoning_output_tokens` field we don't consume):
      *   {"type":"thread.started","thread_id":"..."}
      *   {"type":"turn.started"}
      *   {"type":"item.completed","item":{"type":"agent_message","text":"..."}}

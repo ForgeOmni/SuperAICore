@@ -46,6 +46,8 @@ class AliasRouter
         'cursor'       => [['backend' => 'cursor_cli',  'model' => null]],
         'composer'     => [['backend' => 'cursor_cli',  'model' => null]],
         'grok'         => [['backend' => 'grok_cli',    'model' => null]],
+        'antigravity'  => [['backend' => 'antigravity_cli', 'model' => null]],
+        'agy'          => [['backend' => 'antigravity_cli', 'model' => null]],
         'kiro'         => [['backend' => 'kiro_cli',    'model' => null]],
         'superagent'   => [['backend' => 'superagent',  'model' => null]],
     ];
@@ -57,7 +59,7 @@ class AliasRouter
     protected const KNOWN_BACKENDS = [
         'anthropic_api', 'openai_api', 'gemini_api', 'superagent', 'squad',
         'claude_cli', 'codex_cli', 'gemini_cli', 'copilot_cli', 'kiro_cli',
-        'kimi_cli', 'qwen_cli', 'cursor_cli', 'grok_cli',
+        'kimi_cli', 'qwen_cli', 'cursor_cli', 'grok_cli', 'antigravity_cli',
     ];
 
     /**

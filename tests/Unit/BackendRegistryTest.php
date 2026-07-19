@@ -56,6 +56,7 @@ class BackendRegistryTest extends TestCase
             'qwen_cli' => ['enabled' => false],
             'cursor_cli' => ['enabled' => false],
             'grok_cli' => ['enabled' => false],
+            'antigravity_cli' => ['enabled' => false],
             'gemini_api' => ['enabled' => false],
             'superagent' => ['enabled' => false],
             'squad' => ['enabled' => false],

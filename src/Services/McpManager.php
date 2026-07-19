@@ -1701,10 +1701,17 @@ class McpManager
      * Read MCP config from the first matching path in the configured
      * fallback list. Default order (preserves the historical behaviour):
      *
-     *   1. <projectRoot>/.mcp.json                — current project, SuperAICore-canonical
-     *   2. <projectRoot>/.claude/mcp.json         — Claude Code project scope
+     *   1. <projectRoot>/.mcp.json                — current project — this IS Claude Code's
+     *                                               project scope, and SuperAICore-canonical
+     *   2. <projectRoot>/.claude/mcp.json         — SuperAICore legacy project fallback
+     *                                               (NOT read by Claude Code itself)
      *   3. ~/.jcode/mcp.json                      — global jcode (since 0.9.0)
-     *   4. ~/.claude/mcp.json                     — global Claude Code
+     *   4. ~/.claude/mcp.json                     — SuperAICore legacy global fallback
+     *                                               (NOT read by Claude Code; its user
+     *                                               scope is ~/.claude.json `mcpServers`)
+     *   5. ~/.claude.json                         — Claude Code user scope (`claude mcp
+     *                                               add -s user`), read last so
+     *                                               project-level files win
      *
      * Hosts override the order via `super-ai-core.mcp.search_paths`. Tokens
      * `{project}` and `{home}` are expanded to the real project root and
@@ -1752,6 +1759,7 @@ class McpManager
                 '{project}/.claude/mcp.json',
                 '{home}/.jcode/mcp.json',
                 '{home}/.claude/mcp.json',
+                '{home}/.claude.json',
             ];
 
         $expanded = [];

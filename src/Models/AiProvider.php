@@ -42,7 +42,12 @@ class AiProvider extends Model
     // grok.com login. NB: distinct from the metered xAI API provider TYPE
     // `grok` (TYPE_GROK), which routes through the `superagent` backend.
     const BACKEND_GROK       = 'grok';
-    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT, self::BACKEND_KIRO, self::BACKEND_KIMI, self::BACKEND_CURSOR, self::BACKEND_GROK];
+    // Antigravity CLI (`agy`) — subscription engine, dispatcher
+    // `antigravity_cli`, Google-account OAuth (shared ~/.gemini creds,
+    // state in ~/.gemini/antigravity-cli). Google's replacement for the
+    // retired gemini-cli consumer tiers (dead since 2026-06-18).
+    const BACKEND_ANTIGRAVITY = 'antigravity';
+    const BACKENDS = [self::BACKEND_CLAUDE, self::BACKEND_CODEX, self::BACKEND_SUPERAGENT, self::BACKEND_GEMINI, self::BACKEND_COPILOT, self::BACKEND_KIRO, self::BACKEND_KIMI, self::BACKEND_CURSOR, self::BACKEND_GROK, self::BACKEND_ANTIGRAVITY];
 
     const TYPE_BUILTIN           = 'builtin';
     const TYPE_ANTHROPIC         = 'anthropic';
@@ -173,6 +178,12 @@ class AiProvider extends Model
             // `grok login` (grok.com OAuth) → ~/.grok/. Subscription channel;
             // the metered xAI API key path is the separate `grok` TYPE on the
             // superagent backend, not this CLI engine.
+            self::TYPE_BUILTIN,
+        ],
+        self::BACKEND_ANTIGRAVITY => [
+            // `agy` interactive sign-in (Google OAuth) → shared
+            // ~/.gemini/oauth_creds.json. Subscription channel; no API-key
+            // mode on this CLI.
             self::TYPE_BUILTIN,
         ],
     ];

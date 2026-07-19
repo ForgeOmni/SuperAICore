@@ -139,6 +139,9 @@ class CliBinaryLocator
             // the `kimi` engine ever populates, so probing it for other
             // binaries is a cheap miss.
             $candidates[] = self::kimiCodeBin() . "/{$binary}";
+            // xAI's installer likewise keeps the real binary in ~/.grok/bin
+            // (~/.local/bin/grok is just a symlink that may be absent).
+            $candidates[] = "{$home}/.grok/bin/{$binary}";
         }
         $candidates[] = "/opt/homebrew/bin/{$binary}";
         $candidates[] = "/usr/local/bin/{$binary}";

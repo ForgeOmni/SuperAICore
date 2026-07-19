@@ -6,9 +6,16 @@ use SuperAICore\Contracts\BackendCapabilities;
 use SuperAICore\Models\AiProvider;
 
 /**
- * Codex CLI adapter. Codex-rs exposes a shell tool + file tools but has
- * no native web-search / sub-agent primitives; skills targeting those
- * need to be told to plan differently (or work via MCPs).
+ * Codex CLI adapter. Codex-rs exposes a shell tool + file tools.
+ *
+ * Capability notes (re-verified against codex-cli 0.144.0, 2026-07-19):
+ * native web search EXISTS behind the opt-in `--search` flag (the
+ * Responses `web_search` tool; models advertise `supports_search_tool`),
+ * and a `multi_agent` feature is stable/enabled by default — but our
+ * dispatch paths don't pass `--search`, and `supportsSubAgents()` stays
+ * `false` because the Spawn-Plan (host-side fanout) protocol remains the
+ * deliberate integration for codex. Skills that need research still work
+ * via MCP servers, or a host can add `--search` through extra CLI flags.
  */
 class CodexCapabilities implements BackendCapabilities
 {
@@ -118,7 +125,7 @@ You are running under OpenAI codex-rs. Tool names follow the standard Read/Write
 
 3. Stop. The host will fan out real child processes in parallel and then call you back with every agent's output files ready to consolidate.
 
-**External research**: If the task requires web search / URL fetch, these are available only through MCP servers (Exa, Tavily, Brave, Firecrawl, etc.). Check `~/.codex/config.toml` `[mcp_servers.*]` for what's installed. If none are configured for research and the task needs external information, note this limitation in your final report rather than making up data.
+**External research**: If the task requires web search / URL fetch and a native `web_search` tool is available in this run, use it. Otherwise research goes through MCP servers (Exa, Tavily, Brave, Firecrawl, etc.) — check `~/.codex/config.toml` `[mcp_servers.*]` for what's installed. If neither is available and the task needs external information, note this limitation in your final report rather than making up data.
 
 ---
 

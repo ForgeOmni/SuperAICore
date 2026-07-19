@@ -56,6 +56,9 @@ class CliSkillBridge
         'kimi'    => ['mode' => 'instructions', 'file' => '.kimi/super-team-skills.md'],
         'kiro'    => ['mode' => 'instructions', 'file' => '.kiro/super-team-skills.md'],
         'claude'  => ['mode' => 'source'],
+        // agy's extension surface is `agy plugin` (no verified writable
+        // skills dir / instructions file yet) — nothing to bridge for now.
+        'antigravity' => ['mode' => 'none'],
         'superagent' => ['mode' => 'none'],
     ];
 

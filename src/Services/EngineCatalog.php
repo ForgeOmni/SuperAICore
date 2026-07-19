@@ -351,7 +351,7 @@ class EngineCatalog
                     'claude-opus-4-7',
                     'claude-opus-4-20250514',
                     'claude-sonnet-4-6',
-                    'claude-sonnet-4-5-20241022',
+                    'claude-sonnet-4-5-20250929',
                     'claude-haiku-4-5-20251001',
                 ],
                 'process_spec' => new ProcessSpec(
@@ -369,17 +369,18 @@ class EngineCatalog
                 'dispatcher_backends' => ['codex_cli', 'openai_api'],
                 'is_cli'              => true,
                 'cli_binary'          => 'codex',
-                'default_model'       => 'gpt-5.1-codex',
+                'default_model'       => 'gpt-5.6-sol',
                 'billing_model'       => 'usage',
+                // Static fallback only — modelOptions() prefers the live
+                // ~/.codex/models_cache.json via CodexModelResolver. Last
+                // verified 2026-07-19 against codex-cli 0.144.0 (listed:
+                // gpt-5.6-sol/terra/luna + gpt-5.5; gpt-5.4/-mini exist but
+                // are visibility:hide, gpt-5.3-codex-spark is list-only).
                 'available_models'    => [
-                    'gpt-5',
-                    'gpt-5.1',
-                    'gpt-5.1-codex',
-                    'gpt-5.1-codex-mini',
-                    'gpt-5-mini',
-                    'gpt-4.1',
-                    'gpt-4o',
-                    'gpt-4o-mini',
+                    'gpt-5.6-sol',
+                    'gpt-5.6-terra',
+                    'gpt-5.6-luna',
+                    'gpt-5.5',
                 ],
                 'process_spec' => new ProcessSpec(
                     binary:           'codex',
@@ -677,6 +678,49 @@ class EngineCatalog
                     outputFormatFlag: '--output-format=json',
                     modelFlag:        '--model',
                     defaultFlags:     ['--always-approve'],
+                ),
+            ],
+            'antigravity' => [
+                'label'               => 'Antigravity',
+                'icon'                => 'rocket-takeoff',
+                'dispatcher_backends' => ['antigravity_cli'],
+                'is_cli'              => true,
+                'cli_binary'          => 'agy',
+                // Google's Antigravity CLI (`agy`, verified 1.1.4 live on
+                // 2026-07-19) — the official successor to gemini-cli's
+                // retired consumer tiers (individual OAuth dead since
+                // 2026-06-18). Google-account sign-in via the interactive
+                // TUI; creds shared at ~/.gemini/oauth_creds.json, state in
+                // ~/.gemini/antigravity-cli/. Subscription-billed → $0
+                // usage rows. Models route MULTIPLE vendors (Gemini 3.5
+                // Flash / 3.1 Pro, Claude Sonnet/Opus 4.6, GPT-OSS 120B);
+                // slugs below map to the display names `agy --model`
+                // actually accepts via AntigravityModelResolver. Account
+                // truth comes from `agy models`.
+                'default_model'       => null,
+                'billing_model'       => 'subscription',
+                'available_models'    => [
+                    'gemini-3.5-flash',
+                    'gemini-3.5-flash-high',
+                    'gemini-3.5-flash-low',
+                    'gemini-3.1-pro',
+                    'gemini-3.1-pro-low',
+                    'claude-sonnet-4-6',
+                    'claude-opus-4-6',
+                    'gpt-oss-120b',
+                ],
+                'process_spec' => new ProcessSpec(
+                    binary:           'agy',
+                    versionArgs:      ['--version'],
+                    // Sign-in is TUI-only; bespoke status branch probes the
+                    // shared ~/.gemini credential files instead.
+                    authStatusArgs:   null,
+                    // `-p/--print <PROMPT>` takes the prompt as the flag value.
+                    promptFlag:       '-p',
+                    // Print mode is plain text — no output-format flag.
+                    outputFormatFlag: null,
+                    modelFlag:        '--model',
+                    defaultFlags:     ['--dangerously-skip-permissions'],
                 ),
             ],
             'superagent' => [

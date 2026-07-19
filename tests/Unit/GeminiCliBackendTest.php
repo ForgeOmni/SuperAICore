@@ -43,6 +43,43 @@ final class GeminiCliBackendTest extends TestCase
         $this->assertSame(51,    $parsed['thoughts_tokens']);
     }
 
+    public function test_excludes_flash_lite_router_when_no_main_role(): void
+    {
+        $backend = new GeminiCliBackend();
+
+        // gemini-cli 0.29.x dropped `roles` and routes every prompt through
+        // a flash-lite classifier side-call. Even when that side-call's
+        // candidates count beats the real answer's, the flash-lite id must
+        // not be picked as the primary model.
+        $json = json_encode([
+            'response' => 'ok',
+            'stats' => [
+                'models' => [
+                    'gemini-2.5-flash-lite' => ['tokens' => ['input' => 2814, 'candidates' => 90]],
+                    'gemini-2.5-pro'        => ['tokens' => ['input' => 30000, 'candidates' => 12]],
+                ],
+            ],
+        ]);
+
+        $parsed = $backend->parseJson($json);
+
+        $this->assertSame('gemini-2.5-pro', $parsed['model']);
+    }
+
+    public function test_flash_lite_still_picked_when_it_is_the_only_model(): void
+    {
+        $backend = new GeminiCliBackend();
+
+        $json = json_encode([
+            'response' => 'ok',
+            'stats' => ['models' => [
+                'gemini-2.5-flash-lite' => ['tokens' => ['input' => 5, 'candidates' => 2]],
+            ]],
+        ]);
+
+        $this->assertSame('gemini-2.5-flash-lite', $backend->parseJson($json)['model']);
+    }
+
     public function test_falls_back_to_highest_output_when_no_main_role(): void
     {
         $backend = new GeminiCliBackend();
@@ -119,6 +156,34 @@ final class GeminiCliBackendTest extends TestCase
      *
      * Fix: skip any prefix until the first '{' and let json_decode judge.
      */
+    public function test_yolo_flags_gated_on_skip_trust_probe(): void
+    {
+        // ≥0.51 gates --yolo behind folder trust; --skip-trust must only be
+        // sent to builds that advertise it (older ones hard-reject unknown
+        // flags). Fake binaries stand in for the two generations.
+        $dir = sys_get_temp_dir() . '/gemini-fake-' . bin2hex(random_bytes(3));
+        mkdir($dir, 0755, true);
+        $new = $dir . '/gemini-new';
+        $old = $dir . '/gemini-old';
+        file_put_contents($new, "#!/bin/sh\necho '  --skip-trust  Trust the current workspace for this session.'\n");
+        file_put_contents($old, "#!/bin/sh\necho '  --yolo  Automatically accept all actions'\n");
+        chmod($new, 0755);
+        chmod($old, 0755);
+
+        GeminiCliBackend::forgetHelpCache();
+        try {
+            $this->assertSame(['--yolo', '--skip-trust'], GeminiCliBackend::yoloFlags($new));
+            $this->assertSame(['--yolo'], GeminiCliBackend::yoloFlags($old));
+            // Missing binary → probe fails → conservative plain --yolo.
+            $this->assertSame(['--yolo'], GeminiCliBackend::yoloFlags($dir . '/definitely-missing'));
+        } finally {
+            GeminiCliBackend::forgetHelpCache();
+            @unlink($new);
+            @unlink($old);
+            @rmdir($dir);
+        }
+    }
+
     public function test_parses_through_gemini_yolo_preamble_noise(): void
     {
         $backend = new GeminiCliBackend();
