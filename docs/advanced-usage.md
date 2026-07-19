@@ -46,6 +46,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 36. [GPT-5.6 & Grok 4.5 — the new request surfaces and the catalog refresh (1.1.6 / SDK 1.1.6)](#36-gpt-56--grok-45--the-new-request-surfaces-and-the-catalog-refresh-116--sdk-116)
 37. [Kimi K3 — the new Moonshot general flagship (1.1.7 / SDK 1.1.7)](#37-kimi-k3--the-new-moonshot-general-flagship-117--sdk-117)
 38. [Kimi Code 0.27 — the layout probe and generation-aware support surfaces (1.1.8)](#38-kimi-code-027--the-layout-probe-and-generation-aware-support-surfaces-118)
+39. [Antigravity CLI — the gemini-cli successor as a dispatch engine (1.1.9)](#39-antigravity-cli--the-gemini-cli-successor-as-a-dispatch-engine-119)
 
 ---
 
@@ -4003,6 +4004,70 @@ dialect — `--prompt`-triggered print mode under the `auto` permission policy,
 `--output-format stream-json`, string `content`, `role:meta` resume hint
 (`kimi -r <session_id>`). `KimiCliBackend` shipped comment updates only. Full
 field notes: `docs/kimi-cli-backend.md` §9.
+
+---
+
+## 39. Antigravity CLI — the gemini-cli successor as a dispatch engine (1.1.9)
+
+Google retired gemini-cli's consumer tiers on 2026-06-18: personal-OAuth
+runs fail upstream with `IneligibleTierError` (exit 55) regardless of
+re-login. The replacement is the Antigravity CLI (`agy`, Go single
+binary, verified 1.1.4 live) — and 1.1.9 makes it a first-class engine,
+`antigravity_cli`.
+
+### Dispatching
+
+```php
+$dispatcher->dispatch([
+    'backend' => 'antigravity_cli',
+    'prompt'  => 'Refactor this method for clarity.',
+    'model'   => 'flash',            // or 'pro' / 'sonnet' / 'opus' / a slug
+]);
+```
+
+or from the CLI: `superaicore send antigravity "..."` (alias `agy`).
+Resume with `resume_session_id` (→ `--conversation <id>`) or
+`continue_session` (→ `--continue`).
+
+### The strict model resolver
+
+`agy --model` accepts ONLY full display names exactly as `agy models`
+prints them (`Gemini 3.5 Flash (Low)`). The failure mode for anything
+else is uniquely hostile to automation: agy prints the model list to
+stdout and exits 0 — which a naive backend would return as the answer.
+`AntigravityModelResolver` is therefore strict: family aliases
+(`flash`/`pro`/`sonnet`/`opus`/`gpt-oss`) and cross-engine slugs
+(`gemini-3.5-flash-low`, `claude-opus-4-6`, `gpt-oss-120b`, …) map to
+display names; unknown input resolves to null and the flag is dropped
+(agy's default model answers). One Google subscription routes Gemini
+3.5 Flash (3 effort tiers), Gemini 3.1 Pro (2), Claude Sonnet/Opus 4.6
+and GPT-OSS 120B — all $0/token on this channel.
+
+### Auth & detection
+
+Sign-in is TUI-only (`agy` with no args, Google OAuth). Credentials are
+SHARED with gemini-cli at `~/.gemini/oauth_creds.json`; agy state lives
+in `~/.gemini/antigravity-cli/`. The status detector therefore requires
+BOTH (creds + state dir) before reporting logged-in — a creds file alone
+may be a dead gemini-cli leftover. The official installer targets
+`~/.local/bin/agy`; `isAvailable()` probes that path directly for
+non-login shells.
+
+### Fallback positioning
+
+`antigravity_cli` sits directly behind `gemini_cli` in every shipped
+chain (`chains_by_profile`, `chains_by_metadata`, `auto_chain`): a task
+that dies on gemini's retired OAuth falls through to the same Gemini
+models via the agy subscription without config changes.
+
+### Boundaries (v1)
+
+Print mode is plain text — no stream-json, no token usage (subscription
+books $0 anyway). MCP/extension management goes through `agy plugin`;
+there is no verified host-writable config file, so `supportsMcp()` is
+false and the skills bridge entry is `none` until agy grows a writable
+surface. agy orchestrates its own agents (spawn-plan fast-exits), like
+Claude / Grok / Kiro.
 
 ---
 

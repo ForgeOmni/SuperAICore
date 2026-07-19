@@ -1473,6 +1473,33 @@ knowing on upgrade:
    non-login shells). If you specifically need the retired Python CLI, pin it
    with `--via=uv` or `--via=pip`.
 
+**1.1.9 — Antigravity CLI engine + four-CLI audit; no migration; SDK pin
+unchanged.** No schema, no new required config. Four things worth knowing:
+
+1. **New engine `antigravity_cli`** is enabled by default (env
+   `AI_CORE_ANTIGRAVITY_CLI_ENABLED=false` to opt out). To use it:
+   `superaicore cli:install antigravity` (official script → `~/.local/bin/agy`),
+   then run `agy` once interactively to sign in with your Google account.
+   It slots into every fallback chain right behind `gemini_cli`.
+
+2. **If your gemini CLI suddenly reports auth failures**, that's upstream:
+   Google retired gemini-cli's consumer tiers on 2026-06-18
+   (`IneligibleTierError`). Your options are an API key
+   (`GEMINI_API_KEY`), an eligible enterprise license, or the new
+   Antigravity engine. Note the providers page may still show gemini as
+   "logged in" (the credential file survives on disk) — the dispatcher's
+   auth fallthrough covers actual runs.
+
+3. **Grok usage rows stop reading zero.** If your dashboards showed
+   `grok_cli` runs with 0 tokens / 0 turns since grok 0.2.103, that was
+   the wire-format drift — fixed on upgrade, no action needed.
+
+4. **Claude MCP sync now lands in `~/.claude.json`.** Re-run your MCP sync
+   once after upgrading so servers reach the file Claude Code actually
+   reads; the old `mcpServers` key our previous releases wrote into
+   `~/.claude/settings.json` was never read and can be removed by hand if
+   you want a tidy file.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

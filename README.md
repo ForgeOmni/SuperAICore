@@ -36,6 +36,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [GPT-5.6 + Grok 4.5 catalog refresh wave (1.1.6 / SDK 1.1.6)](#gpt-56--grok-45-catalog-refresh-wave-116--sdk-116)
   - [Kimi K3 wave (1.1.7 / SDK 1.1.7)](#kimi-k3-wave-117--sdk-117)
   - [Kimi Code 0.27 support refresh wave (1.1.8)](#kimi-code-027-support-refresh-wave-118)
+  - [Antigravity CLI + four-CLI audit wave (1.1.9)](#antigravity-cli--four-cli-audit-wave-119)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -110,6 +111,43 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### Antigravity CLI + four-CLI audit wave (1.1.9)
+
+No SDK bump. Google retired gemini-cli's consumer tiers upstream
+(2026-06-18, `IneligibleTierError`); its successor becomes a first-class
+engine, and a live audit of the other installed CLIs fixed what had
+silently drifted.
+
+- **New engine: Antigravity CLI** (`antigravity_cli`, binary `agy`,
+  verified 1.1.4 live) — `send antigravity "..."` / alias `agy`, engine
+  pickers, `cli:install antigravity`, login detection (shared
+  `~/.gemini/oauth_creds.json` + `~/.gemini/antigravity-cli/` state), and
+  a slot directly behind `gemini_cli` in every fallback chain. One Google
+  subscription routes Gemini 3.5 Flash / 3.1 Pro, Claude Sonnet & Opus
+  4.6 and GPT-OSS 120B at $0/token; `AntigravityModelResolver` maps
+  `flash` / `pro` / `sonnet` / `opus` and cross-engine slugs onto the
+  display names `agy --model` actually accepts (strict — unknown input
+  drops the flag, because agy answers unknown models with the model list
+  and exit 0).
+- **grok 0.2.103 wire change parsed** — the answer field renamed
+  `result` → `text`, streaming became `{"type":"text"|"thought"}` chunks
+  + `{"type":"end"}`; usage/turns/thinking were silently zeroed. All
+  three generations parse now, stop reasons normalize, envelopes carry
+  the routed SKU. Login probe requires `~/.grok/auth.json` (not just the
+  dir); locator probes `~/.grok/bin`.
+- **claude MCP sync un-no-op'd** — now writes `~/.claude.json` (the file
+  `claude mcp add -s user` uses) instead of a dead settings.json key;
+  invalid `--permission-mode` values are dropped instead of killing the
+  spawn; four new 2.1.x env markers scrubbed; bogus Sonnet id purged.
+- **gemini 0.51 support** — `streamChat()` empty-string bug fixed
+  (string `response`), `--skip-trust` auto-appended where supported
+  (0.51 downgrades `--yolo` in untrusted folders), native-skill builds
+  skip the XML index prepend, flash-lite router excluded from cost
+  attribution, and an ignored-API-key warning. Personal-OAuth gemini is
+  dead upstream — use an API key or the Antigravity engine.
+- **codex refresh** — GPT-5.6-generation model lists (`gpt-5.6-sol`
+  default), `brew install --cask codex`, JSONL re-verified on 0.144.6.
 
 ### Kimi Code 0.27 support refresh wave (1.1.8)
 

@@ -1521,6 +1521,37 @@ savoir à la mise à jour :
    auto-sondé même depuis les shells non-login). Si vous avez spécifiquement
    besoin du CLI Python retiré, épinglez-le avec `--via=uv` ou `--via=pip`.
 
+**1.1.9 — moteur Antigravity CLI + audit des quatre CLI ; aucune
+migration ; pin SDK inchangé.** Aucun schéma, aucune config requise.
+Quatre choses à savoir :
+
+1. **Le nouveau moteur `antigravity_cli` est activé par défaut** (env
+   `AI_CORE_ANTIGRAVITY_CLI_ENABLED=false` pour le désactiver). Pour
+   l'utiliser : `superaicore cli:install antigravity` (script officiel →
+   `~/.local/bin/agy`), puis lancez `agy` une fois en interactif pour vous
+   connecter avec votre compte Google. Il prend place juste derrière
+   `gemini_cli` dans chaque chaîne de repli.
+
+2. **Si votre CLI gemini échoue soudainement à s'authentifier**, c'est en
+   amont : Google a retiré les paliers grand public de gemini-cli le
+   2026-06-18 (`IneligibleTierError`). Vos options : une clé API
+   (`GEMINI_API_KEY`), une licence entreprise éligible, ou le nouveau
+   moteur Antigravity. La page providers peut encore afficher gemini
+   « connecté » (le fichier d'identifiants survit sur disque) — le repli
+   d'authentification du dispatcher couvre les exécutions réelles.
+
+3. **Les lignes d'usage Grok ne lisent plus zéro.** Si vos tableaux de
+   bord montraient des runs `grok_cli` à 0 token / 0 tour depuis grok
+   0.2.103, c'était la dérive du format de wire — corrigé à la mise à
+   jour, rien à faire.
+
+4. **La synchro MCP de Claude atterrit désormais dans `~/.claude.json`.**
+   Relancez une fois votre synchro MCP après la mise à jour pour que les
+   serveurs atteignent le fichier que Claude Code lit réellement ; la clé
+   `mcpServers` que les versions précédentes écrivaient dans
+   `~/.claude/settings.json` n'était jamais lue et peut être supprimée à
+   la main.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

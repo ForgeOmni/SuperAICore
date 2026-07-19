@@ -4,6 +4,127 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.9] — 2026-07-19
+
+**Antigravity CLI engine + four-CLI live audit.** Two workstreams, no SDK
+bump, no migrations. (1) A drift audit of the installed CLIs — claude
+2.1.215, codex 0.144.0→0.144.6, gemini 0.29.5→0.51.0, grok 0.2.103 —
+against every repo assumption, fixing four silent breakages. (2) A new
+first-class engine for Google's Antigravity CLI (`agy` 1.1.4, verified
+live), the official successor to gemini-cli's consumer tiers (individual
+OAuth retired upstream 2026-06-18 with `IneligibleTierError`).
+
+### Added
+
+- **`Backends\AntigravityCliBackend`** (`antigravity_cli`) — headless
+  `agy -p <prompt> --dangerously-skip-permissions` (plain-text stdout; agy
+  has no output-format flag and reports no token usage — subscription
+  channel, $0 rows). `--print-timeout` mirrors the process timeout;
+  `resume_session_id` → `--conversation`, `continue_session` →
+  `--continue`; `isAvailable()` falls back to `~/.local/bin/agy` (the
+  official installer target) when `which` misses. Implements Backend +
+  StreamingBackend + ScriptedSpawnBackend + `streamChat()`; argv prompt is
+  guarded by `LargeArgvSafeSpawn`.
+- **`Services\AntigravityModelResolver`** — STRICT alias/slug → display
+  name mapping. `agy --model` accepts ONLY full display names
+  (`Gemini 3.5 Flash (Low)`); an unknown value dumps the model list to
+  stdout with exit 0, which would become the dispatch answer — so unknown
+  input resolves to null (flag dropped) instead of passing through.
+  Families `flash`/`pro`/`sonnet`/`opus`/`gpt-oss`; cross-engine slugs
+  (`gemini-3.5-flash`, `claude-opus-4-6`, …); `liveCatalog()` reads
+  `agy models`.
+- **`Capabilities\AntigravityCapabilities`** — native orchestration
+  (spawn-plan fast-exit), identity tool map, `supportsMcp() = false`
+  (extensions go through `agy plugin`; no verified host-writable file).
+- **Full selection-surface wiring** — `AiProvider::BACKEND_ANTIGRAVITY`
+  (+ BACKENDS + builtin type matrix), `BackendRegistry` registration
+  (config `backends.antigravity_cli`, env `AI_CORE_ANTIGRAVITY_CLI_ENABLED`
+  / `ANTIGRAVITY_CLI_BIN`), `EngineCatalog` `antigravity` entry (8 model
+  slugs + ProcessSpec — drives providers UI / pickers / cli:status),
+  `ProviderTypeRegistry` builtin allowed-backends, `AliasRouter`
+  (`antigravity` + `agy` aliases, KNOWN_BACKENDS), `CliInstaller`
+  (official install script), `CliStatusDetector` bespoke branch (logged-in
+  = shared `~/.gemini/oauth_creds.json` present AND
+  `~/.gemini/antigravity-cli/` state dir exists — creds alone can be a
+  dead gemini-cli leftover), `CliSkillBridge` `none` entry, and every
+  config fallback chain (`chains_by_profile` / `chains_by_metadata` /
+  `auto_chain`) directly behind `gemini_cli`. Tests:
+  `AntigravityCliBackendTest`, `AntigravityModelResolverTest`.
+
+### Fixed
+
+- **`GrokCliBackend::scanEvents()` lost all metadata on grok ≥0.2.103** —
+  the `json` shape renamed the answer field `result` → `text` (bare
+  object, no `type` key) and `streaming-json` switched to
+  `{"type":"text"|"thought","data":…}` chunks + a `{"type":"end"}`
+  terminal event, so usage/turns/thinking/stop_reason were zeroed (text
+  survived via a fallback). The scanner now accepts all three wire
+  generations, normalizes PascalCase stop reasons (`EndTurn` →
+  `end_turn`), and harvests the routed SKU from `modelUsage` keys
+  (`grok-4.5-build`). Live-capture fixtures in `GrokCliBackendTest`.
+- **`CliStatusDetector` grok branch** — `is_dir(~/.grok)` (true from
+  install time, survives logout) is no longer "logged in"; the probe now
+  requires a non-empty `~/.grok/auth.json`. `CliBinaryLocator` gains
+  `~/.grok/bin` (the real install target; `~/.local/bin/grok` is just a
+  symlink).
+- **`ClaudeCapabilities` MCP sync wrote a dead key** — Claude Code has no
+  `mcpServers` in the settings.json schema; `mcpConfigPath()` /
+  `renderMcpConfig()` now target `~/.claude.json` (the `claude mcp add -s
+  user` file), merging only the `mcpServers` key. `McpManager` search
+  paths gain `{home}/.claude.json` (read last) and the mislabeled
+  `.claude/mcp.json` comments are corrected.
+- **`ClaudeCliBackend` permission-mode hard failure** — `default` was
+  removed from `--permission-mode` choices in claude 2.1.x and commander
+  hard-rejects unknowns, killing the spawn. Values are now validated
+  against `PERMISSION_MODES` (`acceptEdits|auto|bypassPermissions|manual|
+  dontAsk|plan`); invalid ones are dropped with a warning.
+  `CLAUDE_SESSION_ENV_MARKERS` gains the 2.1.x additions
+  (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_EFFORT`,
+  `CLAUDE_PID`). Bogus `claude-sonnet-4-5-20241022` (a 3.5-Sonnet-v2
+  date) replaced with `claude-sonnet-4-5-20250929` in
+  `ClaudeModelResolver` / `EngineCatalog` / CallCommand help.
+- **`GeminiCliBackend::streamChat()` returned `''` on every modern
+  gemini** — since 0.29 the JSON `response` is a plain string; the old
+  object-offset lookups missed silently and `assertChatExit()` failed
+  successful runs. String checked first, legacy shape kept as fallback.
+- **`GeminiCliBackend::pickPrimaryModel()`** — the `roles.main` tag is
+  gone in 0.29.x and every prompt carries a `gemini-2.5-flash-lite`
+  classifier side-call; `*flash-lite*` ids are excluded before the
+  max-candidates fallback (unless they're all that's left).
+
+### Changed
+
+- **gemini 0.51 folder trust** — in an untrusted cwd, 0.51 silently
+  downgrades `--yolo` to `default` approval even headless (observed
+  live), stalling tool calls. New probe-gated
+  `GeminiCliBackend::yoloFlags()` appends `--skip-trust` on builds that
+  advertise it (older builds hard-reject unknown flags); all five
+  command-assembly sites switched.
+- **gemini native skills** — ≥0.29 auto-discovers `~/.gemini/skills`
+  (where `CliSkillBridge` installs packs) and ships `gemini skills` +
+  `activate_skill`; the Pi-style XML skill index prepend is now skipped on
+  those builds (probe-gated `supportsNativeSkills()`) to avoid double
+  exposure.
+- **gemini auth caveats surfaced** — non-interactive auth resolves
+  `settings.security.auth.selectedType` BEFORE env, so an injected
+  `GEMINI_API_KEY` can be silently ignored after any interactive OAuth
+  login; `warnIfSettingsOverrideApiKey()` logs it. Known false-positive
+  documented in `CliStatusDetector`: a personal-OAuth `oauth_creds.json`
+  still on disk reports logged-in but every ≥0.51 run fails with
+  `IneligibleTierError` (exit 55) — the dispatcher's auth fallthrough (and
+  the new `antigravity_cli` chain slot) is the safety net.
+- **codex catalog refresh** (0.144.x) — `EngineCatalog` codex entry:
+  `default_model` `gpt-5.1-codex` → `gpt-5.6-sol`, dead slug list replaced
+  with the 5.6 generation; `CodexModelResolver::BUILTIN_FALLBACKS` →
+  `['gpt-5.6-sol','gpt-5.5','gpt-5.4','gpt-5.4-mini']`; brew source is the
+  explicit `brew install --cask codex`; `--full-auto` documented as
+  hidden-but-accepted with the `-c` migration path noted (it is NOT
+  replaceable by `--sandbox`/`-a` on `exec resume`); JSONL schema
+  re-verified live on 0.144.6 (additive `reasoning_output_tokens`
+  unconsumed); `CodexCapabilities` notes the native `--search` web tool
+  and stable `multi_agent` feature (Spawn-Plan remains the deliberate
+  integration).
+
 ## [1.1.8] — 2026-07-19
 
 **Kimi Code 0.27 support refresh.** Moonshot's kimi-code relocated its state

@@ -1420,6 +1420,29 @@ standalone + artisan 命令 `send`、`resume`、`runs`、`aliases`、
    （二进制在 `~/.kimi-code/bin`，非 login shell 也能自动探到）。如确需已
    退役的 Python CLI，用 `--via=uv` 或 `--via=pip` 显式指定。
 
+**1.1.9 —— Antigravity CLI 引擎 + 四 CLI 审计；无迁移；SDK pin 不变。**
+无 schema、无新必填配置。升级时四件值得了解的事：
+
+1. **新引擎 `antigravity_cli` 默认启用**（env
+   `AI_CORE_ANTIGRAVITY_CLI_ENABLED=false` 可关）。启用步骤：
+   `superaicore cli:install antigravity`（官方脚本 → `~/.local/bin/agy`），
+   然后交互式跑一次 `agy` 完成 Google 账号登录。它在所有 fallback 链中
+   紧跟 `gemini_cli`。
+
+2. **如果你的 gemini CLI 突然认证失败**，那是上游行为：Google 已于
+   2026-06-18 停掉 gemini-cli 的个人档位（`IneligibleTierError`）。出路：
+   API key（`GEMINI_API_KEY`）、企业版许可，或新的 Antigravity 引擎。
+   注意 providers 页可能仍显示 gemini"已登录"（凭证文件还在磁盘上）——
+   实际运行由调度器的认证失败 fallthrough 兜底。
+
+3. **Grok 用量行不再是零。** 若你的面板自 grok 0.2.103 起显示 `grok_cli`
+   运行 0 token / 0 轮次，那是 wire 格式漂移所致 —— 升级即修复，无需操作。
+
+4. **Claude 的 MCP 同步现在写 `~/.claude.json`。** 升级后重跑一次 MCP
+   同步，让服务器落到 Claude Code 真正读取的文件；此前版本写进
+   `~/.claude/settings.json` 的 `mcpServers` 键从未被读取，介意的话可以
+   手动删掉。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

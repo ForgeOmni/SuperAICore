@@ -36,6 +36,7 @@
   - [GPT-5.6 + Grok 4.5 目录刷新波次（1.1.6 / SDK 1.1.6）](#gpt-56--grok-45-目录刷新波次116--sdk-116)
   - [Kimi K3 波次（1.1.7 / SDK 1.1.7）](#kimi-k3-波次117--sdk-117)
   - [Kimi Code 0.27 支持刷新波次（1.1.8）](#kimi-code-027-支持刷新波次118)
+  - [Antigravity CLI + 四 CLI 审计波次（1.1.9）](#antigravity-cli--四-cli-审计波次119)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -110,6 +111,38 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### Antigravity CLI + 四 CLI 审计波次（1.1.9）
+
+无 SDK bump。Google 已在上游停掉 gemini-cli 的个人档位(2026-06-18,
+`IneligibleTierError`);其官方继任者成为一等引擎,同时对本机已装的其余
+CLI 做了一轮真机审计,修掉静默漂移。
+
+- **新引擎:Antigravity CLI**(`antigravity_cli`,二进制 `agy`,实测
+  1.1.4)—— `send antigravity "..."` / 别名 `agy`、引擎 picker、
+  `cli:install antigravity`、登录检测(共享 `~/.gemini/oauth_creds.json`
+  + `~/.gemini/antigravity-cli/` 状态目录),并在所有 fallback 链中紧跟
+  `gemini_cli`。一个 Google 订阅路由 Gemini 3.5 Flash / 3.1 Pro、Claude
+  Sonnet & Opus 4.6、GPT-OSS 120B,全部 $0/token;
+  `AntigravityModelResolver` 把 `flash`/`pro`/`sonnet`/`opus` 和跨引擎
+  slug 严格映射到 `agy --model` 真正接受的显示名(未知输入直接丢弃
+  flag —— agy 对未知模型会把模型列表当"回答"打印且退出码 0)。
+- **grok 0.2.103 wire 变更已解析** —— 答案字段 `result` → `text`,流式
+  改为 `{"type":"text"|"thought"}` 分片 + `{"type":"end"}`;此前
+  usage/轮次/思考链被静默归零。现在三代形状全兼容,stopReason 规范化,
+  envelope 带实际路由 SKU。登录探针改查 `~/.grok/auth.json`;定位器补
+  `~/.grok/bin`。
+- **claude MCP 同步不再空转** —— 改写 `~/.claude.json`(`claude mcp add
+  -s user` 的真实文件)而非 settings.json 死键;非法 `--permission-mode`
+  丢弃并告警而非杀掉整次运行;清洗 4 个 2.1.x 新环境变量;清除虚构
+  Sonnet id。
+- **gemini 0.51 支持** —— `streamChat()` 空串 bug 修复(`response` 已是
+  字符串)、支持处自动附加 `--skip-trust`(0.51 在非信任目录降级
+  `--yolo`)、原生技能版本跳过 XML 索引前置、成本归因排除 flash-lite
+  路由器、API key 被忽略时告警。个人 OAuth 的 gemini 已死 —— 改用 API
+  key 或 Antigravity 引擎。
+- **codex 刷新** —— 模型表换 GPT-5.6 世代(默认 `gpt-5.6-sol`)、
+  `brew install --cask codex`、0.144.6 上复验 JSONL 不变。
 
 ### Kimi Code 0.27 支持刷新波次（1.1.8）
 
