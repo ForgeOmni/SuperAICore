@@ -1531,6 +1531,39 @@ things worth knowing:
    skills now land in `~/.kimi/skills/` (kimi-code: `~/.kimi-code/skills/`)
    and the stale digest is cleaned up automatically on next sync.
 
+**1.1.11 — Claude Opus 5; no migration; SDK pin moves `^1.1.7` →
+`^1.1.10`.** Additive apart from two intentional default moves. Four
+things worth knowing:
+
+1. **`opus` now resolves to `claude-opus-5`.** Anthropic's current
+   flagship is a same-price drop-in over Opus 4.8 ($5 in / $25 out per
+   1M), so nothing gets more expensive. If you want to stay on a specific
+   model, pin its exact id (`claude-opus-4-8`) — pinned ids are never
+   upgraded onto the family's newest entry. Re-publish the config to pick
+   up the `claude-opus-5` pricing row; hosts that don't re-publish still
+   price correctly through the SDK catalog.
+
+2. **The squad expert tier moved to Opus 5** in both `squad.tier_map` and
+   `cli_squad.tier_map`. Set `AI_CORE_CLI_SQUAD_EXPERT_MODEL=claude-opus-4-8`
+   (or edit your published config) to keep the old target.
+
+3. **New `anthropic_api` options — all opt-in.** Existing calls are
+   unchanged on the wire except for one safety net: a `max_tokens` above
+   the model's published ceiling is now clamped (Opus 5: 128K) instead of
+   returning a 400. New keys you can pass to `generate()` /
+   `generateStream()`: `thinking` (`true` / `false`), optional
+   `thinking_budget_tokens` (honored as adaptive on models that reject
+   budgets), and `effort` / `reasoning_effort`
+   (`low|medium|high|xhigh|max` → `output_config.effort`, emitted only for
+   models that have the dial). `temperature` / `top_p` / `top_k` are now
+   forwarded when supported and dropped on the models that reject them
+   (Claude 5 generation, Opus 4.7/4.8).
+
+4. **Guzzle is upgraded for you** — the SDK raised its floor to
+   `^7.15.1`, so `composer update` moves you 7.10.0 → 7.15.1 and clears
+   four advisories. If your app pins Guzzle below 7.15.1 the update will
+   refuse; relax that constraint first.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

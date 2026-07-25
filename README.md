@@ -38,6 +38,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [Kimi Code 0.27 support refresh wave (1.1.8)](#kimi-code-027-support-refresh-wave-118)
   - [Antigravity CLI + four-CLI audit wave (1.1.9)](#antigravity-cli--four-cli-audit-wave-119)
   - [Copilot / Cursor / Kiro / Kimi audit wave (1.1.10)](#copilot--cursor--kiro--kimi-audit-wave-1110)
+  - [Claude Opus 5 wave (1.1.11 / SDK 1.1.10)](#claude-opus-5-wave-1111--sdk-1110)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -112,6 +113,46 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### Claude Opus 5 wave (1.1.11 / SDK 1.1.10)
+
+SDK pin moves `^1.1.7` → `^1.1.10`. SuperAgent 1.1.10 lands **Claude Opus
+5** — Anthropic's current flagship, a drop-in upgrade over Opus 4.8 at the
+same **$5 in / $25 out** per 1M: 1M context, 128K max output, thinking on by
+default, the full `low…max` effort dial, fast mode, 512-token prompt-cache
+minimum.
+
+- **`opus` resolves to `claude-opus-5`** across `ClaudeModelResolver`, the
+  Claude engine picker and alias routing; `model_pricing` gains the row at
+  $5/$25. Opus 4.8 / 4.7 stay reachable by their exact ids — **pinning a
+  model id still runs that model** (1.1.10 fixed the SDK-side resolver bug
+  that silently upgraded pinned ids onto the family's newest entry).
+- **Squad expert tier → Opus 5** in `squad.tier_map`, `cli_squad.tier_map`
+  and `CliSquadOrchestrator::DEFAULT_TIER_MAP`. Override via
+  `AI_CORE_CLI_SQUAD_EXPERT_MODEL` to stay on 4.8.
+- **`anthropic_api` speaks the Claude 5 request surface.** One shared body
+  builder now serves both `generate()` and `generateStream()`, and shapes
+  the request per model instead of sending one that 400s:
+  `thinking: true` → `{type:"adaptive"}` on the adaptive-only models (Opus
+  5, Fable 5, Sonnet 5, Opus 4.6–4.8) and a fixed `budget_tokens` on older
+  Claude 4 — an explicit budget on an adaptive model is honored as adaptive
+  rather than rejected; `thinking: false` omits the key entirely (Opus 5
+  rejects `{type:"disabled"}` above `high` effort); `effort` /
+  `reasoning_effort` → `output_config.effort`, emitted only for models with
+  the dial; `temperature` / `top_p` / `top_k` forwarded only where still
+  accepted (removed on Claude 5 and Opus 4.7/4.8); `max_tokens` clamped to
+  the model's published ceiling (Opus 5: 128K) instead of erroring. Effort
+  gating reads the SDK's model catalog, so `superagent models update` is
+  enough to teach it a newly shipped model.
+- **Security:** the SDK's raised Guzzle floor pulls `guzzlehttp/guzzle`
+  7.10.0 → 7.15.1, clearing four advisories (redirect `Referer` leakage,
+  host-only cookie scope, unbounded response cookies, cross-origin
+  `Proxy-Authorization`).
+- **Fixed: `superaicore --version`** now reports `1.1.11` (it was stuck at
+  `1.1.9` through the 1.1.10 release).
+- Copilot / Cursor / Kiro / Antigravity pickers are **unchanged** — their
+  catalogs are attested against each vendor CLI's own model table and none
+  exposes an Opus 5 SKU yet.
 
 ### Copilot / Cursor / Kiro / Kimi audit wave (1.1.10)
 

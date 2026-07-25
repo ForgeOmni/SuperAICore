@@ -1471,6 +1471,31 @@ SDK pin 不变。** 无 schema、无新 config 键。升级时四件值得了解
    装进 `~/.kimi/skills/`（kimi-code 则是 `~/.kimi-code/skills/`），并
    自动清理确认无效的旧摘要文件。重跑一次同步即可生效。
 
+**1.1.11 —— Claude Opus 5；无迁移；SDK pin 从 `^1.1.7` 升到 `^1.1.10`。**
+除两处刻意调整的默认值外全是增量。四点值得注意：
+
+1. **`opus` 现在解析为 `claude-opus-5`。** Anthropic 当前旗舰是 Opus 4.8 的
+   同价平替（$5 输入 / $25 输出 每百万 token），不会变贵。若要固定在某个模型
+   上，直接写完整 id（`claude-opus-4-8`）—— 钉死的 id 永远不会被升级到家族最新
+   条目。重新发布配置可拿到 `claude-opus-5` 的价格行；不重新发布的宿主也能通过
+   SDK 目录正确计价。
+
+2. **Squad expert 档位改到 Opus 5**（`squad.tier_map` 与 `cli_squad.tier_map`
+   两处）。设置 `AI_CORE_CLI_SQUAD_EXPERT_MODEL=claude-opus-4-8`（或改已发布的
+   配置）即可保持原有目标。
+
+3. **`anthropic_api` 新增选项，全部可选。** 现有调用在协议层面不变，只多了一个
+   保护：`max_tokens` 超过模型上限时会被收敛（Opus 5：128K），而不是返回 400。
+   `generate()` / `generateStream()` 新支持的键：`thinking`（`true` / `false`）、
+   可选的 `thinking_budget_tokens`（在拒绝 budget 的模型上按 adaptive 处理），以及
+   `effort` / `reasoning_effort`（`low|medium|high|xhigh|max` → `output_config.effort`，
+   仅对拥有该档位的模型发送）。`temperature` / `top_p` / `top_k` 现在只在支持的
+   模型上转发，在拒绝它们的模型（Claude 5 世代、Opus 4.7/4.8）上被丢弃。
+
+4. **Guzzle 会被一并升级** —— SDK 把下限抬到 `^7.15.1`，`composer update` 会把你
+   从 7.10.0 升到 7.15.1 并修掉四个安全公告。如果你的应用把 Guzzle 钉在 7.15.1
+   以下，更新会失败 —— 先放宽该约束。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。

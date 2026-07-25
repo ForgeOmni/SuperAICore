@@ -38,6 +38,7 @@
   - [Kimi Code 0.27 支持刷新波次（1.1.8）](#kimi-code-027-支持刷新波次118)
   - [Antigravity CLI + 四 CLI 审计波次（1.1.9）](#antigravity-cli--四-cli-审计波次119)
   - [第二波 CLI 审计波次（1.1.10）](#第二波-cli-审计波次1110)
+  - [Claude Opus 5 波次（1.1.11 / SDK 1.1.10）](#claude-opus-5-波次1111--sdk-1110)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -112,6 +113,40 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### Claude Opus 5 波次（1.1.11 / SDK 1.1.10）
+
+SDK pin 从 `^1.1.7` 升到 `^1.1.10`。SuperAgent 1.1.10 带来 **Claude Opus
+5** —— Anthropic 当前的旗舰模型，相对 Opus 4.8 是同价平替（同样 **$5 输入 /
+$25 输出** 每百万 token）：1M 上下文、128K 最大输出、默认开启思考、完整的
+`low…max` effort 档位、fast 模式、提示缓存最小 512 token（原为 1024）。
+
+- **`opus` 现在解析为 `claude-opus-5`** —— 覆盖 `ClaudeModelResolver`、
+  Claude 引擎选择器与别名路由；`model_pricing` 新增 $5/$25 的价格行。Opus
+  4.8 / 4.7 仍可用完整 id 选中 —— **配置里钉死的 model id 依然跑那个模型**
+  （1.1.10 修掉了 SDK 侧那个把钉死 id 悄悄升级到家族最新条目的解析 bug）。
+- **Squad expert 档位改为 Opus 5** —— `squad.tier_map`、`cli_squad.tier_map`
+  与 `CliSquadOrchestrator::DEFAULT_TIER_MAP`。想留在 4.8 就用
+  `AI_CORE_CLI_SQUAD_EXPERT_MODEL` 覆盖。
+- **`anthropic_api` 后端开始按模型说 Claude 5 的请求方言。** `generate()` 与
+  `generateStream()` 现在共用一个 body 构造器，按模型裁剪请求，而不是发出一个
+  必然 400 的请求：`thinking: true` 在 adaptive-only 模型（Opus 5、Fable 5、
+  Sonnet 5、Opus 4.6–4.8）上发 `{type:"adaptive"}`，在旧的 Claude 4 上发固定
+  `budget_tokens` —— 对 adaptive 模型显式传 budget 会被当作 adaptive 尊重其
+  意图，而不是被拒；`thinking: false` **完全省略**该字段（Opus 5 在 effort 高于
+  `high` 时会拒绝 `{type:"disabled"}`）；`effort` / `reasoning_effort` 映射到
+  `output_config.effort`，且只对确实有该档位的模型发送；`temperature` /
+  `top_p` / `top_k` 只在仍然接受它们的模型上转发（Claude 5 与 Opus 4.7/4.8 已
+  移除）；`max_tokens` 超过模型上限时**自动收敛**到上限（Opus 5：128K）而不是
+  报错。effort 的判定读 SDK 的模型目录，所以跑一次 `superagent models update`
+  就能让它认识新上线的模型。
+- **安全：** 随 SDK 抬高的 Guzzle 下限，`guzzlehttp/guzzle` 从 7.10.0 升到
+  7.15.1，修掉四个公告（重定向 `Referer` 泄漏 URI fragment、host-only cookie
+  作用域、响应 cookie 无上限、`Proxy-Authorization` 跨源转发）。
+- **修复：`superaicore --version`** 现在报告 `1.1.11`（1.1.10 发布时它还卡在
+  `1.1.9`）。
+- Copilot / Cursor / Kiro / Antigravity 的选择器**未改动** —— 它们的目录是对各
+  自厂商 CLI 的模型表逐条核对出来的，目前都还没有 Opus 5 的 SKU。
 
 ### 第二波 CLI 审计波次（1.1.10）
 

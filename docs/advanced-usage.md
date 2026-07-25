@@ -48,6 +48,7 @@ All examples target 0.7.0+ unless noted. Features first shipped earlier carry a 
 38. [Kimi Code 0.27 — the layout probe and generation-aware support surfaces (1.1.8)](#38-kimi-code-027--the-layout-probe-and-generation-aware-support-surfaces-118)
 39. [Antigravity CLI — the gemini-cli successor as a dispatch engine (1.1.9)](#39-antigravity-cli--the-gemini-cli-successor-as-a-dispatch-engine-119)
 40. [Second-wave CLI audit — copilot, cursor, kiro, kimi against the live binaries (1.1.10)](#40-second-wave-cli-audit--copilot-cursor-kiro-kimi-against-the-live-binaries-1110)
+41. [Claude Opus 5 — the new flagship and the per-model request surface (1.1.11 / SDK 1.1.10)](#41-claude-opus-5--the-new-flagship-and-the-per-model-request-surface-1111--sdk-1110)
 
 ---
 
@@ -4144,6 +4145,108 @@ contract itself needed zero changes — variant probe (`--help` contains
 against the installed package source, including kosong's single-part
 string-collapse serialization that `extractAssistantText()` already
 handles.
+
+---
+
+## 41. Claude Opus 5 — the new flagship and the per-model request surface (1.1.11 / SDK 1.1.10)
+
+SDK 1.1.10 lands **Claude Opus 5** (`claude-opus-5`) as a first-class
+`anthropic` model and makes it the SDK's zero-config default. It is a
+drop-in upgrade over Opus 4.8 at the **same $5 in / $25 out** per 1M: 1M
+context, 128K max output, adaptive thinking on by default, the full
+`low…max` effort dial, fast mode, and a 512-token prompt-cache minimum
+(down from 1024). SuperAICore 1.1.11 moves the `opus` family onto it, adds
+the pricing row, and — the substantive host-side change — teaches
+`AnthropicApiBackend` the per-model request surface the Claude 5 generation
+requires.
+
+### Selecting the model
+
+```php
+$result = $dispatcher->dispatch([
+    'backend' => 'anthropic_api',
+    'prompt'  => 'Audit this migration for race conditions.',
+    'model'   => 'opus',            // → claude-opus-5
+    'effort'  => 'high',            // → output_config.effort
+    'thinking'=> true,              // → thinking: {type: "adaptive"}
+]);
+```
+
+`ClaudeModelResolver::FAMILIES['opus']` is now `claude-opus-5`, so `opus`
+resolves to it in the Claude engine picker, alias routing, `superaicore
+send` and the API backend alike. Fable 5 remains its own family above the
+Opus tier at $10/$50; `sonnet` stays on Sonnet 5.
+
+**Pinned ids are never upgraded.** `resolve('claude-opus-4-8')` returns
+`claude-opus-4-8`, and `claude-opus-4-8[1m]` keeps its beta tag. This is
+the host-side counterpart of the SDK bug 1.1.10 fixed, where a fuzzy family
+match rewrote *every* explicit Opus id onto the family's newest entry — a
+config pinned to `claude-opus-4-8` silently ran `claude-opus-4-20250514`.
+`ClaudeModelResolverTest::test_pinned_model_ids_are_never_upgraded` pins the
+behaviour here.
+
+### The per-model request surface in `AnthropicApiBackend`
+
+`generate()` and `generateStream()` previously each hand-built a body of
+`model` + `max_tokens` + `messages` (+ `system`) and had no way to express
+thinking or effort at all. Both now share a private `buildBody()` that
+applies four rules:
+
+| Rule | Adaptive-only models (Opus 5, Fable 5, Sonnet 5, Opus 4.6–4.8) | Older Claude 4 |
+|---|---|---|
+| `thinking: true` | `{"type":"adaptive"}` | `{"type":"enabled","budget_tokens":N}` |
+| `thinking_budget_tokens` | rerouted to adaptive (never sent) | honored verbatim |
+| `thinking: false` | key omitted entirely | key omitted entirely |
+| `effort` / `reasoning_effort` | `output_config.effort` | dropped (no dial) |
+| `temperature` / `top_p` / `top_k` | dropped on Claude 5 + Opus 4.7/4.8 | forwarded |
+| `max_tokens` over ceiling | clamped to `capabilities.max_output` | clamped when known |
+
+Three of those deserve a note:
+
+- **Thinking is delegated to the SDK**, not reimplemented.
+  `SuperAgent\Thinking\ThinkingConfig::adaptive()->toApiParameter($model)`
+  owns the adaptive-vs-budget decision, so the host inherits every future
+  model the SDK classifies without a release here.
+- **"Off" omits the key rather than sending `{"type":"disabled"}`.** Opus 5
+  accepts `disabled` only at effort ≤ `high`; omitting the key makes the
+  `thinking: false` + `effort: max` pairing impossible to get wrong.
+- **Effort gating reads the catalog first.**
+  `ModelCatalog::capabilitiesFor($model)` supplies `effort_control` /
+  `reasoning_effort`, so `superagent models update` is enough to teach the
+  backend a newly shipped model; the SDK's hardcoded id families are only
+  the fallback. Levels are normalised the same way the SDK does it
+  (`minimal`→`low`, `mid`→`medium`, `highest`→`max`); an unknown level
+  yields nothing rather than a 400, because Anthropic has no "effort off".
+
+The sampling-param and effort predicates are duplicated (small,
+id-family-matching helpers) rather than called, because the SDK's
+`AnthropicProvider::modelSupportsEffort()` /
+`modelRejectsSamplingParams()` are `protected static`. The catalog-first
+gating above is what keeps the duplication from going stale in practice.
+
+### Cost attribution
+
+`model_pricing` gains `claude-opus-5 => ['input' => 5.00, 'output' => 25.00]`.
+Hosts that never re-publish the config still price Opus 5 runs correctly:
+`CostCalculator::resolveRate()` falls through to
+`ModelCatalog::pricing()`, and the SDK's bundled catalog carries the row.
+
+### Squad tiers
+
+The expert tier moves to Opus 5 in `config('super-ai-core.squad.tier_map')`,
+`config('super-ai-core.cli_squad.tier_map')` and
+`CliSquadOrchestrator::DEFAULT_TIER_MAP`. Stay on 4.8 with
+`AI_CORE_CLI_SQUAD_EXPERT_MODEL=claude-opus-4-8`. Note the SDK's own Squad
+**EXPERT** tier still routes to `claude-fable-5` — that is deliberate on
+both sides: Fable 5 sits above the Opus tier.
+
+### What deliberately did not change
+
+`CursorModelResolver`, `CopilotModelResolver`, `KiroModelResolver` and
+`AntigravityModelResolver` keep their catalogs. Those lists are attested
+against each vendor CLI's own model table (see §40), and none exposes an
+Opus 5 SKU yet — inventing `claude-opus-5-thinking-high` would produce a
+slug cursor-agent rejects. They pick it up when upstream ships it.
 
 ---
 

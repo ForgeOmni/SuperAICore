@@ -347,6 +347,7 @@ class EngineCatalog
                     // Claude 5 generation; Opus 4.6 retired by Anthropic.
                     'claude-fable-5',
                     'claude-sonnet-5',
+                    'claude-opus-5',
                     'claude-opus-4-8',
                     'claude-opus-4-7',
                     'claude-opus-4-20250514',

@@ -4,6 +4,91 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.11] — 2026-07-25
+
+**SDK pin `^1.1.7` → `^1.1.10`; Claude Opus 5 becomes the `opus` family
+target, and `AnthropicApiBackend` gains the per-model request surface the
+Claude 5 generation requires.** SuperAgent 1.1.10 added `claude-opus-5` to
+the catalog (anthropic / openrouter / bedrock), moved its own zero-config
+`anthropic` default and `opus` / `claude-opus` aliases onto it, and fixed a
+`ModelResolver` bug that silently upgraded pinned model ids. It also raised
+the `guzzlehttp/guzzle` floor to `^7.15.1`. No migrations, no new config
+keys; two default moves (below) are intentional.
+
+### Added
+
+- **`claude-opus-5` across the host catalog** — `ClaudeModelResolver::CATALOG`
+  (leading the `opus` family; native 1M, so no `[1m]` variant),
+  `EngineCatalog`'s `claude` engine `available_models`, and a
+  `model_pricing` row at $5.00 / $25.00 per 1M. Pricing for hosts that
+  never re-publish the config still resolves via
+  `CostCalculator::pricingFromCatalog()` → `ModelCatalog::pricing()`.
+- **Claude 5 request surface in `AnthropicApiBackend`** — `generate()` and
+  `generateStream()` now share a private `buildBody()` that applies three
+  model-dependent rules plus an output clamp:
+  - `thinking` — delegated to `SuperAgent\Thinking\ThinkingConfig`, whose
+    `toApiParameter($model)` picks `{type:"adaptive"}` for the adaptive-only
+    models (Opus 5, Fable 5, Sonnet 5, Opus 4.6–4.8) and
+    `{type:"enabled", budget_tokens:N}` for older Claude 4. Driven by
+    `options['thinking']` (`true` / `'adaptive'` / `false` / `'off'`) with
+    optional `options['thinking_budget_tokens']`. "Off" returns null and the
+    key is omitted — never `{type:"disabled"}`, which Opus 5 rejects above
+    `high` effort.
+  - `output_config.effort` — `options['effort']` or
+    `options['reasoning_effort']` normalised through
+    `AnthropicApiBackend::EFFORT_LEVELS` (mirrors the SDK's
+    `reasoningEffortFragment()` vocabulary: `minimal`→`low`, `mid`→`medium`,
+    `highest`→`max`). Gating prefers `ModelCatalog::capabilitiesFor()`
+    (`effort_control` / `reasoning_effort`), so a model added by
+    `superagent models update` gets the dial without a release here; the
+    SDK's hardcoded id families are the fallback.
+  - Sampling params — `temperature` / `top_p` / `top_k` are forwarded only
+    when `rejectsSamplingParams()` is false. This mirrors the SDK's
+    `AnthropicProvider::modelRejectsSamplingParams()`, which is `protected
+    static` and therefore not reusable from the host.
+  - `max_tokens` clamped to `capabilities.max_output` when the catalog
+    publishes it (Opus 5: 131072), logged at `info`.
+- **`tests/Unit/AnthropicApiBackendTest.php`** — 8 cases over a Guzzle
+  `MockHandler` + history middleware, asserting the body actually put on the
+  wire: adaptive-vs-budget thinking, budget suppression on Opus 5,
+  thinking-off omitting the key, effort normalisation + per-model gating,
+  sampling-param drop/keep, the `max_tokens` clamp, and alias resolution.
+- **`tests/Unit/ClaudeModelResolverTest.php`** — 5 cases pinning the family
+  aliases, the Opus-5-leads-the-catalog ordering, and a regression test that
+  explicit ids (`claude-opus-4-8`, `claude-opus-4-8[1m]`) are never upgraded
+  onto the family's newest entry.
+
+### Changed
+
+- **`ClaudeModelResolver::FAMILIES['opus']`** `claude-opus-4-8` →
+  `claude-opus-5`. Every explicit id remains reachable; `resolve()` still
+  passes unknown input through unchanged.
+- **Squad expert tier → `claude-opus-5`** in
+  `config('super-ai-core.squad.tier_map')`,
+  `config('super-ai-core.cli_squad.tier_map')` (env-overridable via
+  `AI_CORE_CLI_SQUAD_EXPERT_MODEL`) and
+  `CliSquadOrchestrator::DEFAULT_TIER_MAP`.
+- `Console\Application` version string `1.1.9` → `1.1.11` (it had drifted
+  through the 1.1.10 release).
+
+### Security
+
+- **`guzzlehttp/guzzle` 7.10.0 → 7.15.1** (transitively `promises` 2.5.1,
+  `psr7` 2.13.0), pulled in by the SDK's raised floor — clears
+  GHSA-h95v-h523-3mw8 (URI fragment in redirect `Referer`),
+  GHSA-wm3w-8rrp-j577 (host-only cookie scope), GHSA-f283-ghqc-fg79
+  (unbounded response cookies) and GHSA-94pj-82f3-465w
+  (`Proxy-Authorization` forwarded cross-origin).
+
+### Not changed (deliberately)
+
+- **`CursorModelResolver`, `CopilotModelResolver`, `KiroModelResolver`,
+  `AntigravityModelResolver`** keep their catalogs. Those lists are
+  attested against the vendor CLIs' own model tables (see 1.1.10's audit);
+  none of them exposes an Opus 5 SKU yet, and inventing e.g.
+  `claude-opus-5-thinking-high` would produce a slug the CLI rejects.
+  They pick Opus 5 up when the upstream CLIs ship it.
+
 ## [1.1.10] — 2026-07-19
 
 **Second-wave CLI drift audit: copilot 1.0.71, cursor-agent 2026.07.16,

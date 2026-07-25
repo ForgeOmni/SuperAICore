@@ -380,7 +380,7 @@ return [
             'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-flash'],
             'moderate' => ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6'],
             'hard'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-pro'],
-            'expert'   => ['provider' => 'anthropic', 'model' => 'claude-opus-4-8'],
+            'expert'   => ['provider' => 'anthropic', 'model' => 'claude-opus-5'],
         ],
         'max_cost_usd'   => (float) env('AI_CORE_SQUAD_MAX_COST', 0),
         'checkpoint_dir' => env('AI_CORE_SQUAD_CHECKPOINT_DIR', null),
@@ -452,7 +452,7 @@ return [
             'easy'     => ['provider' => env('AI_CORE_CLI_SQUAD_EASY_PROV',     'cli:gemini_cli'),  'model' => env('AI_CORE_CLI_SQUAD_EASY_MODEL',     'gemini-2.5-flash')],
             'moderate' => ['provider' => env('AI_CORE_CLI_SQUAD_MODERATE_PROV', 'cli:codex_cli'),   'model' => env('AI_CORE_CLI_SQUAD_MODERATE_MODEL', 'gpt-5.1')],
             'hard'     => ['provider' => env('AI_CORE_CLI_SQUAD_HARD_PROV',     'cli:claude_cli'),  'model' => env('AI_CORE_CLI_SQUAD_HARD_MODEL',     'claude-sonnet-4-6')],
-            'expert'   => ['provider' => env('AI_CORE_CLI_SQUAD_EXPERT_PROV',   'cli:claude_cli'),  'model' => env('AI_CORE_CLI_SQUAD_EXPERT_MODEL',   'claude-opus-4-8')],
+            'expert'   => ['provider' => env('AI_CORE_CLI_SQUAD_EXPERT_PROV',   'cli:claude_cli'),  'model' => env('AI_CORE_CLI_SQUAD_EXPERT_MODEL',   'claude-opus-5')],
         ],
         'checkpoint_dir' => env('AI_CORE_CLI_SQUAD_CHECKPOINT_DIR', null),
         'max_cost_usd'   => (float) env('AI_CORE_CLI_SQUAD_MAX_COST', 0),
@@ -911,11 +911,13 @@ return [
         // on the same Claude-5-generation adaptive surface at the Sonnet
         // $3/$15 tier (intro $2/$10 through 2026-08-31 — keep the official
         // rate here; override per host if you want the promo reflected).
-        // The current Opus line (4.5→4.8) is repriced to Anthropic's
+        // The current Opus line (4.5→5) is repriced to Anthropic's
         // official $5/$25 (SDK 1.1.5 corrected the stale $15/$75); only the
-        // dated Opus 4.0 snapshot keeps the historical $15/$75.
+        // dated Opus 4.0 snapshot keeps the historical $15/$75. Opus 5
+        // (SDK 1.1.10) is a drop-in upgrade over 4.8 at that same rate.
         'claude-fable-5'              => ['input' => 10.00, 'output' => 50.00],
         'claude-sonnet-5'             => ['input' => 3.00,  'output' => 15.00],
+        'claude-opus-5'               => ['input' => 5.00,  'output' => 25.00],
         'claude-opus-4-8'             => ['input' => 5.00,  'output' => 25.00],
         'claude-opus-4-7'             => ['input' => 5.00,  'output' => 25.00],
         'claude-opus-4-6'             => ['input' => 5.00,  'output' => 25.00],

@@ -24,8 +24,10 @@ class ClaudeModelResolver
     const FAMILIES = [
         // Claude 5 generation (SDK 1.1.5): `fable` is its own family above
         // the Opus tier; the CLI's `sonnet` alias now resolves to Sonnet 5.
+        // SDK 1.1.10 moved the `opus` alias onto Opus 5 — a drop-in upgrade
+        // over Opus 4.8 at the same $5/$25.
         'fable'  => 'claude-fable-5',
-        'opus'   => 'claude-opus-4-8',
+        'opus'   => 'claude-opus-5',
         'sonnet' => 'claude-sonnet-5',
         'haiku'  => 'claude-haiku-4-5-20251001',
     ];
@@ -45,10 +47,13 @@ class ClaudeModelResolver
         ['slug' => 'claude-fable-5',         'display_name' => 'Fable 5 — 1M context', 'family' => 'fable'],
         ['slug' => 'claude-sonnet-5',        'display_name' => 'Sonnet 5 — 1M context','family' => 'sonnet'],
 
-        // Opus generations, newest first. 4.8 is the Opus flagship — native
-        // 1M context, interleaved thinking, fast mode, effort control, and
-        // dynamic workflow / agent-orchestration support (SDK 1.0.8).
+        // Opus generations, newest first. Opus 5 (SDK 1.1.10) is the current
+        // flagship — natively 1M context / 128K output, adaptive thinking ON
+        // by default, the full low…max effort dial, fast mode, and a
+        // 512-token prompt-cache minimum (down from 1024) — at the same
+        // $5/$25 as Opus 4.8. Native 1M, so no `[1m]` beta variant.
         // Opus 4.6 was retired by Anthropic and is removed from the picker.
+        ['slug' => 'claude-opus-5',          'display_name' => 'Opus 5 — 1M context',  'family' => 'opus'],
         ['slug' => 'claude-opus-4-8',        'display_name' => 'Opus 4.8',             'family' => 'opus'],
         ['slug' => 'claude-opus-4-8[1m]',    'display_name' => 'Opus 4.8 — 1M context','family' => 'opus', 'extended_context' => '1m'],
         ['slug' => 'claude-opus-4-7',        'display_name' => 'Opus 4.7',             'family' => 'opus'],

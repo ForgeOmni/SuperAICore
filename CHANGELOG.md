@@ -4,6 +4,21 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
+## [1.1.11] — 2026-07-25
+
+**Claude Opus 5 — the new Anthropic flagship, routable everywhere, and the Anthropic API backend finally speaks the Claude 5 request surface.** SDK pin moves `^1.1.7` → `^1.1.10`. Upgrading is `composer update forgeomni/superaicore` — no migrations. Re-publish the config if you want the new pricing row and the new expert-tier default.
+
+- **`opus` now means Opus 5.** Anthropic's current flagship is a drop-in upgrade over Opus 4.8 at the **same $5 in / $25 out** per 1M — 1M context, 128K max output, thinking on by default, the full `low…max` effort dial, fast mode, and a 512-token prompt-cache minimum (down from 1024). Say `opus` (or `claude-opus-5`) anywhere you name a model and you get it: the Claude engine picker, `superaicore send`, alias routing, and the Anthropic API backend. **Opus 4.8 and 4.7 stay selectable by their exact ids** — pinning a specific model in config still runs that model, never a silent upgrade.
+- **The squad "expert" tier moves to Opus 5** in both tier maps (`squad.tier_map` and `cli_squad.tier_map`). Override with `AI_CORE_CLI_SQUAD_EXPERT_MODEL` (or the published config) if you want to stay on 4.8.
+- **The `anthropic_api` backend stops sending requests the Claude 5 models reject.** Previously it sent a bare `model` + `max_tokens` + `messages` body and had no way to ask for thinking or effort at all. Now, per model:
+  - `thinking` — pass `thinking: true` and the backend emits the shape the model actually accepts: `{type:"adaptive"}` on Opus 5 / Fable 5 / Sonnet 5 and Opus 4.6–4.8, a fixed `budget_tokens` on older Claude 4 models. An explicit budget on an adaptive-only model no longer produces a request that 400s — your intent to think is honored as adaptive. `thinking: false` **omits** the key rather than sending `{type:"disabled"}`, which Opus 5 rejects above `high` effort.
+  - `effort` (or `reasoning_effort`) — `low` / `medium` / `high` / `xhigh` / `max` become `output_config.effort`, and are emitted **only** for models that have the dial. A stray effort on Haiku is dropped instead of failing the call.
+  - `temperature` / `top_p` / `top_k` — forwarded only where they're still accepted; the Claude 5 generation and Opus 4.7/4.8 removed them, so they're dropped for those models rather than 400ing.
+  - `max_tokens` above a model's published ceiling is **clamped** (Opus 5: 128K) instead of erroring, and the clamp is logged.
+- **Cost tracking knows Opus 5** — a `claude-opus-5` row at $5/$25 lands in `model_pricing`. Even without re-publishing the config, runs price correctly: unknown models fall through to the SDK's catalog, which now carries it.
+- **Security: Guzzle floor raised to `^7.15.1`** (came in with the SDK). This clears four advisories — URI fragments leaked in redirect `Referer` headers, host-only cookie scope not preserved, unbounded response cookies, and `Proxy-Authorization` forwarded to origin servers. `composer update` picks it up; nothing in your code changes.
+- **Fixed: `superaicore --version`** reported `1.1.9` on the 1.1.10 release. It now reports `1.1.11`.
+
 ## [1.1.10] — 2026-07-19
 
 **The other four CLI engines get the same live re-audit.** 1.1.9 re-verified claude / codex / gemini / grok / antigravity against what's actually installed; this round does copilot 1.0.71, cursor-agent 2026.07.16, kiro-cli 2.13.0 and kimi 1.49.0 — and fixes everything that had silently drifted. No SDK bump, no migrations.

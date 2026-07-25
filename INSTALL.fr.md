@@ -1583,6 +1583,42 @@ requise. Quatre choses à savoir :
    `~/.kimi/skills/` (kimi-code : `~/.kimi-code/skills/`, inchangé). Le
    digest inerte est nettoyé automatiquement.
 
+**1.1.11 — Claude Opus 5 ; pas de migration ; le pin SDK passe de
+`^1.1.7` à `^1.1.10`.** Additif, hormis deux changements de défaut
+intentionnels. Quatre points à connaître :
+
+1. **`opus` résout désormais vers `claude-opus-5`.** Le fleuron actuel
+   d'Anthropic remplace Opus 4.8 au même tarif (5 $ en entrée / 25 $ en
+   sortie par million) : rien ne devient plus cher. Pour rester sur un
+   modèle précis, épinglez son id exact (`claude-opus-4-8`) — un id
+   épinglé n'est jamais remplacé par la dernière entrée de la famille.
+   Republiez la config pour récupérer la ligne de tarif `claude-opus-5` ;
+   sans republication, la facturation reste correcte via le catalogue du
+   SDK.
+
+2. **Le palier « expert » du squad passe à Opus 5** dans `squad.tier_map`
+   et `cli_squad.tier_map`. Définissez
+   `AI_CORE_CLI_SQUAD_EXPERT_MODEL=claude-opus-4-8` (ou modifiez votre
+   config publiée) pour conserver l'ancienne cible.
+
+3. **Nouvelles options `anthropic_api`, toutes optionnelles.** Vos appels
+   existants sont inchangés sur le fil, à un garde-fou près : un
+   `max_tokens` supérieur au plafond du modèle est désormais borné
+   (Opus 5 : 128K) au lieu de renvoyer un 400. Nouvelles clés acceptées
+   par `generate()` / `generateStream()` : `thinking` (`true` / `false`),
+   `thinking_budget_tokens` optionnel (honoré en mode adaptatif sur les
+   modèles qui refusent les budgets) et `effort` / `reasoning_effort`
+   (`low|medium|high|xhigh|max` → `output_config.effort`, émis uniquement
+   pour les modèles dotés de la molette). `temperature` / `top_p` /
+   `top_k` ne sont transmis que sur les modèles qui les acceptent encore
+   et supprimés sur les autres (génération Claude 5, Opus 4.7/4.8).
+
+4. **Guzzle est mis à jour au passage** — le SDK a relevé son plancher à
+   `^7.15.1`, donc `composer update` vous fait passer de 7.10.0 à 7.15.1
+   et solde quatre avis de sécurité. Si votre application épingle Guzzle
+   sous 7.15.1, la mise à jour échouera : relâchez d'abord cette
+   contrainte.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

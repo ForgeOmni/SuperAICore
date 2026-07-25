@@ -48,6 +48,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 38. [Kimi Code 0.27 — la sonde de disposition et les surfaces de support par génération (1.1.8)](#38-kimi-code-027--la-sonde-de-disposition-et-les-surfaces-de-support-par-génération-118)
 39. [Antigravity CLI — le successeur de gemini-cli comme moteur de dispatch (1.1.9)](#39-antigravity-cli--le-successeur-de-gemini-cli-comme-moteur-de-dispatch-119)
 40. [Audit de dérive seconde vague — copilot, cursor, kiro, kimi (1.1.10)](#40-audit-de-dérive-seconde-vague--copilot-cursor-kiro-kimi-1110)
+41. [Claude Opus 5 — le nouveau fleuron et la surface de requête par modèle (1.1.11 / SDK 1.1.10)](#41-claude-opus-5--le-nouveau-fleuron-et-la-surface-de-requête-par-modèle-1111--sdk-1110)
 
 ---
 
@@ -4171,6 +4172,111 @@ Une migration unique `pruneKimiDigest()` supprime le digest inerte après
 confirmation de propriété via le manifest.
 
 ---
+
+## 41. Claude Opus 5 — le nouveau fleuron et la surface de requête par modèle (1.1.11 / SDK 1.1.10)
+
+Le SDK 1.1.10 introduit **Claude Opus 5** (`claude-opus-5`) comme modèle
+`anthropic` de première classe et en fait son défaut zéro-config. C'est un
+remplacement transparent d'Opus 4.8 **au même tarif** (5 $ en entrée /
+25 $ en sortie par million) : contexte 1M, 128K de sortie max, réflexion
+adaptative active par défaut, molette d'effort complète `low…max`, mode
+rapide, minimum de cache de prompt à 512 tokens (contre 1024). SuperAICore
+1.1.11 bascule la famille `opus` dessus, ajoute la ligne de tarif et —
+c'est le vrai changement côté hôte — apprend à `AnthropicApiBackend` la
+surface de requête qu'exige la génération Claude 5.
+
+### Sélectionner le modèle
+
+```php
+$result = $dispatcher->dispatch([
+    'backend' => 'anthropic_api',
+    'prompt'  => 'Audite cette migration à la recherche de conditions de course.',
+    'model'   => 'opus',            // → claude-opus-5
+    'effort'  => 'high',            // → output_config.effort
+    'thinking'=> true,              // → thinking: {type: "adaptive"}
+]);
+```
+
+`ClaudeModelResolver::FAMILIES['opus']` vaut désormais `claude-opus-5` :
+`opus` y résout dans le sélecteur du moteur Claude, le routage par alias,
+`superaicore send` et le backend API. Fable 5 reste sa propre famille
+au-dessus du palier Opus (10 $/50 $) ; `sonnet` reste sur Sonnet 5.
+
+**Un id épinglé n'est jamais remplacé.** `resolve('claude-opus-4-8')`
+renvoie `claude-opus-4-8`, et `claude-opus-4-8[1m]` conserve son tag beta.
+C'est le pendant côté hôte du bug corrigé en 1.1.10 dans le SDK, où une
+correspondance floue de famille réécrivait *tout* id Opus explicite vers la
+dernière entrée de la famille : une config épinglée sur `claude-opus-4-8`
+exécutait en réalité `claude-opus-4-20250514`.
+`ClaudeModelResolverTest::test_pinned_model_ids_are_never_upgraded` verrouille
+le comportement ici.
+
+### La surface de requête par modèle dans `AnthropicApiBackend`
+
+`generate()` et `generateStream()` construisaient chacun à la main un corps
+`model` + `max_tokens` + `messages` (+ `system`), sans **aucun** moyen
+d'exprimer la réflexion ou l'effort. Les deux partagent maintenant un
+`buildBody()` privé qui applique quatre règles :
+
+| Règle | Modèles adaptive-only (Opus 5, Fable 5, Sonnet 5, Opus 4.6–4.8) | Claude 4 antérieurs |
+|---|---|---|
+| `thinking: true` | `{"type":"adaptive"}` | `{"type":"enabled","budget_tokens":N}` |
+| `thinking_budget_tokens` | rerouté en adaptatif (jamais envoyé) | honoré tel quel |
+| `thinking: false` | clé entièrement omise | clé entièrement omise |
+| `effort` / `reasoning_effort` | `output_config.effort` | supprimé (pas de molette) |
+| `temperature` / `top_p` / `top_k` | supprimés sur Claude 5 + Opus 4.7/4.8 | transmis |
+| `max_tokens` au-delà du plafond | borné à `capabilities.max_output` | borné si connu |
+
+Trois points méritent un commentaire :
+
+- **La réflexion est déléguée au SDK**, pas réimplémentée.
+  `SuperAgent\Thinking\ThinkingConfig::adaptive()->toApiParameter($model)`
+  porte la décision adaptatif-vs-budget : l'hôte hérite donc de tout futur
+  modèle classé par le SDK sans nouvelle version ici.
+- **« Off » omet la clé au lieu d'envoyer `{"type":"disabled"}`.** Opus 5
+  n'accepte `disabled` qu'à un effort ≤ `high` ; omettre la clé rend le
+  couple `thinking: false` + `effort: max` impossible à rater.
+- **Le filtrage de l'effort lit d'abord le catalogue.**
+  `ModelCatalog::capabilitiesFor($model)` fournit `effort_control` /
+  `reasoning_effort` : un `superagent models update` suffit donc à faire
+  connaître au backend un modèle fraîchement sorti, les familles d'id
+  codées en dur du SDK ne servant que de repli. Les niveaux sont
+  normalisés comme dans le SDK (`minimal`→`low`, `mid`→`medium`,
+  `highest`→`max`) ; un niveau inconnu ne produit rien plutôt qu'un 400,
+  puisqu'il n'existe pas d'« effort off » chez Anthropic.
+
+Les prédicats sur les paramètres d'échantillonnage et sur l'effort sont
+**dupliqués** (petits helpers de correspondance par famille d'id) plutôt
+qu'appelés, car `AnthropicProvider::modelSupportsEffort()` et
+`modelRejectsSamplingParams()` sont `protected static` dans le SDK. Le
+filtrage « catalogue d'abord » ci-dessus est ce qui empêche cette
+duplication de se périmer en pratique.
+
+### Attribution des coûts
+
+`model_pricing` gagne `claude-opus-5 => ['input' => 5.00, 'output' => 25.00]`.
+Les hôtes qui ne republient jamais la config facturent quand même
+correctement : `CostCalculator::resolveRate()` retombe sur
+`ModelCatalog::pricing()`, et le catalogue livré avec le SDK porte la ligne.
+
+### Paliers du squad
+
+Le palier expert passe à Opus 5 dans
+`config('super-ai-core.squad.tier_map')`,
+`config('super-ai-core.cli_squad.tier_map')` et
+`CliSquadOrchestrator::DEFAULT_TIER_MAP`. Restez sur 4.8 avec
+`AI_CORE_CLI_SQUAD_EXPERT_MODEL=claude-opus-4-8`. À noter : le palier
+**EXPERT** du Squad du SDK vise toujours `claude-fable-5` — c'est
+délibéré des deux côtés, Fable 5 se situant au-dessus du palier Opus.
+
+### Ce qui n'a délibérément pas changé
+
+`CursorModelResolver`, `CopilotModelResolver`, `KiroModelResolver` et
+`AntigravityModelResolver` conservent leurs catalogues. Ces listes sont
+attestées sur la table de modèles de chaque CLI éditeur (voir §40), et
+aucun n'expose encore de SKU Opus 5 — inventer
+`claude-opus-5-thinking-high` produirait un slug que cursor-agent rejette.
+Ils le reprendront quand l'amont le livrera.
 
 ## Voir aussi
 

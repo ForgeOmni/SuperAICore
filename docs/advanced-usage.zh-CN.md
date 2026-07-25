@@ -48,6 +48,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 38. [Kimi Code 0.27 —— 布局探测与按代际感知的支持面（1.1.8）](#38-kimi-code-027--布局探测与按代际感知的支持面118)
 39. [Antigravity CLI —— gemini-cli 继任者作为派单引擎（1.1.9）](#39-antigravity-cli--gemini-cli-继任者作为派单引擎119)
 40. [第二波 CLI 审计 —— copilot / cursor / kiro / kimi 真机对齐（1.1.10）](#40-第二波-cli-审计--copilot--cursor--kiro--kimi-真机对齐1110)
+41. [Claude Opus 5 —— 新旗舰与按模型裁剪的请求面（1.1.11 / SDK 1.1.10）](#41-claude-opus-5--新旗舰与按模型裁剪的请求面1111--sdk-1110)
 
 ---
 
@@ -3923,6 +3924,93 @@ m2.1、glm-5、qwen3-coder-next)。请求已下架家族(如 `opus`)时
 manifest 确认归属后删除无效摘要。派发契约(变体探测 `--help` 含
 `--print` ⇒ legacy、`AI_CORE_KIMI_CLI_VARIANT` 覆盖、
 `--output-format stream-json` 事件形状)复验零改动。
+
+## 41. Claude Opus 5 —— 新旗舰与按模型裁剪的请求面（1.1.11 / SDK 1.1.10）
+
+SDK 1.1.10 把 **Claude Opus 5**（`claude-opus-5`）作为一等 `anthropic` 模型引入，
+并让它成为 SDK 的零配置默认值。它是 Opus 4.8 的同价平替（同为 **$5 输入 / $25
+输出** 每百万 token）：1M 上下文、128K 最大输出、默认开启 adaptive 思考、完整的
+`low…max` effort 档位、fast 模式、提示缓存最小 512 token（原 1024）。SuperAICore
+1.1.11 把 `opus` 家族切到它、补上价格行，并且——本次真正的宿主侧改动——让
+`AnthropicApiBackend` 学会 Claude 5 世代所要求的按模型请求面。
+
+### 选择模型
+
+```php
+$result = $dispatcher->dispatch([
+    'backend' => 'anthropic_api',
+    'prompt'  => '审查这个迁移脚本里的竞态条件。',
+    'model'   => 'opus',            // → claude-opus-5
+    'effort'  => 'high',            // → output_config.effort
+    'thinking'=> true,              // → thinking: {type: "adaptive"}
+]);
+```
+
+`ClaudeModelResolver::FAMILIES['opus']` now 指向 `claude-opus-5`，因此 Claude 引擎
+选择器、别名路由、`superaicore send` 与 API 后端里的 `opus` 都会落到它上面。Fable 5
+仍是 Opus 档之上的独立家族（$10/$50）；`sonnet` 仍是 Sonnet 5。
+
+**钉死的 id 永不被升级。** `resolve('claude-opus-4-8')` 返回 `claude-opus-4-8`，
+`claude-opus-4-8[1m]` 保留 beta 标签。这对应 1.1.10 在 SDK 侧修掉的那个 bug：模糊的
+家族匹配会把*每一个*显式 Opus id 改写成家族最新条目，于是钉在 `claude-opus-4-8` 的
+配置实际跑的是 `claude-opus-4-20250514`。宿主侧由
+`ClaudeModelResolverTest::test_pinned_model_ids_are_never_upgraded` 钉住。
+
+### `AnthropicApiBackend` 的按模型请求面
+
+此前 `generate()` 与 `generateStream()` 各自手搓 `model` + `max_tokens` +
+`messages`（+ `system`）的 body，且**完全无法**表达思考或 effort。现在两者共用一个
+私有 `buildBody()`，应用四条规则：
+
+| 规则 | adaptive-only 模型（Opus 5 / Fable 5 / Sonnet 5 / Opus 4.6–4.8） | 更旧的 Claude 4 |
+|---|---|---|
+| `thinking: true` | `{"type":"adaptive"}` | `{"type":"enabled","budget_tokens":N}` |
+| `thinking_budget_tokens` | 改走 adaptive（绝不发送） | 原样使用 |
+| `thinking: false` | 完全省略该字段 | 完全省略该字段 |
+| `effort` / `reasoning_effort` | `output_config.effort` | 丢弃（无该档位） |
+| `temperature` / `top_p` / `top_k` | 在 Claude 5 与 Opus 4.7/4.8 上丢弃 | 转发 |
+| `max_tokens` 超上限 | 收敛到 `capabilities.max_output` | 已知上限时收敛 |
+
+其中三点值得说明：
+
+- **思考逻辑委托给 SDK**，而不是重写一遍。由
+  `SuperAgent\Thinking\ThinkingConfig::adaptive()->toApiParameter($model)` 决定
+  adaptive 还是 budget，因此 SDK 之后归类的新模型宿主侧无需再发版就能继承。
+- **“关闭”是省略字段，而不是发 `{"type":"disabled"}`。** Opus 5 只在 effort ≤
+  `high` 时接受 `disabled`；省略字段让 `thinking: false` + `effort: max` 这个组合
+  根本不可能出错。
+- **effort 判定优先读目录。** `ModelCatalog::capabilitiesFor($model)` 提供
+  `effort_control` / `reasoning_effort`，所以跑一次 `superagent models update` 就足以
+  让后端认识新上线的模型；SDK 里硬编码的 id 家族只是兜底。档位归一化方式与 SDK 一致
+  （`minimal`→`low`、`mid`→`medium`、`highest`→`max`）；未知档位返回空而不是 400，
+  因为 Anthropic 没有“关闭 effort”这一说。
+
+sampling 参数与 effort 的判定函数是**复制**过来的小型 id 家族匹配助手，而不是直接
+调用——因为 SDK 的 `AnthropicProvider::modelSupportsEffort()` /
+`modelRejectsSamplingParams()` 是 `protected static`。上面那条“目录优先”的判定，正是
+让这份复制在实践中不至于过期的原因。
+
+### 成本归集
+
+`model_pricing` 新增 `claude-opus-5 => ['input' => 5.00, 'output' => 25.00]`。
+从不重新发布配置的宿主同样能正确计价：`CostCalculator::resolveRate()` 会兜底到
+`ModelCatalog::pricing()`，而 SDK 自带的目录里已经有这一行。
+
+### Squad 档位
+
+expert 档在 `config('super-ai-core.squad.tier_map')`、
+`config('super-ai-core.cli_squad.tier_map')` 与
+`CliSquadOrchestrator::DEFAULT_TIER_MAP` 中均改为 Opus 5。用
+`AI_CORE_CLI_SQUAD_EXPERT_MODEL=claude-opus-4-8` 可留在 4.8。注意 SDK 自己的 Squad
+**EXPERT** 档仍指向 `claude-fable-5` —— 两边都是有意为之：Fable 5 位于 Opus 档之上。
+
+### 刻意未改动的部分
+
+`CursorModelResolver`、`CopilotModelResolver`、`KiroModelResolver` 与
+`AntigravityModelResolver` 的目录保持原样。这些列表是对各厂商 CLI 自己的模型表逐条
+核对出来的（见 §40），目前没有任何一家暴露 Opus 5 的 SKU —— 凭空造一个
+`claude-opus-5-thinking-high` 只会得到一个 cursor-agent 拒绝的 slug。等上游上线后
+它们自然会跟上。
 
 ## 另见
 
