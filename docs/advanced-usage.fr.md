@@ -4229,10 +4229,17 @@ d'exprimer la réflexion ou l'effort. Les deux partagent maintenant un
 
 Trois points méritent un commentaire :
 
-- **La réflexion est déléguée au SDK**, pas réimplémentée.
+- **La réflexion est déléguée au SDK lorsqu'il est installé.**
   `SuperAgent\Thinking\ThinkingConfig::adaptive()->toApiParameter($model)`
   porte la décision adaptatif-vs-budget : l'hôte hérite donc de tout futur
-  modèle classé par le SDK sans nouvelle version ici.
+  modèle classé par le SDK sans nouvelle version ici. Ce backend parle
+  cependant directement à `/v1/messages` en HTTP et doit donc fonctionner
+  aussi sur le chemin d'installation sans SDK :
+  `thinkingParameterWithoutSdk()` reproduit la même décision localement
+  (supprimer silencieusement un `thinking` demandé serait pire qu'un 400).
+  Ce miroir est vérifié identique à `ThinkingConfig` sur tous les ids
+  Claude livrés, et la classification du SDK l'emporte dès qu'il est
+  présent.
 - **« Off » omet la clé au lieu d'envoyer `{"type":"disabled"}`.** Opus 5
   n'accepte `disabled` qu'à un effort ≤ `high` ; omettre la clé rend le
   couple `thinking: false` + `effort: max` impossible à rater.

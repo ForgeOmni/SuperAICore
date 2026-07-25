@@ -143,8 +143,17 @@ final class AnthropicApiBackendTest extends TestCase
         $this->assertSame(0.7, $haiku['temperature']);
     }
 
+    /**
+     * The clamp reads the model's published ceiling from the SDK catalog —
+     * without the SDK there is no ceiling to read, and the request degrades
+     * to the API's own 400 (the pre-1.1.11 behaviour).
+     */
     public function test_max_tokens_is_clamped_to_the_model_output_ceiling(): void
     {
+        if (!class_exists(\SuperAgent\Providers\ModelCatalog::class)) {
+            $this->markTestSkipped('SuperAgent ModelCatalog not installed');
+        }
+
         // Opus 5 tops out at 128K output; asking for more would 400.
         $body = $this->capture(['model' => 'claude-opus-5', 'max_tokens' => 500000]);
 

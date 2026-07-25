@@ -304,22 +304,65 @@ class AnthropicApiBackend implements Backend, StreamableTextBackend
         if ($want === false || (is_string($want) && in_array(strtolower($want), ['off', 'disabled', 'false'], true))) {
             return null;
         }
-        if (!class_exists(\SuperAgent\Thinking\ThinkingConfig::class)) {
-            return null;
-        }
-        try {
-            $budget = isset($options['thinking_budget_tokens'])
-                ? (int) $options['thinking_budget_tokens']
-                : null;
-            $config = $budget !== null
-                ? \SuperAgent\Thinking\ThinkingConfig::enabled($budget)
-                : \SuperAgent\Thinking\ThinkingConfig::adaptive();
+        $budget = isset($options['thinking_budget_tokens'])
+            ? (int) $options['thinking_budget_tokens']
+            : null;
 
-            return $config->toApiParameter($model);
-        } catch (\Throwable $e) {
-            $this->log('warning', "AnthropicApiBackend: thinking config failed — {$e->getMessage()}");
+        if (class_exists(\SuperAgent\Thinking\ThinkingConfig::class)) {
+            try {
+                $config = $budget !== null
+                    ? \SuperAgent\Thinking\ThinkingConfig::enabled($budget)
+                    : \SuperAgent\Thinking\ThinkingConfig::adaptive();
+
+                return $config->toApiParameter($model);
+            } catch (\Throwable $e) {
+                $this->log('warning', "AnthropicApiBackend: thinking config failed — {$e->getMessage()}");
+                // fall through to the local mirror
+            }
+        }
+
+        return $this->thinkingParameterWithoutSdk($model, $budget);
+    }
+
+    /**
+     * Same decision as `ThinkingConfig::toApiParameter()`, computed locally.
+     *
+     * This backend talks straight to `/v1/messages` over HTTP and has no
+     * other reason to need the SDK, so a host running without
+     * `forgeomni/superagent` must still get a correctly-shaped request —
+     * silently dropping a requested `thinking` would be worse than a 400.
+     * Keep the id families in sync with `ThinkingConfig`; when the SDK *is*
+     * installed its own classification wins, so new models are inherited
+     * without touching this list.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function thinkingParameterWithoutSdk(string $model, ?int $budget): ?array
+    {
+        $canThink = $this->matchesAny($model, [
+            'claude-4', 'claude-opus-4', 'claude-sonnet-4', 'claude-haiku-4',
+            'claude-fable', 'fable-5',
+            'claude-opus-5', 'opus-5',
+            'claude-sonnet-5', 'sonnet-5',
+        ]);
+        if (!$canThink) {
             return null;
         }
+
+        $adaptive = $this->matchesAny($model, [
+            'opus-4-6', 'opus-4-7', 'opus-4-8', 'sonnet-4-6',
+            'claude-fable', 'fable-5',
+            'claude-opus-5', 'opus-5',
+            'claude-sonnet-5', 'sonnet-5',
+        ]);
+        if ($adaptive) {
+            // These 400 on an explicit budget — honour the intent to think
+            // by switching to adaptive rather than emitting a bad request.
+            return ['type' => 'adaptive'];
+        }
+
+        // ThinkingConfig's DEFAULT_BUDGET_TOKENS.
+        return ['type' => 'enabled', 'budget_tokens' => max(1, $budget ?? 10000)];
     }
 
     /**

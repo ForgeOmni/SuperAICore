@@ -4203,10 +4203,16 @@ applies four rules:
 
 Three of those deserve a note:
 
-- **Thinking is delegated to the SDK**, not reimplemented.
+- **Thinking is delegated to the SDK when it's installed.**
   `SuperAgent\Thinking\ThinkingConfig::adaptive()->toApiParameter($model)`
   owns the adaptive-vs-budget decision, so the host inherits every future
-  model the SDK classifies without a release here.
+  model the SDK classifies without a release here. This backend talks
+  straight to `/v1/messages` over HTTP, though, so it must also work on the
+  SDK-less install path: `thinkingParameterWithoutSdk()` mirrors the same
+  decision locally (silently dropping a requested `thinking` would be worse
+  than a 400). The mirror is verified identical to `ThinkingConfig` across
+  every shipped Claude id, and the SDK's classification wins whenever it's
+  present.
 - **"Off" omits the key rather than sending `{"type":"disabled"}`.** Opus 5
   accepts `disabled` only at effort ≤ `high`; omitting the key makes the
   `thinking: false` + `effort: max` pairing impossible to get wrong.

@@ -3973,9 +3973,13 @@ $result = $dispatcher->dispatch([
 
 其中三点值得说明：
 
-- **思考逻辑委托给 SDK**，而不是重写一遍。由
+- **装了 SDK 时，思考逻辑委托给 SDK。** 由
   `SuperAgent\Thinking\ThinkingConfig::adaptive()->toApiParameter($model)` 决定
-  adaptive 还是 budget，因此 SDK 之后归类的新模型宿主侧无需再发版就能继承。
+  adaptive 还是 budget，因此 SDK 之后归类的新模型宿主侧无需再发版就能继承。但这个
+  后端是直连 `/v1/messages` 的纯 HTTP 实现，必须同时支持无 SDK 的安装路径：
+  `thinkingParameterWithoutSdk()` 在本地镜像同一套判定（把用户要的 `thinking`
+  静默丢掉，比返回 400 更糟）。该镜像已对所有已发布的 Claude id 验证与
+  `ThinkingConfig` 逐字一致；只要 SDK 在，就以 SDK 的归类为准。
 - **“关闭”是省略字段，而不是发 `{"type":"disabled"}`。** Opus 5 只在 effort ≤
   `high` 时接受 `disabled`；省略字段让 `thinking: false` + `effort: max` 这个组合
   根本不可能出错。

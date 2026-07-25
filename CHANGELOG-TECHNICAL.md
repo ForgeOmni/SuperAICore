@@ -47,7 +47,17 @@ keys; two default moves (below) are intentional.
     `AnthropicProvider::modelRejectsSamplingParams()`, which is `protected
     static` and therefore not reusable from the host.
   - `max_tokens` clamped to `capabilities.max_output` when the catalog
-    publishes it (Opus 5: 131072), logged at `info`.
+    publishes it (Opus 5: 131072), logged at `info`. Catalog-only: on the
+    SDK-less install path there is no ceiling to read and the request
+    degrades to the API's own 400 (pre-1.1.11 behaviour).
+- **`thinkingParameterWithoutSdk()`** — the SDK-less mirror of
+  `ThinkingConfig::toApiParameter()`. `AnthropicApiBackend` speaks straight
+  HTTP to `/v1/messages` and is exercised by the CI job that installs
+  without `forgeomni/superagent`; returning null there would have silently
+  dropped a requested `thinking` from the body. Verified identical to
+  `ThinkingConfig` across every shipped Claude id × budget combination; the
+  SDK's own classification takes precedence whenever the class is present,
+  so the id families here are a floor, not the source of truth.
 - **`tests/Unit/AnthropicApiBackendTest.php`** — 8 cases over a Guzzle
   `MockHandler` + history middleware, asserting the body actually put on the
   wire: adaptive-vs-budget thinking, budget suppression on Opus 5,
