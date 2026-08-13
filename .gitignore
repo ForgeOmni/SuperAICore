@@ -1,4 +1,6 @@
 /vendor/
+/tools/phpcpd/vendor/
+/tools/phpcpd/composer.lock
 /node_modules/
 /.idea/
 /.vscode/

@@ -27,8 +27,7 @@
     },
     "require-dev": {
         "orchestra/testbench": "^8.0|^9.0|^10.0",
-        "phpunit/phpunit": "^10.0|^11.0",
-        "systemsdk/phpcpd": "^7.0"
+        "phpunit/phpunit": "^10.0|^11.0"
     },
     "autoload": {
         "psr-4": {
@@ -56,7 +55,8 @@
     "minimum-stability": "dev",
     "prefer-stable": true,
     "scripts": {
-        "duplication": "phpcpd src --min-lines 100 --min-tokens 700",
-        "duplication:report": "phpcpd src --min-lines 10 --min-tokens 100 || true"
+        "duplication:install": "@composer install -d tools/phpcpd --no-interaction",
+        "duplication": "tools/phpcpd/vendor/bin/phpcpd src --min-lines 100 --min-tokens 700",
+        "duplication:report": "tools/phpcpd/vendor/bin/phpcpd src --min-lines 10 --min-tokens 100 || true"
     }
 }

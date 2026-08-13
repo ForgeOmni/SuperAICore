@@ -4,6 +4,18 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- phpcpd moved out of `require-dev` into an isolated composer project at
+  `tools/phpcpd/` (installed via `composer run duplication:install`): phpcpd 7
+  pins `phpunit/php-timer ^6.0` while phpunit ≥ 11.5 (required by testbench 10
+  / Laravel 12) needs `^7.0`, so having it in `require-dev` made the
+  PHP 8.2/8.3 · Laravel 12 CI jobs unresolvable. The `duplication` /
+  `duplication:report` scripts now call `tools/phpcpd/vendor/bin/phpcpd`;
+  `tests.yml`'s Duplication gate installs the tool first.
+
 ## [1.1.12] — 2026-08-13
 
 **Tracing dedup via conditional class_alias shims, phpcpd duplication gate in
