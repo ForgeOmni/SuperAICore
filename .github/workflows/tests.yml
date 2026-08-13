@@ -61,6 +61,11 @@ jobs:
             --no-interaction --no-update
           composer update --${{ matrix.dependency-version }} --prefer-dist --no-interaction
 
+      # Duplication gate (deepseek-harness-style): whole-file/large-block
+      # copy-paste fails the build.
+      - name: Duplication gate
+        run: composer run duplication
+
       - name: Run phpunit
         run: ./vendor/bin/phpunit --testdox
 

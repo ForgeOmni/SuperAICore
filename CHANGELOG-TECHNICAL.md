@@ -4,6 +4,51 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.12] — 2026-08-13
+
+**Tracing dedup via conditional class_alias shims, phpcpd duplication gate in
+CI, SmartFlow divergence documented.** No schema changes, no migrations, no
+config publish needed. SDK pin unchanged (`^1.1.10`).
+
+### Changed
+
+- `src/Tracing/{RingBuffer,TraceEvent,TraceWriter}.php` are conditional
+  shims: when `\SuperAgent\Tracing\*` exists (the normal case — the SDK is a
+  hard require) each file `class_alias`es the SDK class onto the historical
+  `SuperAICore\Tracing\*` name; when the SDK is absent (the
+  `phpunit-no-superagent` CI job / equivalent degraded hosts) it
+  `require_once`s a fallback copy from `src/Tracing/Fallback/`
+  (`autoload.exclude-from-classmap` keeps the fallbacks out of the optimized
+  classmap so two files never claim the same class). `TraceCollector` stays
+  host-owned — its `getInstance()` resolves `super-ai-core.tracing.*` config
+  / `AI_CORE_TRACE_*` envs and defaults `pid` to `superaicore`, which is
+  genuinely host-specific — but it now runs on the SDK's ring/event/writer
+  through the aliases. Verified: aliases resolve to the SDK class, fallbacks
+  work standalone, 816-test suite green.
+- `composer.json`: `systemsdk/phpcpd ^7.0` (dev); scripts `duplication`
+  (min-lines 100 / min-tokens 700 — whole-file/large-block clones fail CI;
+  currently green) and `duplication:report` (min-lines 10 / min-tokens 100,
+  informational). `tests.yml` runs the gate before phpunit in the matrix
+  job. `autoload.exclude-from-classmap: ["src/Tracing/Fallback/"]`.
+- `Console\Application` version string `1.1.11` → `1.1.12`.
+
+### Added
+
+- `src/SmartFlow/README.md` — records that SmartFlow here is an intentional
+  parallel port of the SDK module onto CLI backends (Backend vs LLMProvider,
+  `BackendAgentRunner` vs `FlowAgentRunner`, `~/.superaicore/flows` vs
+  `~/.superagent/flows`, `super-ai-core.smartflow.*` vs
+  `superagent.smartflow.*`, ledger `backend` vs `provider`), that
+  `SuperAgentFlowBridge` is the federation point, and that a future shared
+  core must be extracted upstream rather than aliased here. Notes the
+  `Arrow\ArrowSerializer` superset relationship
+  (`fromRowsViaCli` / `detectExternalCli` are host-only).
+
+### Removed
+
+- `_sim_no_sdk.php` (repo-root scratch script; the `phpunit-no-superagent`
+  CI job is the real coverage for the SDK-missing path).
+
 ## [1.1.11] — 2026-07-25
 
 **SDK pin `^1.1.7` → `^1.1.10`; Claude Opus 5 becomes the `opus` family

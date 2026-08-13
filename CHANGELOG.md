@@ -4,6 +4,16 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
+## [1.1.12] — 2026-08-13
+
+**Housekeeping release: the SDK becomes the single source of truth for the tracing classes, copy-paste gets a CI gate, and the SmartFlow overlap with the SDK is documented as intentional.** Inspired by [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)'s engineering discipline (clone detection in CI, no silent duplicate implementations). Upgrading is `composer update forgeomni/superaicore` — no migrations, no behavior changes.
+
+- **`SuperAICore\Tracing\{RingBuffer, TraceEvent, TraceWriter}` are now aliases of the SDK classes** instead of verbatim copies — one implementation to maintain, zero API change (`TraceCollector`, the trace dashboard, and the Chrome Trace wire format behave exactly as before). The degraded no-SDK path keeps working: classmap-excluded fallback copies load only when `forgeomni/superagent` is genuinely absent.
+- **New `composer run duplication` gate** (phpcpd, whole-file/large-block threshold) runs in CI before the tests — the failure mode where a module is copied wholesale and silently drifts can no longer land unnoticed. `composer run duplication:report` is the fine-grained local view.
+- **`src/SmartFlow/README.md`** documents why SmartFlow shares file names with the SDK's SmartFlow and must NOT be mechanically merged: it is a parallel port onto CLI backends (different runner, ledger dir, config keys, ledger row identity), with `SuperAgentFlowBridge` as the federation point. Same for `Arrow\ArrowSerializer` (host superset; the SDK carries the trimmed copy).
+- Removed the `_sim_no_sdk.php` scratch script from the repo root.
+- `superaicore --version` now reports `1.1.12`.
+
 ## [1.1.11] — 2026-07-25
 
 **Claude Opus 5 — the new Anthropic flagship, routable everywhere, and the Anthropic API backend finally speaks the Claude 5 request surface.** SDK pin moves `^1.1.7` → `^1.1.10`. Upgrading is `composer update forgeomni/superaicore` — no migrations. Re-publish the config if you want the new pricing row and the new expert-tier default.
