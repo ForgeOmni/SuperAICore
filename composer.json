@@ -20,9 +20,9 @@
         "illuminate/database": "^10.0|^11.0|^12.0",
         "illuminate/http": "^10.0|^11.0|^12.0",
         "illuminate/console": "^10.0|^11.0|^12.0",
-        "guzzlehttp/guzzle": "^7.0",
+        "guzzlehttp/guzzle": "^7.15.3",
         "symfony/process": "^6.0|^7.0",
-        "forgeomni/superagent": "^1.1.10",
+        "forgeomni/superagent": "^1.1.11",
         "symfony/console": "^6.0|^7.0"
     },
     "require-dev": {

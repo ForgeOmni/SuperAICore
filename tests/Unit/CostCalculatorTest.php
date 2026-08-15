@@ -107,6 +107,54 @@ class CostCalculatorTest extends TestCase
         $this->assertEqualsWithDelta(8.0, $calc->calculate('grok-4.5', 1_000_000, 1_000_000), 0.0001);
     }
 
+    public function test_grok_46_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.11 — grok-4.6 (new flagship) $2 in / $6 out per 1M,
+        // cached input $0.50; grok-4.5's cached tier dropped to $0.30.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(8.0, $calc->calculate('grok-4.6', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(0.50, $calc->calculate('grok-4.6', 0, 0, null, 1_000_000, 0), 0.0001);
+        $this->assertEqualsWithDelta(0.30, $calc->calculate('grok-4.5', 0, 0, null, 1_000_000, 0), 0.0001);
+    }
+
+    public function test_deepseek_v4_ga_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.11 — DeepSeek V4 GA off-peak base rates: Pro $0.66 in /
+        // $1.98 out (cache-hit $0.022); Flash $0.22 / $0.66 (cache-hit
+        // $0.007). Retired chat/reasoner aliases track their successors.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(2.64, $calc->calculate('deepseek-v4-pro', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(0.88, $calc->calculate('deepseek-v4-flash', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(0.88, $calc->calculate('deepseek-chat', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(2.64, $calc->calculate('deepseek-reasoner', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_qwen38_max_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.11 — qwen3.8-max (new qwen/qwen-anthropic default) $2 in /
+        // $6 out per 1M; qwen3.7-max keeps its $2.50/$7.50.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(8.0, $calc->calculate('qwen3.8-max', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(10.0, $calc->calculate('qwen3.7-max', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_gemini_37_flash_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.11 — gemini-3.7-flash at the intro rate $0.75 in / $3.75
+        // out per 1M (through 2026-12-31).
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(4.5, $calc->calculate('gemini-3.7-flash', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_glm_53_provisional_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.11 — glm-5.3 API pricing unpublished; provisionally bills
+        // at the 5.2 rate ($1.40 / $4.40) on both the base and [1m] routes.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(5.8, $calc->calculate('glm-5.3', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(5.8, $calc->calculate('glm-5.3[1m]', 1_000_000, 1_000_000), 0.0001);
+    }
+
     public function test_gemini_35_flash_pricing_from_seeded_config(): void
     {
         // SDK 1.1.6 catalog correction — gemini-3.5-flash $1.50 in / $9 out.

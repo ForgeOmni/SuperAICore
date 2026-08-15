@@ -330,6 +330,65 @@ final class SuperAgentBackendTest extends TestCase
         $this->assertArrayNotHasKey('thinking_level', $b->lastRunOptions);
     }
 
+    public function test_sdk_1111_session_id_is_forwarded_for_spill_and_shadow(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'session_id' => 'sess-top-level',
+        ]);
+
+        $this->assertSame('sess-top-level', $b->lastRunOptions['session_id']);
+    }
+
+    public function test_sdk_1111_session_id_falls_back_to_metadata(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'metadata' => ['session_id' => 'sess-from-metadata'],
+        ]);
+
+        $this->assertSame('sess-from-metadata', $b->lastRunOptions['session_id']);
+    }
+
+    public function test_sdk_1111_disable_spill_is_forwarded_only_when_truthy(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'disable_spill' => true,
+        ]);
+        $this->assertTrue($b->lastRunOptions['disable_spill']);
+
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+            'disable_spill' => false,
+        ]);
+        $this->assertArrayNotHasKey('disable_spill', $b->lastRunOptions);
+    }
+
+    public function test_sdk_1111_options_absent_when_not_given(): void
+    {
+        TestSuperAgentProvider::$nextResponse = $this->stubMessage(text: 'ok');
+        $b = new CapturingSuperAgentBackend();
+        $b->generate([
+            'prompt' => 'p',
+            'provider_config' => ['provider' => 'sa-test', 'api_key' => 'x'],
+        ]);
+
+        $this->assertArrayNotHasKey('session_id', $b->lastRunOptions);
+        $this->assertArrayNotHasKey('disable_spill', $b->lastRunOptions);
+    }
+
     public function test_classified_provider_exception_returns_null_with_classification(): void
     {
         TestSuperAgentProvider::$throw = new \SuperAgent\Exceptions\Provider\ContextWindowExceededException(

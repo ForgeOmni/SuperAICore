@@ -49,6 +49,7 @@ SuperAICore 中塞不进 README 的进阶用法。本指南专注于 **superagen
 39. [Antigravity CLI —— gemini-cli 继任者作为派单引擎（1.1.9）](#39-antigravity-cli--gemini-cli-继任者作为派单引擎119)
 40. [第二波 CLI 审计 —— copilot / cursor / kiro / kimi 真机对齐（1.1.10）](#40-第二波-cli-审计--copilot--cursor--kiro--kimi-真机对齐1110)
 41. [Claude Opus 5 —— 新旗舰与按模型裁剪的请求面（1.1.11 / SDK 1.1.10）](#41-claude-opus-5--新旗舰与按模型裁剪的请求面1111--sdk-1110)
+42. [Spill、无损压缩、OS 沙箱 —— deepseek-harness 波次（1.1.12 / SDK 1.1.11）](#42-spill无损压缩os-沙箱--deepseek-harness-波次1112--sdk-1111)
 
 ---
 
@@ -4015,6 +4016,81 @@ expert 档在 `config('super-ai-core.squad.tier_map')`、
 核对出来的（见 §40），目前没有任何一家暴露 Opus 5 的 SKU —— 凭空造一个
 `claude-opus-5-thinking-high` 只会得到一个 cursor-agent 拒绝的 slug。等上游上线后
 它们自然会跟上。
+
+## 42. Spill、无损压缩、OS 沙箱 —— deepseek-harness 波次（1.1.12 / SDK 1.1.11）
+
+SDK pin 从 `^1.1.10` 升到 `^1.1.11`。下面的一切都跑在 SDK 内部；宿主可见的
+表面只有两个透传选项和几个环境变量旋钮。
+
+### 会话键控 —— SuperAICore 透传什么
+
+SDK 1.1.11 用 `Agent` 选项 `session_id` 为两个新存储键控：
+
+- **Spill 存储**（`~/.superagent/spill`）—— 超过阈值（约 30K 字符）的工具
+  输出被持久化而非截断；模型收到头/尾预览 + 一个 `spill://` 定位符，可通过
+  `spill_read` 内建工具分块读回。fork 出的会话零拷贝继承父会话的定位符。
+- **压缩影子存储**（`~/.superagent/shadow`）—— 每个压缩器
+  （`ToolResultCompactor`、micro-compact、`MicroCompressor`、
+  `ConversationCompressor`）在截断/摘要前先记录被删内容；压缩标记携带
+  `session_query get id=…`，模型可以重读被摘要掉的细节。
+
+`SuperAgentBackend::buildPerCallOptions()` 从 dispatch 选项透传
+`session_id` —— 顶层 `session_id` 优先，回退到 `metadata.session_id`
+（dispatch 管道已经用于 cache-cold 检测和截图键控的同一个 id）。不传时两个
+存储都落进无键的默认桶，所以任何以后可能要找回 spill/影子内容的 dispatch
+都请带上会话 id：
+
+```php
+$dispatcher->dispatch([
+    'prompt'   => $prompt,
+    'backend'  => 'superagent',
+    'metadata' => ['session_id' => $sessionId],   // 这样就够了 —— 会被透传
+    // 'disable_spill' => true,                   // 单次调用退出
+]);
+```
+
+`disable_spill: true` 让单次调用回到普通截断（只在为真时转发，不传该项的
+调用方选项形状保持逐字节一致）。
+
+### 环境变量旋钮（全在 SDK 侧；SuperAICore 不做 config 镜像）
+
+| 环境变量 | 默认 | 含义 |
+| --- | --- | --- |
+| `SUPERAGENT_SPILL` | `true` | spill 缝开/关 |
+| `SUPERAGENT_SPILL_THRESHOLD` | `30000` | 多少字符起溢出 |
+| `SUPERAGENT_SHADOW` | `true` | 压缩影子存储开/关 |
+| `SUPERAGENT_SHADOW_MIN_BYTES` | `500` | 值得记影子的最小内容 |
+| `SUPERAGENT_SANDBOX` | `off` | `off` / `auto` / `require` |
+| `SUPERAGENT_SANDBOX_NETWORK` | `true` | 沙箱内是否允许联网 |
+
+`SUPERAGENT_SANDBOX=require` 是 fail-closed：没有 Seatbelt（macOS
+`sandbox-exec`）或 bubblewrap（Linux）后端时 bash 命令不会执行。`auto`
+为尽力而为。沙箱是对 SDK 静态 23 项 `BashSecurityValidator` 的补充，不是
+替代。
+
+### 目录刷新
+
+`grok` → **Grok 4.6**（同样 $2/$6、缓存 $0.50；effort 拨盘新增 `xhigh`
+—— `reasoning_effort` 原样透传，4.5 由 SDK 侧收敛）、**DeepSeek V4 Pro
+GA / Flash 0731**（真正的 `low` effort 档；错峰基准价 Pro
+$0.66/$1.98/$0.022、Flash $0.22/$0.66/$0.007，2026-08-16 生效 —— 高峰
+时段 01-04 + 06-10 UTC 计 2×，未建模）、`qwen` / `qwen-anthropic` →
+**Qwen3.8-Max**（多模态，$2/$6）、`gemini` → **Gemini 3.7 Flash**
+（首发价 $0.75/$3.75 至 2026-12-31 —— `model_pricing` 注释标了 2027 年
+的标准价）、**GLM-5.3** 按 id 可达（`glm-5.3` / `glm-5.3[1m]`），在
+Z.ai 公布独立 API 价格前暂按 5.2 费率。全部镜像进 `model_pricing` 并有
+CostCalculator 回归测试。
+
+### 刻意没动的部分
+
+SDK 删除了 20 个 `status: simulated` 占位工具（`powershell`、
+`web_browser`、`team_create`、假的 `mcp` 三件套等）。SuperAICore 从未
+引用过任何一个 —— 没有 picker、allow-list 或文档知道它们存在。CLI 通道
+的解析器（`GrokModelResolver`、`QwenCliBackend` 默认值等）也保持原样：
+它们对齐的是各家 CLI 自己的目录（grok CLI 仍然路由 `grok-4.5`），不是
+计量 API 目录。
+
+---
 
 ## 另见
 

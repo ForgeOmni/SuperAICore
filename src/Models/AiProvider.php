@@ -80,7 +80,8 @@ class AiProvider extends Model
     // base_url=https://api.deepseek.com/anthropic — both wire shapes are
     // first-class and supported by upstream.
     const TYPE_DEEPSEEK          = 'deepseek';
-    // DashScope's Anthropic-protocol endpoint (SDK 1.0.6+, qwen3.7-max default).
+    // DashScope's Anthropic-protocol endpoint (SDK 1.0.6+; qwen3.8-max
+    // default since SDK 1.1.11 — multimodal, 1M ctx, $2/$6 per 1M).
     // Routes through SDK's `QwenAnthropicProvider` — a subclass of
     // AnthropicProvider that speaks the same `/v1/messages` wire as Claude
     // but against Qwen's serverless. Drop-in substitute for Claude in
@@ -88,12 +89,13 @@ class AiProvider extends Model
     const TYPE_QWEN_ANTHROPIC    = 'qwen-anthropic';
     // xAI Grok first-class provider (SDK 1.0.8+). Routes through the SDK's
     // `GrokProvider` against xAI's OpenAI-compatible endpoint at
-    // https://api.x.ai/v1. Default model `grok-4.5` since SDK 1.1.6 (500K
-    // context; grok-4.3 and its 1M window stay reachable by id). API key
-    // is read from XAI_API_KEY (GROK_API_KEY accepted as a fallback).
-    // grok-4.5 carries an always-on three-level `reasoning_effort` dial
-    // (low|medium|high, gated SDK-side); grok-3-mini keeps the two-level
-    // mini mapping; grok-4.3/4/3 send no dial.
+    // https://api.x.ai/v1. Default model `grok-4.6` since SDK 1.1.11 (500K
+    // context; grok-4.5 and grok-4.3 with its 1M window stay reachable by
+    // id). API key is read from XAI_API_KEY (GROK_API_KEY accepted as a
+    // fallback). grok-4.6 carries an always-on FOUR-level `reasoning_effort`
+    // dial (low|medium|high|xhigh, gated SDK-side; 4.5 keeps three levels);
+    // grok-3-mini keeps the two-level mini mapping; grok-4.3/4/3 send no
+    // dial.
     const TYPE_GROK              = 'grok';
 
     const TYPES = [

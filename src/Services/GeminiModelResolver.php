@@ -16,9 +16,10 @@ class GeminiModelResolver
     /**
      * Family alias → current full model id. Bump when Google retires a slug.
      * These stay on the 2.5 line — the last generation gemini-cli verifiably
-     * routes — while CATALOG also surfaces the current API family (SDK 1.1.6
-     * corrected it: gemini-3.5-flash is the shipping flagship; 3.5-pro and
-     * 3.5-flash-lite never publicly shipped).
+     * routes — while CATALOG also surfaces the current API family
+     * (gemini-3.7-flash is the shipping flagship since SDK 1.1.11;
+     * 3.5-flash stays served; 3.5-pro and 3.5-flash-lite never publicly
+     * shipped).
      */
     const ALIASES = [
         'pro'        => 'gemini-2.5-pro',
@@ -28,6 +29,7 @@ class GeminiModelResolver
 
     /** Hand-maintained catalog. Keep in sync with config.model_pricing. */
     const CATALOG = [
+        ['slug' => 'gemini-3.7-flash',       'display_name' => 'Gemini 3.7 Flash'],
         ['slug' => 'gemini-3.5-flash',       'display_name' => 'Gemini 3.5 Flash'],
         ['slug' => 'gemini-3.1-pro-preview', 'display_name' => 'Gemini 3.1 Pro Preview'],
         ['slug' => 'gemini-3.1-flash-lite',  'display_name' => 'Gemini 3.1 Flash Lite'],

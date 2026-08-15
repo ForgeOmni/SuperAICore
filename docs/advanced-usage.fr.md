@@ -49,6 +49,7 @@ Les exemples visent 0.7.0+ sauf indication contraire. Les fonctionnalités arriv
 39. [Antigravity CLI — le successeur de gemini-cli comme moteur de dispatch (1.1.9)](#39-antigravity-cli--le-successeur-de-gemini-cli-comme-moteur-de-dispatch-119)
 40. [Audit de dérive seconde vague — copilot, cursor, kiro, kimi (1.1.10)](#40-audit-de-dérive-seconde-vague--copilot-cursor-kiro-kimi-1110)
 41. [Claude Opus 5 — le nouveau fleuron et la surface de requête par modèle (1.1.11 / SDK 1.1.10)](#41-claude-opus-5--le-nouveau-fleuron-et-la-surface-de-requête-par-modèle-1111--sdk-1110)
+42. [Spill, compaction sans perte, bac à sable OS — la vague deepseek-harness (1.1.12 / SDK 1.1.11)](#42-spill-compaction-sans-perte-bac-à-sable-os--la-vague-deepseek-harness-1112--sdk-1111)
 
 ---
 
@@ -4284,6 +4285,88 @@ attestées sur la table de modèles de chaque CLI éditeur (voir §40), et
 aucun n'expose encore de SKU Opus 5 — inventer
 `claude-opus-5-thinking-high` produirait un slug que cursor-agent rejette.
 Ils le reprendront quand l'amont le livrera.
+
+## 42. Spill, compaction sans perte, bac à sable OS — la vague deepseek-harness (1.1.12 / SDK 1.1.11)
+
+Le pin SDK passe de `^1.1.10` à `^1.1.11`. Tout ce qui suit tourne dans le
+SDK ; la surface visible côté hôte se limite à deux options transmises et à
+quelques boutons d'environnement.
+
+### Indexation par session — ce que SuperAICore transmet
+
+Le SDK 1.1.11 indexe deux nouveaux magasins sur l'option `session_id` de
+l'`Agent` :
+
+- **Magasin de débordement** (`~/.superagent/spill`) — la sortie d'outil
+  au-delà du seuil (~30K caractères) est persistée au lieu d'être
+  tronquée ; le modèle reçoit un aperçu tête/queue + un localisateur
+  `spill://` relisible par blocs via l'outil intégré `spill_read`. Les
+  sessions forkées héritent des localisateurs du parent sans copie.
+- **Magasin fantôme de compaction** (`~/.superagent/shadow`) — chaque
+  compacteur (`ToolResultCompactor`, micro-compact, `MicroCompressor`,
+  `ConversationCompressor`) enregistre ce qu'il supprime avant de tronquer
+  ou résumer ; les marqueurs de compaction portent
+  `session_query get id=…` pour relire le détail résumé.
+
+`SuperAgentBackend::buildPerCallOptions()` transmet `session_id` depuis
+les options du dispatch — le `session_id` de premier niveau d'abord, avec
+repli sur `metadata.session_id` (le même id que le pipeline de dispatch
+utilise déjà). Sans lui, les deux magasins tombent dans un seau par défaut
+non indexé — passez donc un id de session sur tout dispatch dont vous
+pourriez vouloir récupérer le contenu :
+
+```php
+$dispatcher->dispatch([
+    'prompt'   => $prompt,
+    'backend'  => 'superagent',
+    'metadata' => ['session_id' => $sessionId],   // suffit — transmis
+    // 'disable_spill' => true,                   // sortie ponctuelle
+]);
+```
+
+`disable_spill: true` restaure la troncature simple pour un seul appel
+(transmis seulement si vrai — la forme des options reste identique octet
+pour octet pour les appelants qui ne le passent pas).
+
+### Boutons d'environnement (tous côté SDK ; pas de miroir config)
+
+| Env | Défaut | Sens |
+| --- | --- | --- |
+| `SUPERAGENT_SPILL` | `true` | couture de débordement on/off |
+| `SUPERAGENT_SPILL_THRESHOLD` | `30000` | caractères avant débordement |
+| `SUPERAGENT_SHADOW` | `true` | magasin fantôme on/off |
+| `SUPERAGENT_SHADOW_MIN_BYTES` | `500` | contenu minimal à consigner |
+| `SUPERAGENT_SANDBOX` | `off` | `off` / `auto` / `require` |
+| `SUPERAGENT_SANDBOX_NETWORK` | `true` | réseau autorisé dans le bac |
+
+`SUPERAGENT_SANDBOX=require` est fail-closed : sans backend Seatbelt
+(macOS `sandbox-exec`) ni bubblewrap (Linux), la commande bash ne
+s'exécute pas. `auto` est au meilleur effort. Le bac à sable complète —
+sans remplacer — le `BashSecurityValidator` statique à 23 contrôles.
+
+### Rafraîchissement du catalogue
+
+`grok` → **Grok 4.6** (mêmes $2/$6, caché $0.50 ; le cadran d'effort
+gagne `xhigh` — `reasoning_effort` transite tel quel, 4.5 est borné côté
+SDK), **DeepSeek V4 Pro GA / Flash 0731** (véritable palier `low` ; base
+heures creuses Pro $0.66/$1.98/$0.022, Flash $0.22/$0.66/$0.007,
+effectif le 2026-08-16 — heures pleines 01-04 + 06-10 UTC à 2×, non
+modélisées), `qwen` / `qwen-anthropic` → **Qwen3.8-Max** (multimodal,
+$2/$6), `gemini` → **Gemini 3.7 Flash** (lancement $0.75/$3.75 jusqu'au
+2026-12-31), **GLM-5.3** par id (`glm-5.3` / `glm-5.3[1m]`) au tarif
+provisoire de la 5.2. Le tout reflété dans `model_pricing` avec tests de
+régression CostCalculator.
+
+### Ce qui n'a délibérément pas bougé
+
+Le SDK a supprimé ses 20 outils factices `status: simulated`
+(`powershell`, `web_browser`, `team_create`, le faux trio `mcp`, …).
+SuperAICore n'en référençait aucun. Les résolveurs du canal CLI
+(`GrokModelResolver`, défauts de `QwenCliBackend`, …) restent aussi en
+place : ils sont attestés contre les catalogues des CLI eux-mêmes (le CLI
+grok route toujours `grok-4.5`), pas contre le catalogue API au compteur.
+
+---
 
 ## Voir aussi
 

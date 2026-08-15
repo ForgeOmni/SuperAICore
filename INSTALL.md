@@ -1564,6 +1564,40 @@ things worth knowing:
    four advisories. If your app pins Guzzle below 7.15.1 the update will
    refuse; relax that constraint first.
 
+**1.1.12 — SDK deepseek-harness wave + five-flagship refresh; no
+migration; SDK pin moves `^1.1.10` → `^1.1.11`.** Additive apart from the
+SDK-side default-model moves. Four things worth knowing:
+
+1. **Spill + lossless compaction are on by default and need nothing from
+   you.** Oversized tool output now survives behind `spill://` locators
+   (read back via the SDK's `spill_read` tool) and compacted-away content
+   stays retrievable via `session_query`, both keyed to your dispatch's
+   `session_id` (SuperAICore forwards it, falling back to
+   `metadata.session_id`). Opt a single call out with
+   `disable_spill: true`; disable globally with `SUPERAGENT_SPILL=false`
+   / `SUPERAGENT_SHADOW=false`. Stores live under `~/.superagent/spill`
+   and `~/.superagent/shadow`.
+
+2. **Optional OS-level bash sandbox.** Set `SUPERAGENT_SANDBOX=auto`
+   (best-effort) or `require` (fail-closed — no Seatbelt/bubblewrap
+   backend means the command does not run) to confine the SDK's bash tool
+   at the kernel level. Default stays `off` — nothing changes unless you
+   opt in.
+
+3. **Default models moved upstream:** `grok` → Grok 4.6 (same price,
+   new `xhigh` effort tier), `qwen` → Qwen3.8-Max ($2/$6, cheaper than
+   3.7-Max), `gemini` → Gemini 3.7 Flash (intro $0.75/$3.75 through
+   2026-12-31). Pinned exact ids keep running exactly what you pinned.
+   DeepSeek V4 GA repricing takes effect 2026-08-16 (off-peak base;
+   peak hours 2× — not modelled, override upward if it matters to you).
+   Re-publish the config for the new pricing rows; without it, unknown
+   models still price via the SDK catalog.
+
+4. **Removed upstream:** 20 placeholder tools that only returned
+   `status: simulated` (`powershell`, `web_browser`, `team_create`, the
+   fake `mcp` trio, …). If your own prompts or allow-lists named them,
+   drop the references — SuperAICore itself never used any.
+
 ## Troubleshooting
 
 - **`Class 'SuperAgent\Agent' not found`** — you disabled `forgeomni/superagent` but left `AI_CORE_SUPERAGENT_ENABLED=true`. Set it to `false` or re-require the SDK.

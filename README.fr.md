@@ -39,6 +39,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague Antigravity CLI + audit des quatre CLI (1.1.9)](#vague-antigravity-cli--audit-des-quatre-cli-119)
   - [Vague audit des quatre autres CLI (1.1.10)](#vague-audit-des-quatre-autres-cli-1110)
   - [Vague Claude Opus 5 (1.1.11 / SDK 1.1.10)](#vague-claude-opus-5-1111--sdk-1110)
+  - [Vague deepseek-harness + cinq fleurons (1.1.12 / SDK 1.1.11)](#vague-deepseek-harness--cinq-fleurons-1112--sdk-1111)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -113,6 +114,41 @@ Trois services orthogonaux *(depuis 0.8.6)* qui transforment le catalogue de ski
 - **`SkillEvolver`** *(depuis 0.8.6)* — mode FIX uniquement. Lit les échecs récents + le SKILL.md actuel, construit un prompt LLM contraint (« plus petit patch possible », « ne pas inventer d'échecs que les preuves ne supportent pas », « ne pas restructurer les sections / renommer / changer le `name` du frontmatter / ajouter de nouveaux outils à `allowed-tools` sauf si les preuves l'exigent »), puis persiste un `SkillEvolutionCandidate` en statut `pending`. **Ne modifie jamais SKILL.md directement** — les humains review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. Le mode `--dispatch` (off par défaut — coûte des tokens) route le prompt via le Dispatcher avec `capability: 'reasoning'`, parse le bloc `\`\`\`diff`, et stocke à la fois `proposed_body` et `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` met en queue des candidats pour chaque skill qui dépasse le seuil ; dédupliqué contre les lignes pending existantes — sûr à lancer quotidiennement. Triggers : `manual` / `failure` / `metric_degradation`.
 - **Six commandes artisan** : `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. Toutes enregistrées via `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` fonctionne dans n'importe quel hôte qui monte le package.
 - **Deux nouvelles tables** : `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) et `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Les deux honorent `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` pour les créer.
+
+### Vague deepseek-harness + cinq fleurons (1.1.12 / SDK 1.1.11)
+
+Le pin SDK passe de `^1.1.10` à `^1.1.11`. SuperAgent 1.1.11 apporte quatre
+idées empruntées à deepseek-ai/deepseek-harness plus un rafraîchissement de
+cinq fleurons fournisseurs ; SuperAICore branche la plomberie de session et
+met à jour la grille tarifaire.
+
+- **Couture de débordement (spill)** — la sortie d'outil au-delà d'environ
+  30K caractères est persistée dans un stockage privé de session au lieu
+  d'être tronquée ; le modèle reçoit un aperçu tête/queue + un localisateur
+  `spill://` relisible par blocs via le nouvel outil `spill_read`.
+  **Compaction sans perte** — chaque compacteur du SDK enregistre ce qu'il
+  supprime dans un magasin fantôme, récupérable via le nouvel outil
+  `session_query`. Les deux sont indexés par session : `SuperAgentBackend`
+  transmet désormais `session_id` (repli sur `metadata.session_id`) dans les
+  options de l'Agent, et honore un `disable_spill: true` par appel. Réglage
+  via `SUPERAGENT_SPILL*` / `SUPERAGENT_SHADOW*`.
+- **Bac à sable bash au niveau OS** — Seatbelt macOS / bubblewrap Linux
+  derrière `SUPERAGENT_SANDBOX=off|auto|require` (défaut `off`, `require`
+  est fail-closed). S'applique partout où tourne l'outil bash du SDK ; aucun
+  câblage côté hôte.
+- **Rafraîchissement du catalogue** — `grok` → **Grok 4.6** ($2/$6, cadran
+  d'effort à quatre niveaux dont `xhigh` ; le palier caché de 4.5 tombe à
+  $0.30), **DeepSeek V4 Pro GA / Flash 0731** (véritable palier `low` ;
+  base heures creuses Pro $0.66/$1.98, Flash $0.22/$0.66 — heures pleines
+  2×, non modélisées), `qwen` → **Qwen3.8-Max** (multimodal, $2/$6),
+  `gemini` → **Gemini 3.7 Flash** (tarif de lancement $0.75/$3.75 jusqu'au
+  2026-12-31), et **GLM-5.3** accessible par id au tarif provisoire de la
+  5.2. Le tout tarifé dans `model_pricing` et couvert par les tests
+  CostCalculator.
+- **Purge d'honnêteté en amont** — le SDK a supprimé 20 outils factices qui
+  renvoyaient `status: simulated` ; SuperAICore n'en référençait aucun.
+- **Sécurité :** plancher Guzzle `^7.15.3` (CVE-2026-69246 /
+  CVE-2026-69245).
 
 ### Vague Claude Opus 5 (1.1.11 / SDK 1.1.10)
 

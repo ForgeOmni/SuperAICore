@@ -1619,6 +1619,44 @@ intentionnels. Quatre points à connaître :
    sous 7.15.1, la mise à jour échouera : relâchez d'abord cette
    contrainte.
 
+**1.1.12 — vague deepseek-harness du SDK + rafraîchissement de cinq
+fleurons ; pas de migration ; le pin SDK passe de `^1.1.10` à `^1.1.11`.**
+Additif hormis les changements de modèles par défaut côté SDK. Quatre
+choses à savoir :
+
+1. **Spill et compaction sans perte sont actifs par défaut et ne demandent
+   rien.** La sortie d'outil surdimensionnée survit désormais derrière des
+   localisateurs `spill://` (relus via l'outil `spill_read` du SDK) et le
+   contenu compacté reste récupérable via `session_query`, tous deux
+   indexés par le `session_id` de votre dispatch (SuperAICore le transmet,
+   avec repli sur `metadata.session_id`). Sortie ponctuelle avec
+   `disable_spill: true` ; désactivation globale via
+   `SUPERAGENT_SPILL=false` / `SUPERAGENT_SHADOW=false`. Les magasins
+   vivent sous `~/.superagent/spill` et `~/.superagent/shadow`.
+
+2. **Bac à sable bash au niveau OS, optionnel.** Mettez
+   `SUPERAGENT_SANDBOX=auto` (meilleur effort) ou `require` (fail-closed —
+   sans backend Seatbelt/bubblewrap la commande ne s'exécute pas) pour
+   confiner l'outil bash du SDK au niveau noyau. Le défaut reste `off` —
+   rien ne change sans opt-in.
+
+3. **Modèles par défaut déplacés en amont :** `grok` → Grok 4.6 (même
+   prix, nouveau palier d'effort `xhigh`), `qwen` → Qwen3.8-Max ($2/$6,
+   moins cher que 3.7-Max), `gemini` → Gemini 3.7 Flash (tarif de
+   lancement $0.75/$3.75 jusqu'au 2026-12-31). Les ids exacts épinglés
+   continuent d'exécuter exactement ce que vous avez épinglé. La nouvelle
+   tarification DeepSeek V4 GA prend effet le 2026-08-16 (base heures
+   creuses ; heures pleines 2× — non modélisées, surchargez à la hausse si
+   c'est important pour vous). Republiez la config pour les nouvelles
+   lignes de prix ; sans cela, les modèles inconnus restent correctement
+   tarifés via le catalogue SDK.
+
+4. **Supprimés en amont :** 20 outils factices qui ne renvoyaient que
+   `status: simulated` (`powershell`, `web_browser`, `team_create`, le
+   faux trio `mcp`, …). Si vos propres prompts ou allow-lists les
+   nommaient, retirez ces références — SuperAICore lui-même n'en a jamais
+   utilisé aucun.
+
 ## Dépannage
 
 - **`Class 'SuperAgent\Agent' not found`** — vous avez retiré `forgeomni/superagent` mais laissé `AI_CORE_SUPERAGENT_ENABLED=true`. Mettez-le à `false` ou réinstallez le SDK.

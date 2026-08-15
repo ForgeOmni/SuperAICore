@@ -951,23 +951,25 @@ return [
         'gpt-4o'                      => ['input' => 2.50,  'output' => 10.00],
         'gpt-4o-mini'                 => ['input' => 0.15,  'output' => 0.60],
 
-        // ─── DeepSeek V4 (since SuperAgent 0.9.6; repriced 1.1.1) ───
+        // ─── DeepSeek V4 (since SuperAgent 0.9.6; GA repriced 1.1.11) ───
         // Both rows are 1M-context MoE models — V4-Pro 49B active / 1.6T
-        // total, V4-Flash 13B active / 284B total. V4-Pro was repriced to
-        // the current official rate in SuperAgent 1.1.1 (down from the stale
-        // $0.55 / $2.20): $0.435 in (cache-miss) / $0.003625 in (cache-hit,
-        // carried as `cache_read_input`) / $0.87 out per 1M. The deprecated
-        // `deepseek-chat` and `deepseek-reasoner` aliases retire 2026-07-24;
-        // they route to the V4 successors here (chat → flash, reasoner →
-        // pro) so cost dashboards keep working past the hard cutover and the
-        // SDK's one-shot deprecation warning is the user's only nudge.
-        // V4-Flash output corrected $0.55 → $0.28 in SDK 1.1.6 (official
-        // sheet), with a $0.0028 cache-hit input tier; V4 GA mid-July brings
-        // peak-hour 2× pricing — these are the off-peak base rates.
-        'deepseek-v4-pro'             => ['input' => 0.435, 'output' => 0.87, 'cache_read_input' => 0.003625],
-        'deepseek-v4-flash'           => ['input' => 0.14,  'output' => 0.28, 'cache_read_input' => 0.0028],
-        'deepseek-chat'               => ['input' => 0.14,  'output' => 0.28, 'cache_read_input' => 0.0028],
-        'deepseek-reasoner'           => ['input' => 0.435, 'output' => 0.87, 'cache_read_input' => 0.003625],
+        // total, V4-Flash 13B active / 284B total. V4-Pro went GA on
+        // 2026-08-13 (model version DeepSeek-V4-Pro-0813, same id) and
+        // V4-Flash was re-post-trained as the 0731 public beta; both gained
+        // a genuine `low` reasoning-effort tier (SDK 1.1.11 maps low→low,
+        // medium/high→high, xhigh/max→max). GA moves pricing to DeepSeek's
+        // peak/off-peak model effective 2026-08-16 16:00 UTC — these are
+        // the off-peak base rates (cache-miss in / cache-hit in as
+        // `cache_read_input` / out per 1M); peak hours (01-04 + 06-10 UTC)
+        // bill 2× and are NOT modelled here — override upward for
+        // peak-heavy traffic. The deprecated `deepseek-chat` and
+        // `deepseek-reasoner` aliases retired 2026-07-24; they route to the
+        // V4 successors here (chat → flash, reasoner → pro) so cost
+        // dashboards keep working past the hard cutover.
+        'deepseek-v4-pro'             => ['input' => 0.66,  'output' => 1.98, 'cache_read_input' => 0.022],
+        'deepseek-v4-flash'           => ['input' => 0.22,  'output' => 0.66, 'cache_read_input' => 0.007],
+        'deepseek-chat'               => ['input' => 0.22,  'output' => 0.66, 'cache_read_input' => 0.007],
+        'deepseek-reasoner'           => ['input' => 0.66,  'output' => 1.98, 'cache_read_input' => 0.022],
 
         // ─── MiniMax (native, since SuperAgent 1.1.1) ───
         // MiniMax shipped M3 on 2026-06-01 — an MSA-architecture flagship:
@@ -987,7 +989,15 @@ return [
         'MiniMax-M2.5'                => ['input' => 0.30,  'output' => 1.20],
         'MiniMax-M2'                  => ['input' => 0.30,  'output' => 1.20],
 
-        // ─── Z.ai GLM (native, GLM-5.2 since SuperAgent 1.1.2) ───
+        // ─── Z.ai GLM (native, GLM-5.2 since SuperAgent 1.1.2; 5.3 rows 1.1.11) ───
+        // GLM-5.3 (released 2026-08-14) is the coding + cyber-defense
+        // post-train of the 5.2 base — thinking is mandatory (the SDK maps
+        // effort `off` → `low`) with a widened low|high|max dial (server
+        // default max), 1M-context route via `glm-5.3[1m]`. Its standalone
+        // API is in staged rollout with per-token pricing UNPUBLISHED, so
+        // glm-5.2 remains the SDK's provider default and the 5.3 row below
+        // PROVISIONALLY bills at the 5.2 rate (mirrors the SDK's
+        // CostCalculator) — correct it when Z.ai publishes real numbers.
         // GLM-5.2 is Z.ai's coding-first agentic flagship — 1M context, 128K
         // max output, text-only, with a new `reasoning_effort` dial on top of
         // the binary thinking toggle (drive both via the SDK's generic
@@ -999,6 +1009,8 @@ return [
         // its earlier $1.00 / $3.20 rate. The SDK's ModelCatalog carries these
         // rows too, so unlisted GLM SKUs still resolve — these explicit entries
         // keep cost dashboards accurate offline without a catalog round-trip.
+        'glm-5.3'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26], // provisional — 5.2 rate
+        'glm-5.3[1m]'                 => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26], // provisional — 5.2 rate
         'glm-5.2'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
         'glm-5.1'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
         'glm-5'                       => ['input' => 1.00,  'output' => 3.20],
@@ -1008,13 +1020,21 @@ return [
         'glm-5v-turbo'                => ['input' => 1.20,  'output' => 4.00],
 
         // ─── Google Gemini ───
-        // Catalog corrected to reality in SDK 1.1.6: `gemini-3.5-pro` and
-        // `gemini-3.5-flash-lite` never publicly shipped and carry no rows;
-        // `gemini-3.5-flash` is the actual flagship at the official $1.50 /
-        // $9 (cache-read $0.15). `gemini-3.1-pro-preview` ($2 / $12 ≤200K
-        // tier; $4 / $18 above — the higher tier is NOT modelled here) owns
-        // the `gemini-pro` alias; the retired `gemini-3-pro-preview` keeps
-        // its historical $2 / $15 for old usage rows.
+        // gemini-3.7-flash (GA 2026-08-13, SDK 1.1.11) is Google's
+        // coding/agent flagship, the recommended migration target from
+        // 3.5 Flash / 3 Flash / 3.1 Pro, and the SDK's zero-config `gemini`
+        // default — 1M ctx / 64K output, `thinking_level` low|medium|high
+        // (no `minimal` tier; temperature/top_p/top_k/thinking_budget
+        // deprecated on this tier). Priced at the INTRO rate $0.75 in /
+        // $0.075 cached / $3.75 out per 1M through 2026-12-31 — standard
+        // pricing ($1.50 / $7.50) applies from 2027-01-01; bump this row
+        // then. `gemini-3.5-flash` stays served as previous flagship at
+        // $1.50 / $9 (cache-read $0.15). `gemini-3.1-pro-preview` ($2 /
+        // $12 ≤200K tier; $4 / $18 above — the higher tier is NOT modelled
+        // here) owns the `gemini-pro` alias; the retired
+        // `gemini-3-pro-preview` keeps its historical $2 / $15 for old
+        // usage rows.
+        'gemini-3.7-flash'            => ['input' => 0.75,  'output' => 3.75, 'cache_read_input' => 0.075],
         'gemini-3.5-flash'            => ['input' => 1.50,  'output' => 9.00, 'cache_read_input' => 0.15],
         'gemini-3.1-pro-preview'      => ['input' => 2.00,  'output' => 12.00],
         'gemini-3.1-flash-lite'       => ['input' => 0.25,  'output' => 1.50],
@@ -1024,14 +1044,18 @@ return [
         'gemini-2.5-flash-lite'       => ['input' => 0.10,  'output' => 0.40],
 
         // ─── Alibaba Qwen (DashScope) ───
-        // qwen3.7-max (2026-05-21): 1M context, native Anthropic API
-        // protocol, $2.50/$7.50 per 1M. Verified against DashScope's
-        // public pricing sheet 2026-05-22.
+        // qwen3.8-max (GA 2026-08-03, SDK 1.1.11) is Alibaba's multimodal
+        // reasoning flagship — 2.4T-param MoE (~95B active), 1M ctx / 131K
+        // max output, text+vision input, tool calling + structured outputs
+        // — and the SDK's `qwen` / `qwen-anthropic` default, at $2 / $6
+        // per 1M (down from 3.7-Max's $2.50/$7.50). qwen3.7-max stays
+        // reachable by id as the previous text-only flagship.
         // Earlier Qwen3 entries kept so cost dashboards still bucket
         // calls against legacy aliases correctly.
         // qwen3.7-plus corrected to the GA tiered price in SDK 1.1.6:
         // $0.40/$1.60 per 1M ≤256K input (multimodal image+video; the
         // >256K tier is not modelled here).
+        'qwen3.8-max'                 => ['input' => 2.00,  'output' => 6.00],
         'qwen3.7-max'                 => ['input' => 2.50,  'output' => 7.50],
         'qwen3.7-plus'                => ['input' => 0.40,  'output' => 1.60],
         'qwen3.6-max-preview'         => ['input' => 0.78,  'output' => 3.90],
@@ -1064,17 +1088,22 @@ return [
         'kimi-k2.7-code'              => ['input' => 0.95,  'output' => 4.00, 'cache_read_input' => 0.19],
         'kimi-k2.7-code-highspeed'    => ['input' => 1.90,  'output' => 8.00, 'cache_read_input' => 0.38],
 
-        // ─── xAI Grok (SDK 1.0.8; grok-4.5 since 1.1.6) ───
-        // grok-4.5 (released 2026-07-08) is the flagship and the SDK's
-        // zero-config `grok` default — $2 in / $0.50 cached / $6 out per 1M
-        // (2× beyond 200K prompt, not modelled here), 500K context, an
-        // always-on three-level reasoning dial, and `x-grok-conv-id` cache
-        // pinning. grok-4.3 (1M context) stays reachable by id. grok-4-fast
-        // is the cheap 2M-context tier; grok-code-fast-1 targets agentic
-        // coding. The SDK's ModelCatalog carries the same rows, so unlisted
-        // Grok SKUs still resolve — these explicit entries keep cost
-        // dashboards accurate without a catalog round-trip.
-        'grok-4.5'                    => ['input' => 2.00,  'output' => 6.00, 'cache_read_input' => 0.50],
+        // ─── xAI Grok (SDK 1.0.8; grok-4.6 since 1.1.11) ───
+        // grok-4.6 (released 2026-08-12) is xAI's frontier flagship for
+        // long-running agents / coding / visual work and the SDK's
+        // zero-config `grok` default — same $2 in / $0.50 cached / $6 out
+        // per 1M as 4.5 (whole request 2× once prompt ≥200K, not modelled
+        // here), 500K context, text+image in, an always-on FOUR-level
+        // reasoning dial (low|medium|high|xhigh), and `x-grok-conv-id`
+        // cache pinning. grok-4.5 stays active as previous flagship; its
+        // cached-input price dropped to $0.30 per docs.x.ai (SDK 1.1.11).
+        // grok-4.3 (1M context) stays reachable by id. grok-4-fast is the
+        // cheap 2M-context tier; grok-code-fast-1 targets agentic coding.
+        // The SDK's ModelCatalog carries the same rows, so unlisted Grok
+        // SKUs still resolve — these explicit entries keep cost dashboards
+        // accurate without a catalog round-trip.
+        'grok-4.6'                    => ['input' => 2.00,  'output' => 6.00, 'cache_read_input' => 0.50],
+        'grok-4.5'                    => ['input' => 2.00,  'output' => 6.00, 'cache_read_input' => 0.30],
         'grok-4.3'                    => ['input' => 1.25,  'output' => 2.50],
         'grok-4.20'                   => ['input' => 1.25,  'output' => 2.50],
         'grok-build-0.1'              => ['input' => 1.00,  'output' => 2.00],

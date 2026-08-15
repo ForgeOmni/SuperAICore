@@ -39,6 +39,7 @@
   - [Antigravity CLI + 四 CLI 审计波次（1.1.9）](#antigravity-cli--四-cli-审计波次119)
   - [第二波 CLI 审计波次（1.1.10）](#第二波-cli-审计波次1110)
   - [Claude Opus 5 波次（1.1.11 / SDK 1.1.10）](#claude-opus-5-波次1111--sdk-1110)
+  - [deepseek-harness + 五旗舰波次（1.1.12 / SDK 1.1.11）](#deepseek-harness--五旗舰波次1112--sdk-1111)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -113,6 +114,34 @@
 - **`SkillEvolver`**（0.8.6+）—— 只支持 FIX 模式。读最近若干失败 + 当前 SKILL.md，构造受约束的 LLM prompt（"产出最小可行 patch"、"不要凭证据之外的内容编造失败"、"不要重排 section / 改名 / 改 frontmatter `name` / 加新工具到 `allowed-tools`，除非证据明确要求"），把结果写成 `pending` 状态的 `SkillEvolutionCandidate`。**永不直接改 SKILL.md** —— 人类通过 `php artisan skill:candidates --id=N --show-prompt --show-diff` 审核。`--dispatch` 模式（默认关，烧 token）走 Dispatcher 用 `capability: 'reasoning'` 调 LLM，从响应里抽出 `\`\`\`diff` 块，把 `proposed_body` 和 `proposed_diff` 都写回 candidate。`--sweep --threshold=0.30 --min-applied=5` 把所有失败率超阈值的 skill 一次性入队；按 `pending` 行去重，每天跑也安全。触发类型:`manual` / `failure` / `metric_degradation`。
 - **六个 artisan 命令**:`skill:track-start` / `skill:track-stop` / `skill:stats` / `skill:rank` / `skill:evolve` / `skill:candidates`。全都通过 `SuperAICoreServiceProvider::boot()` 注册 —— 任何挂载本包的宿主都能 `php artisan skill:*` 直接用。
 - **两张新表**:`sac_skill_executions`（`skill_name` / `host_app` / `session_id` / `status` / `started_at` / `completed_at` / `duration_ms` / `transcript_path` / `error_summary` / `cwd` / `metadata` json）和 `sac_skill_evolution_candidates`（`skill_name` / `trigger_type` / `execution_id` / `status` / `rationale` / `proposed_diff` / `proposed_body` / `llm_prompt` / `context` json / `reviewed_at` / `reviewed_by`）。两张表都通过 `HasConfigurablePrefix` 尊重 `super-ai-core.table_prefix`。`php artisan migrate` 即可创建。
+
+### deepseek-harness + 五旗舰波次（1.1.12 / SDK 1.1.11）
+
+SDK pin 从 `^1.1.10` 升到 `^1.1.11`。SuperAgent 1.1.11 落地了四个借鉴自
+deepseek-ai/deepseek-harness 的想法，外加五个供应商旗舰的刷新；SuperAICore
+这边接通会话管道并刷新价目表。
+
+- **Spill 溢出缝** —— 超过约 30K 字符的工具输出不再被截断丢弃，而是持久化到
+  会话私有存储；模型收到头/尾预览 + 一个 `spill://` 定位符，可通过新的
+  `spill_read` 工具分块读回。**无损压缩** —— SDK 每个压缩器把删掉的内容记入
+  影子存储，可通过新的 `session_query` 工具找回。两者都按会话键控：
+  `SuperAgentBackend` 现在把 `session_id`（缺省回退到
+  `metadata.session_id`）透传进 Agent options，并支持单次调用的
+  `disable_spill: true` 退出。用 `SUPERAGENT_SPILL*` / `SUPERAGENT_SHADOW*`
+  环境变量调节。
+- **OS 级 bash 沙箱** —— macOS Seatbelt / Linux bubblewrap，由
+  `SUPERAGENT_SANDBOX=off|auto|require` 控制（默认 `off`，`require` 为
+  fail-closed）。SDK 的 bash 工具运行到哪它就管到哪；宿主无需接线。
+- **目录刷新** —— `grok` → **Grok 4.6**（$2/$6，四档 effort 拨盘含
+  `xhigh`；4.5 的缓存档降到 $0.30）、**DeepSeek V4 Pro GA / Flash 0731**
+  （真正的 `low` effort 档；错峰基准价 Pro $0.66/$1.98、Flash
+  $0.22/$0.66 —— 高峰时段 2×，未建模）、`qwen` → **Qwen3.8-Max**（多模态，
+  $2/$6）、`gemini` → **Gemini 3.7 Flash**（首发价 $0.75/$3.75，至
+  2026-12-31），以及按 id 可达的 **GLM-5.3**（暂按 5.2 费率计费）。全部
+  写入 `model_pricing` 并有 CostCalculator 测试覆盖。
+- **上游诚实性清理** —— SDK 删除了 20 个只会返回 `status: simulated` 的
+  占位工具；SuperAICore 从未引用过任何一个。
+- **安全**：Guzzle 下限升至 `^7.15.3`（CVE-2026-69246 / CVE-2026-69245）。
 
 ### Claude Opus 5 波次（1.1.11 / SDK 1.1.10）
 

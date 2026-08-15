@@ -39,6 +39,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [Antigravity CLI + four-CLI audit wave (1.1.9)](#antigravity-cli--four-cli-audit-wave-119)
   - [Copilot / Cursor / Kiro / Kimi audit wave (1.1.10)](#copilot--cursor--kiro--kimi-audit-wave-1110)
   - [Claude Opus 5 wave (1.1.11 / SDK 1.1.10)](#claude-opus-5-wave-1111--sdk-1110)
+  - [deepseek-harness + five-flagship wave (1.1.12 / SDK 1.1.11)](#deepseek-harness--five-flagship-wave-1112--sdk-1111)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -113,6 +114,34 @@ Three orthogonal services *(since 0.8.6)* that turn the static skill catalog int
 - **`SkillEvolver`** *(since 0.8.6)* — FIX-mode only. Reads recent failures + current SKILL.md, builds a constrained LLM prompt ("smallest possible patch", "do not invent failures the evidence does not support", "do not restructure sections / rename / change frontmatter `name` / add new tools to `allowed-tools` unless evidence demands it"), and persists a `SkillEvolutionCandidate` row in `pending` status. **Never modifies SKILL.md directly** — humans review via `php artisan skill:candidates --id=N --show-prompt --show-diff`. `--dispatch` mode (off by default — costs tokens) routes the prompt through the Dispatcher with `capability: 'reasoning'`, parses the `\`\`\`diff` block, and stores both `proposed_body` and `proposed_diff`. `--sweep --threshold=0.30 --min-applied=5` queues candidates for every skill that exceeds the threshold; de-duped against existing pending rows so it's safe to run daily. Triggers: `manual` / `failure` / `metric_degradation`.
 - **Six artisan commands**: `skill:track-start`, `skill:track-stop`, `skill:stats`, `skill:rank`, `skill:evolve`, `skill:candidates`. All registered through `SuperAICoreServiceProvider::boot()` — `php artisan skill:*` works in any host that mounts the package.
 - **Two new tables**: `sac_skill_executions` (skill_name, host_app, session_id, status, started_at, completed_at, duration_ms, transcript_path, error_summary, cwd, metadata json) and `sac_skill_evolution_candidates` (skill_name, trigger_type, execution_id, status, rationale, proposed_diff, proposed_body, llm_prompt, context json, reviewed_at, reviewed_by). Both honour `super-ai-core.table_prefix` via `HasConfigurablePrefix`. `php artisan migrate` to pick them up.
+
+### deepseek-harness + five-flagship wave (1.1.12 / SDK 1.1.11)
+
+SDK pin moves `^1.1.10` → `^1.1.11`. SuperAgent 1.1.11 lands four ideas
+borrowed from deepseek-ai/deepseek-harness plus a five-model provider
+refresh; SuperAICore forwards the session plumbing and reprices the catalog.
+
+- **Spill seam** — tool output above ~30K chars is persisted to
+  session-private storage instead of truncated; the model gets a head/tail
+  preview + a `spill://` locator it reads back via the new `spill_read`
+  tool. **Lossless compaction** — every SDK compactor shadows what it
+  removes, retrievable via the new `session_query` tool. Both are keyed by
+  session: `SuperAgentBackend` now forwards `session_id` (falling back to
+  `metadata.session_id`) into Agent options, and honors a per-call
+  `disable_spill: true`. Tune via `SUPERAGENT_SPILL*` / `SUPERAGENT_SHADOW*`.
+- **OS-level bash sandbox** — macOS Seatbelt / Linux bubblewrap behind
+  `SUPERAGENT_SANDBOX=off|auto|require` (default `off`, `require` is
+  fail-closed). Applies wherever the SDK's bash tool runs; no host wiring.
+- **Catalog refresh** — `grok` → **Grok 4.6** ($2/$6, four-level effort dial
+  incl. `xhigh`; 4.5's cached tier drops to $0.30), **DeepSeek V4 Pro GA /
+  Flash 0731** (genuine `low` effort tier; off-peak base Pro $0.66/$1.98,
+  Flash $0.22/$0.66 — peak hours 2×, not modelled), `qwen` → **Qwen3.8-Max**
+  (multimodal, $2/$6), `gemini` → **Gemini 3.7 Flash** (intro $0.75/$3.75
+  through 2026-12-31), and **GLM-5.3** reachable by id at the provisional
+  5.2 rate. All priced in `model_pricing` + covered by CostCalculator tests.
+- **Upstream honesty purge** — the SDK removed 20 placeholder tools that
+  returned `status: simulated`; SuperAICore referenced none of them.
+- **Security:** Guzzle floor `^7.15.3` (CVE-2026-69246 / CVE-2026-69245).
 
 ### Claude Opus 5 wave (1.1.11 / SDK 1.1.10)
 

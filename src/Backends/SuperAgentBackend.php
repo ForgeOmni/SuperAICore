@@ -162,6 +162,26 @@ use SuperAICore\Tracing\TraceCollector;
  *                                    only prepended to `load_tools` on
  *                                    the implicit path. Default OFF.
  *
+ * SDK 1.1.11 forwarded options (deepseek-harness wave):
+ *
+ *   - session_id: string             Keys the SDK's spill store (oversized
+ *                                    tool output persisted behind spill://
+ *                                    locators instead of truncated; the
+ *                                    model reads it back via `spill_read`)
+ *                                    and compaction shadow store (content
+ *                                    removed by compaction stays
+ *                                    retrievable via `session_query`) to
+ *                                    this dispatch's session. Falls back
+ *                                    to `metadata.session_id` when not set
+ *                                    top-level. Both stores are config-
+ *                                    driven on the SDK side
+ *                                    (`superagent.spill.*` /
+ *                                    `superagent.shadow.*`, `SUPERAGENT_SPILL*`
+ *                                    / `SUPERAGENT_SHADOW*` envs).
+ *   - disable_spill: bool            Per-call opt-out of the spill seam —
+ *                                    restores plain truncation for that
+ *                                    dispatch.
+ *
  * Envelope additions on success:
  *   - usage.cache_read_input_tokens, usage.cache_creation_input_tokens
  *   - cost_usd:   SDK's own turn-summed cost. Dispatcher prefers this
@@ -441,7 +461,10 @@ class SuperAgentBackend implements Backend
         // NVIDIA NIM, etc.). Silently ignored by providers that don't
         // implement `SupportsReasoningEffort` — that set grew in SDK 1.1.2 to
         // include GLM-5.2 (off → thinking disabled; low…high → reasoning_effort
-        // high; max → reasoning_effort max), alongside MiniMax M3.
+        // high; max → reasoning_effort max), alongside MiniMax M3. SDK 1.1.11
+        // widened the per-model mappings again: DeepSeek V4 GA gains a genuine
+        // `low` tier, GLM-5.3 maps off → low (its thinking can't be disabled),
+        // and Grok 4.6 accepts the new `xhigh` top tier (4.5 clamps it).
         $this->putLoweredString($perCall, $options, 'reasoning_effort');
 
         // Trace context — either a full W3C traceparent string or a TraceContext
@@ -507,6 +530,27 @@ class SuperAgentBackend implements Backend
             $perCall['prompt_cache_options'] = $options['prompt_cache_options'];
         }
         $this->putLoweredString($perCall, $options, 'thinking_level');
+
+        // SDK 1.1.11 — deepseek-harness wave. `session_id` keys the spill
+        // store (oversized tool output persisted behind spill:// locators,
+        // readable back via the `spill_read` builtin) AND the compaction
+        // shadow store (content removed by compaction stays retrievable via
+        // `session_query`) to this dispatch's session; without it the SDK
+        // falls back to an unkeyed default bucket, so forked sessions can't
+        // inherit locators and shadowed content isn't attributable. Falls
+        // back to `metadata.session_id` — the same id the rest of the
+        // dispatch pipeline (cache-cold detection, screenshot keying)
+        // already uses. `disable_spill` opts a single call out of spilling.
+        $this->putRawString($perCall, $options, 'session_id');
+        if (!isset($perCall['session_id'])) {
+            $sid = $options['metadata']['session_id'] ?? null;
+            if (is_string($sid) && $sid !== '') {
+                $perCall['session_id'] = $sid;
+            }
+        }
+        if (!empty($options['disable_spill'])) {
+            $perCall['disable_spill'] = true;
+        }
 
         return $perCall;
     }

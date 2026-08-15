@@ -6,24 +6,60 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Fixed
+## [1.1.12] — 2026-08-14
 
-- phpcpd moved out of `require-dev` into an isolated composer project at
-  `tools/phpcpd/` (installed via `composer run duplication:install`): phpcpd 7
-  pins `phpunit/php-timer ^6.0` while phpunit ≥ 11.5 (required by testbench 10
-  / Laravel 12) needs `^7.0`, so having it in `require-dev` made the
-  PHP 8.2/8.3 · Laravel 12 CI jobs unresolvable. The `duplication` /
-  `duplication:report` scripts now call `tools/phpcpd/vendor/bin/phpcpd`;
-  `tests.yml`'s Duplication gate installs the tool first.
-
-## [1.1.12] — 2026-08-13
-
-**Tracing dedup via conditional class_alias shims, phpcpd duplication gate in
-CI, SmartFlow divergence documented.** No schema changes, no migrations, no
-config publish needed. SDK pin unchanged (`^1.1.10`).
+**SDK pin `^1.1.10` → `^1.1.11` (deepseek-harness wave + five-model provider
+refresh), spill/shadow session keying forwarded from the dispatch pipeline,
+pricing rows for Grok 4.6 / DeepSeek V4 GA / Qwen3.8-Max / Gemini 3.7 Flash /
+GLM-5.3, Guzzle security floor `^7.15.3` — plus tracing dedup via conditional
+class_alias shims, the phpcpd duplication gate in CI, and the SmartFlow
+divergence documented.** No schema changes, no migrations; re-publish the
+config for the new `model_pricing` rows.
 
 ### Changed
 
+- `composer.json`: `forgeomni/superagent` `^1.1.10` → `^1.1.11`;
+  `guzzlehttp/guzzle` `^7.0` → `^7.15.3` (SDK 1.1.11 raised its own floor for
+  CVE-2026-69246 / CVE-2026-69245 — mirroring it makes the fix explicit for
+  hosts resolving against this package alone).
+- `SuperAgentBackend::buildPerCallOptions()` forwards two new SDK 1.1.11
+  options:
+  - `session_id` (top-level, falling back to `metadata.session_id` — the same
+    id the dispatch pipeline already uses for cache-cold detection and
+    screenshot keying). SDK `QueryEngine` keys both the spill store
+    (`SpillPolicy::fromConfig($sessionId)` — oversized tool output persisted
+    behind `spill://` locators, readable via the `spill_read` builtin) and the
+    compaction shadow store (`ToolResultCompactor::fromConfig($sessionId)` —
+    lossless compaction retrievable via `session_query`) off this option;
+    without it both fall back to an unkeyed default bucket.
+  - `disable_spill` (bool, forwarded only when truthy) — per-call opt-out of
+    the spill seam.
+  Class docblock documents both; four new `SuperAgentBackendTest` cases cover
+  forwarding, metadata fallback, truthy-only `disable_spill`, and
+  absent-when-not-given shape stability.
+- `config/super-ai-core.php` `model_pricing`:
+  - `grok-4.6` added ($2 / $6, cache-read $0.50); `grok-4.5` cache-read
+    corrected $0.50 → $0.30 (docs.x.ai, SDK 1.1.11).
+  - DeepSeek V4 GA repricing (off-peak base, effective 2026-08-16 16:00 UTC):
+    `deepseek-v4-pro` $0.435/$0.87/$0.003625 → **$0.66/$1.98/$0.022**,
+    `deepseek-v4-flash` $0.14/$0.28/$0.0028 → **$0.22/$0.66/$0.007**; the
+    retired `deepseek-chat` / `deepseek-reasoner` alias rows track their
+    successors. Peak-hour 2× is documented but not modelled.
+  - `qwen3.8-max` added ($2 / $6); `qwen3.7-max` keeps $2.50/$7.50.
+  - `gemini-3.7-flash` added at the intro rate ($0.75 / $3.75, cache-read
+    $0.075, through 2026-12-31 — the comment flags the 2027-01-01 move to
+    $1.50/$7.50).
+  - `glm-5.3` + `glm-5.3[1m]` added provisionally at the 5.2 rate
+    ($1.40/$4.40, cache-read $0.26), mirroring the SDK's CostCalculator
+    fallback until Z.ai publishes standalone-API pricing.
+  - Six new `CostCalculatorTest` cases pin all of the above.
+- `GeminiModelResolver::CATALOG` gains `gemini-3.7-flash` (the `ALIASES` table
+  intentionally stays on the 2.5 line gemini-cli verifiably routes).
+- Stale default-model doc comments refreshed for SDK 1.1.11:
+  `AiProvider` (`TYPE_QWEN_ANTHROPIC` → qwen3.8-max default; `TYPE_GROK` →
+  grok-4.6 default, four-level dial), `ProviderTypeRegistry` (same two),
+  `SuperAgentBackend` reasoning-effort note (DeepSeek `low` tier, GLM-5.3
+  `off`→`low` mapping, Grok 4.6 `xhigh`).
 - `src/Tracing/{RingBuffer,TraceEvent,TraceWriter}.php` are conditional
   shims: when `\SuperAgent\Tracing\*` exists (the normal case — the SDK is a
   hard require) each file `class_alias`es the SDK class onto the historical
@@ -60,6 +96,27 @@ config publish needed. SDK pin unchanged (`^1.1.10`).
 
 - `_sim_no_sdk.php` (repo-root scratch script; the `phpunit-no-superagent`
   CI job is the real coverage for the SDK-missing path).
+
+### Fixed
+
+- phpcpd moved out of `require-dev` into an isolated composer project at
+  `tools/phpcpd/` (installed via `composer run duplication:install`): phpcpd 7
+  pins `phpunit/php-timer ^6.0` while phpunit ≥ 11.5 (required by testbench 10
+  / Laravel 12) needs `^7.0`, so having it in `require-dev` made the
+  PHP 8.2/8.3 · Laravel 12 CI jobs unresolvable. The `duplication` /
+  `duplication:report` scripts now call `tools/phpcpd/vendor/bin/phpcpd`;
+  `tests.yml`'s Duplication gate installs the tool first.
+
+### Notes
+
+- SDK 1.1.11 removed 20 placeholder builtin tools (`overflow_test`,
+  `powershell`, `web_browser`, `team_create`, the fake `mcp` trio, …) that
+  returned `status: simulated`. Audited: SuperAICore's src / config /
+  resources / routes / database / docs reference none of them — no migration.
+- The SDK's new OS-level bash sandbox (`SUPERAGENT_SANDBOX=off|auto|require`,
+  Seatbelt/bubblewrap) and the spill/shadow stores are config/env-driven on
+  the SDK side; SuperAICore deliberately adds no config mirror beyond the
+  `session_id` / `disable_spill` passthrough.
 
 ## [1.1.11] — 2026-07-25
 

@@ -1496,6 +1496,35 @@ SDK pin 不变。** 无 schema、无新 config 键。升级时四件值得了解
    从 7.10.0 升到 7.15.1 并修掉四个安全公告。如果你的应用把 Guzzle 钉在 7.15.1
    以下，更新会失败 —— 先放宽该约束。
 
+**1.1.12 —— SDK deepseek-harness 波次 + 五旗舰刷新；无迁移；SDK pin 从
+`^1.1.10` 升到 `^1.1.11`。** 除 SDK 侧的默认模型变更外均为增量。四件值得
+知道的事：
+
+1. **Spill 与无损压缩默认开启，无需任何操作。** 超大工具输出现在存活在
+   `spill://` 定位符后面（通过 SDK 的 `spill_read` 工具读回），被压缩掉的
+   内容可通过 `session_query` 找回，二者都按你 dispatch 的 `session_id`
+   键控（SuperAICore 会透传它，缺省回退到 `metadata.session_id`）。单次
+   调用可用 `disable_spill: true` 退出；全局关闭用
+   `SUPERAGENT_SPILL=false` / `SUPERAGENT_SHADOW=false`。存储位于
+   `~/.superagent/spill` 和 `~/.superagent/shadow`。
+
+2. **可选的 OS 级 bash 沙箱。** 设 `SUPERAGENT_SANDBOX=auto`（尽力而为）
+   或 `require`（fail-closed —— 没有 Seatbelt/bubblewrap 后端时命令不会
+   执行）即可在内核级约束 SDK 的 bash 工具。默认仍是 `off` —— 不主动开启
+   就没有任何变化。
+
+3. **上游默认模型变更：** `grok` → Grok 4.6（同价，新增 `xhigh` effort
+   档）、`qwen` → Qwen3.8-Max（$2/$6，比 3.7-Max 便宜）、`gemini` →
+   Gemini 3.7 Flash（首发价 $0.75/$3.75，至 2026-12-31）。钉死确切 id 的
+   配置仍然只跑你钉的那个模型。DeepSeek V4 GA 新价 2026-08-16 生效（错峰
+   基准价；高峰时段 2× —— 未建模，在意就向上覆盖）。想要新价目行请重新
+   发布配置；不发布时未知模型仍会经 SDK 目录正确计价。
+
+4. **上游移除：** 20 个只会返回 `status: simulated` 的占位工具
+   （`powershell`、`web_browser`、`team_create`、假的 `mcp` 三件套等）。
+   如果你自己的 prompt 或 allow-list 提到它们，请删掉 —— SuperAICore
+   本身从未用过任何一个。
+
 ## 常见问题
 
 - **`Class 'SuperAgent\Agent' not found`** —— 你移除了 `forgeomni/superagent`，但仍保留 `AI_CORE_SUPERAGENT_ENABLED=true`。设为 `false` 或重新安装 SDK。
