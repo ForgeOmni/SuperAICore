@@ -4,6 +4,7 @@ namespace SuperAICore\Services;
 
 use SuperAICore\Contracts\Backend;
 use SuperAICore\Contracts\ProviderRepository;
+use SuperAICore\Contracts\QuotaPolicy;
 use SuperAICore\Contracts\RoutingRepository;
 use SuperAICore\Contracts\StreamingBackend;
 use SuperAICore\Support\BackendState;
@@ -32,6 +33,8 @@ class Dispatcher
         protected ?RoutingRepository $routing = null,
         protected ?LoggerInterface $logger = null,
         protected ?TraceCollector $tracer = null,
+        /** Optional spend gate; resolved from the container when not injected. @since 1.2.0 */
+        protected ?QuotaPolicy $quota = null,
     ) {}
 
     /**
@@ -87,8 +90,14 @@ class Dispatcher
      *   provider_id?: int,       forced provider (overrides routing)
      *   task_type?: string,      for routing lookup
      *   capability?: string,     for routing lookup
-     *   scope?: string,          global|user (default global)
-     *   scope_id?: int,          user_id when scope=user
+     *   scope?: string,          global|user|<host's own> (default global)
+     *   scope_id?: int,          the id that scope is keyed by
+     *   scopes?: array,          ordered fallback chain, e.g.
+     *                            [['business', 42], ['user', 7], ['global', null]].
+     *                            Takes precedence over scope/scope_id; the
+     *                            first scope with an active provider wins,
+     *                            and the one that answered is recorded on the
+     *                            usage row.
      *   user_id?: int,           for usage attribution
      *   stream?: bool,           when true and the resolved backend implements
      *                            StreamingBackend, calls stream() for live tee
@@ -146,6 +155,14 @@ class Dispatcher
                 args: ['backend' => $backend->name()],
             );
             return null;
+        }
+
+        // Quota gate (1.2.0) — the ledger is written after a call, so
+        // without this the first sign of a runaway loop or a tenant past its
+        // plan is the invoice. Unbound, this asks nobody.
+        $quotaRefusal = $this->checkQuota($options, $backend->name(), $tracer, $tid);
+        if ($quotaRefusal !== null) {
+            return $quotaRefusal;
         }
 
         $callOptions = $options;
@@ -394,8 +411,16 @@ class Dispatcher
             // (e.g. 'eval' for offline benchmarks).
             $usageSource = $this->resolveUsageSource($options);
 
+            // Which scope's credentials paid for this call. Without it a
+            // usage row can only be grouped by user_id, and a host billing a
+            // tenant has to infer the tenant from the user — which is wrong
+            // the moment one person works for two of them. (1.2.0)
+            [$usageScope, $usageScopeId] = self::resolvedScope($options);
+
             $usageLogId = $this->usage->record([
                 'backend' => $backend->name(),
+                'scope' => $usageScope,
+                'scope_id' => $usageScopeId,
                 'provider_id' => $providerId,
                 'service_id' => $serviceId,
                 'model' => $modelId,
@@ -623,9 +648,7 @@ class Dispatcher
 
         // 4. Active provider for scope
         if ($this->providers) {
-            $scope = $options['scope'] ?? 'global';
-            $scopeId = $options['scope_id'] ?? null;
-            $provider = $this->providers->findActive($scope, $scopeId);
+            $provider = $this->providers->resolveChain(self::scopeChain($options));
             if ($provider) {
                 $providerConfig = $this->applyAccountRoundRobin($provider);
                 return [
@@ -640,6 +663,138 @@ class Dispatcher
         // 5. Default backend from config + env credentials
         $defaultBackend = \SuperAICore\Support\ConfigValue::get('super-ai-core.default_backend', 'anthropic_api');
         return [$this->backends->get($defaultBackend), [], null, null];
+    }
+
+    /**
+     * Ask the host's QuotaPolicy, when it bound one.
+     *
+     * Returns the refusal to hand back to the caller, or null to proceed. A
+     * policy that throws is treated as "no opinion": a broken quota
+     * implementation should not take the dispatcher down with it, and the
+     * host still has the usage ledger to reconcile from.
+     *
+     * @param array<string,mixed> $options
+     *
+     * @since 1.2.0
+     */
+    protected function checkQuota(array $options, string $backendName, $tracer, $tid): ?array
+    {
+        $policy = $this->quotaPolicy();
+
+        if ($policy === null) {
+            return null;
+        }
+
+        [$scope, $scopeId] = self::resolvedScope($options);
+
+        try {
+            $decision = $policy->allows((string) ($scope ?? 'global'), $scopeId, [
+                'backend' => $backendName,
+                'model' => $options['model'] ?? null,
+                'task_type' => $options['task_type'] ?? null,
+                'capability' => $options['capability'] ?? null,
+                'user_id' => $options['user_id'] ?? null,
+                'estimated_cost_usd' => $options['estimated_cost_usd'] ?? null,
+            ]);
+        } catch (\Throwable $e) {
+            if ($this->logger) {
+                $this->logger->warning('Dispatcher: quota policy failed, allowing', ['error' => $e->getMessage()]);
+            }
+
+            return null;
+        }
+
+        if ($decision->allowed) {
+            return null;
+        }
+
+        if ($this->logger) {
+            $this->logger->info('Dispatcher: quota denied', [
+                'scope' => $scope,
+                'scope_id' => $scopeId,
+                'code' => $decision->code,
+            ]);
+        }
+
+        $tracer->emitInstant(
+            name: 'quota.denied',
+            category: 'quota',
+            tid: $tid,
+            args: ['scope' => $scope, 'scope_id' => $scopeId, 'code' => $decision->code],
+        );
+
+        return $decision->toArray();
+    }
+
+    /** @since 1.2.0 */
+    protected function quotaPolicy(): ?QuotaPolicy
+    {
+        if ($this->quota !== null) {
+            return $this->quota;
+        }
+
+        if (!function_exists('app')) {
+            return null;
+        }
+
+        try {
+            return app()->bound(QuotaPolicy::class) ? app(QuotaPolicy::class) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * The ordered scope chain for this dispatch.
+     *
+     * `scopes` wins when given; otherwise the historical single
+     * `scope`/`scope_id` pair, which resolves exactly as before.
+     *
+     * @param array<string,mixed> $options
+     * @return list<array{0:string,1:?int}>
+     *
+     * @since 1.2.0
+     */
+    public static function scopeChain(array $options): array
+    {
+        if (!empty($options['scopes']) && is_array($options['scopes'])) {
+            $chain = [];
+            foreach ($options['scopes'] as $entry) {
+                if (is_string($entry)) {
+                    $chain[] = [$entry, null];
+                    continue;
+                }
+                if (is_array($entry) && isset($entry[0])) {
+                    $chain[] = [(string) $entry[0], isset($entry[1]) ? (int) $entry[1] : null];
+                }
+            }
+            if ($chain) {
+                return $chain;
+            }
+        }
+
+        return [[(string) ($options['scope'] ?? 'global'), isset($options['scope_id']) ? (int) $options['scope_id'] : null]];
+    }
+
+    /**
+     * The scope a usage row is attributed to: the head of the chain, which is
+     * the most specific one the caller named.
+     *
+     * @param array<string,mixed> $options
+     * @return array{0:?string,1:?int}
+     *
+     * @since 1.2.0
+     */
+    public static function resolvedScope(array $options): array
+    {
+        $chain = self::scopeChain($options);
+        $head = $chain[0] ?? null;
+
+        if ($head === null || $head[0] === '' || $head[0] === 'global') {
+            return [$head[0] ?? null, null];
+        }
+
+        return [$head[0], $head[1]];
     }
 
     /**

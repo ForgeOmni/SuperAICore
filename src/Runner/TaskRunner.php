@@ -117,6 +117,23 @@ class TaskRunner
     /** @var array<string,int> */
     private static array $cooldownFailures = [];
 
+    /**
+     * Forget every provider cooldown.
+     *
+     * Cooldowns are learned from failures, and in a worker serving many
+     * tenants they are learned from *someone else's* failures — a provider
+     * that a tenant's own bad key took out of rotation stays out for the next
+     * tenant, whose key was fine. Called by
+     * {@see \SuperAICore\Support\RuntimeState::resetPerTenant()}.
+     *
+     * @since 1.2.0
+     */
+    public static function resetCooldowns(): void
+    {
+        self::$cooldowns = [];
+        self::$cooldownFailures = [];
+    }
+
     public function __construct(
         protected Dispatcher $dispatcher,
         protected ?Pipeline $pipeline = null,

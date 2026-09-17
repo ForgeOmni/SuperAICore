@@ -4,6 +4,18 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
+## [1.2.0] — 2026-09-17
+
+**This package can now run inside a multi-tenant product, not only on a developer's machine.** Five gaps a host serving many tenants kept hitting, plus one switch that turns off everything a web node should not do. Upgrading is `composer update forgeomni/superaicore` **and one migration** (`ai_usage_logs` gains two nullable columns). Nothing changes for an existing host that sets none of the new keys: the default profile is `workstation`, route groups follow it, no quota policy is bound, and the scope chain still resolves user → global.
+
+- **One key for the whole posture: `AI_CORE_PROFILE=embedded`.** No routes, no CLI process spawning, no PTY, no session sharing, no snapshot writes to a working copy — the dispatcher, the provider registry and the usage ledger, and nothing else. `workstation` is the default and behaves exactly as before, and every capability remains its own env var, so the profile only decides what happens when nobody said.
+- **Route groups, and a gate.** `route.enabled` was one flag over 81 routes whose default middleware is `['web', 'auth']` — in a product, *any signed-in account*, including people who should never see a provider registry or an OpenAI-compatible proxy that spends your credentials. Each section is now switchable (`route.groups`), and `route.gate` appends `can:<ability>` so your own policy authorises the package's UI.
+- **A scope chain you define.** `dispatch(['scopes' => [['business', 42], ['user', 7], ['global', null]]])` — first scope with an active provider wins. `resolveForUser()` is unchanged, and an empty chain resolves nothing rather than quietly falling back to the platform's key.
+- **Usage rows say whose credentials paid.** `ai_usage_logs.scope` / `.scope_id`, indexed with `created_at`, written from the head of the chain. Billing a tenant no longer means inferring it from `user_id` — wrong the moment one person works for two — or aggregating over the JSON column. `EloquentUsageRepository` implements the new `ScopedUsageRepository` (`summaryForScope()`, `allForScope()`, a `scope` filter on `recent()`); a separate interface on purpose, because widening `UsageRepository` would break every host that implements it.
+- **A spend gate.** The ledger is written after a call, so a runaway loop or a tenant past its plan first showed up on the invoice. Bind a `QuotaPolicy` and the dispatcher asks first; a denial returns `quota_denied` with your own message and code and never reaches the backend. A policy that throws counts as no opinion.
+- **`RuntimeState::resetPerTenant()`** for workers: clears provider cooldowns learned from one tenant's failures, the trace buffer and the MCP project root, and deliberately keeps what describes the machine. `inventory()` publishes both lists.
+- **Tested where hosts run.** CI adds PHP 8.4 / 8.5 and Laravel 13 (the Laravel 10 / 11 legs opt out of Composer's advisory block — both majors are past security support, so nothing is installable otherwise, and those containers ship nothing). SDK pin moves to `^1.2.0`.
+
 ## [1.1.16] — 2026-09-17
 
 **`/model auto` was picking a retired DeepSeek model, and so were a few config samples.** SDK pin `^1.1.15` → `^1.1.16`. Upgrading is `composer update forgeomni/superaicore` — no migrations, no config changes needed.

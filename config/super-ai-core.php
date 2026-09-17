@@ -1,10 +1,30 @@
 <?php
 
+use SuperAICore\Support\Profile;
+
 /**
  * AI Core package config.
  * Publish to host app with: php artisan vendor:publish --tag=super-ai-core-config
+ *
+ * Several defaults below are `Profile::allows(...)` rather than a literal.
+ * They are the keys whose right answer depends on where this package is
+ * running: a developer's machine, or a multi-tenant product. Setting the
+ * matching env var still wins in either profile — the profile only decides
+ * what happens when nobody said. See `AI_CORE_PROFILE` immediately below.
  */
 return [
+
+    // ─── Profile (1.2.0+) ───
+    // workstation — the historical default. A developer's machine: CLI
+    //               engines, the admin UI, PTY sessions, local snapshots.
+    // embedded    — this package inside someone else's product. No routes,
+    //               no process spawning, no PTY, no session sharing, no
+    //               writes to the working copy. The dispatcher, the provider
+    //               registry and the usage ledger, and nothing else.
+    //
+    // One key instead of twenty: every capability below reads it as its
+    // default, and any of them can still be set individually.
+    'profile' => env('AI_CORE_PROFILE', Profile::WORKSTATION),
 
     // ─── Host integration ───
     // Where the "back to host app" link in the package nav points to.
@@ -37,9 +57,32 @@ return [
     'route' => [
         // Whether to register package routes at all. Disable if host wants
         // to own all routing and use services directly.
-        'enabled' => env('AI_CORE_ROUTES_ENABLED', true),
+        'enabled' => env('AI_CORE_ROUTES_ENABLED', Profile::allows('routes')),
         'prefix' => env('AI_CORE_ROUTE_PREFIX', 'super-ai-core'),
         'middleware' => ['web', 'auth'],
+
+        // An ability name consulted in addition to the middleware above
+        // (1.2.0+). `['web', 'auth']` alone means *any* signed-in account —
+        // in a product that includes people who should never see a provider
+        // registry or a cost dashboard. Set this to a Gate ability and the
+        // host authorises the package's UI with its own policy:
+        //
+        //   'gate' => 'manage-ai-core',
+        'gate' => env('AI_CORE_ROUTE_GATE', null),
+
+        // Per-group switches (1.2.0+). null follows the profile, which is
+        // what the single `enabled` flag above used to decide for all 81
+        // routes at once. Set a group false to keep the rest and drop it —
+        // the OpenAI-compatible proxy and the PTY endpoints are the two most
+        // hosts want gone first.
+        //
+        // Groups: locale, agents, providers, services, integrations, usage,
+        // costs, processes, openai_proxy, routing_combos, sessions, revert,
+        // pty, share, usage_api, traces, resume.
+        'groups' => [
+            // 'openai_proxy' => false,
+            // 'pty' => false,
+        ],
     ],
 
     // ─── View registration ───
@@ -235,7 +278,7 @@ return [
     // shadow repo under `~/.superagent/history/` and trims commits older
     // than `retention_days`.
     'snapshot' => [
-        'enabled'        => (bool) env('AI_CORE_SNAPSHOT_ENABLED', true),
+        'enabled'        => (bool) env('AI_CORE_SNAPSHOT_ENABLED', Profile::allows('workspace_writes')),
         // When null, resolveProjectRoot() falls back to base_path() → getcwd().
         // Set this when running SuperAICore from a service that should
         // checkpoint a different worktree (e.g. a multi-tenant runner).
@@ -296,7 +339,7 @@ return [
     // an HTTP controller has clear failure modes — read the PtyService
     // docblock before opting in on a multi-tenant deployment.
     'pty' => [
-        'enabled' => (bool) env('AI_CORE_PTY_ENABLED', false),
+        'enabled' => (bool) env('AI_CORE_PTY_ENABLED', false && Profile::allows('interactive_tools')),
     ],
 
     // ─── Session share (P3-10) ───
@@ -304,7 +347,7 @@ return [
     // batches to that endpoint. Leave empty to disable sharing entirely
     // (the route returns 403). The `secret` is sent as a Bearer token.
     'share' => [
-        'enabled'    => (bool) env('AI_CORE_SHARE_ENABLED', false),
+        'enabled'    => (bool) env('AI_CORE_SHARE_ENABLED', false && Profile::allows('interactive_tools')),
         'remote_url' => env('AI_CORE_SHARE_REMOTE_URL', ''),
         'secret'     => env('AI_CORE_SHARE_SECRET', ''),
         // When `remote_url` is empty and `local_url_template` is set,
@@ -466,22 +509,22 @@ return [
     // Which backends are usable. Disable ones you don't need.
     'backends' => [
         'claude_cli' => [
-            'enabled' => env('AI_CORE_CLAUDE_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_CLAUDE_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary' => env('CLAUDE_CLI_BIN', 'claude'),
             'timeout' => 300,
         ],
         'codex_cli' => [
-            'enabled' => env('AI_CORE_CODEX_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_CODEX_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary' => env('CODEX_CLI_BIN', 'codex'),
             'timeout' => 300,
         ],
         'gemini_cli' => [
-            'enabled' => env('AI_CORE_GEMINI_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_GEMINI_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary' => env('GEMINI_CLI_BIN', 'gemini'),
             'timeout' => 300,
         ],
         'copilot_cli' => [
-            'enabled' => env('AI_CORE_COPILOT_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_COPILOT_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary' => env('COPILOT_CLI_BIN', 'copilot'),
             'timeout' => 300,
             // Copilot's default UX requires per-tool confirmation; CI / non-interactive
@@ -489,7 +532,7 @@ return [
             'allow_all_tools' => (bool) env('AI_CORE_COPILOT_ALLOW_ALL_TOOLS', true),
         ],
         'kiro_cli' => [
-            'enabled' => env('AI_CORE_KIRO_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_KIRO_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary' => env('KIRO_CLI_BIN', 'kiro-cli'),
             'timeout' => 300,
             // Kiro's --no-interactive mode refuses to run tools without prior
@@ -498,7 +541,7 @@ return [
             'trust_all_tools' => (bool) env('AI_CORE_KIRO_TRUST_ALL_TOOLS', true),
         ],
         'kimi_cli' => [
-            'enabled' => env('AI_CORE_KIMI_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_KIMI_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary' => env('KIMI_CLI_BIN', 'kimi'),
             'timeout' => 300,
             // CLI dialect. Moonshot's kimi-code (verified through v0.27.0;
@@ -537,7 +580,7 @@ return [
         'qwen_cli' => [
             // QwenLM/qwen-code v0.16.0 (2026-05-21). Fork of gemini-cli;
             // OAuth flow EOL'd 2026-04-15 — API key only.
-            'enabled' => env('AI_CORE_QWEN_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_QWEN_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary'  => env('QWEN_CLI_BIN', 'qwen'),
             'timeout' => 300,
         ],
@@ -546,7 +589,7 @@ return [
             // engine — owns its own login (~/.cursor). Default model
             // composer-2.5-fast. `force` auto-approves tools for headless
             // runs (without it cursor-agent blocks on per-tool confirmation).
-            'enabled' => env('AI_CORE_CURSOR_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_CURSOR_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary'  => env('CURSOR_CLI_BIN', 'cursor-agent'),
             'timeout' => 300,
             'force'   => (bool) env('AI_CORE_CURSOR_FORCE', true),
@@ -556,7 +599,7 @@ return [
             // login (~/.grok). Default model grok-build. `always_approve`
             // auto-approves tools for headless runs. Distinct from the
             // metered xAI API provider (superagent backend, `grok` type).
-            'enabled'        => env('AI_CORE_GROK_CLI_ENABLED', true),
+            'enabled'        => env('AI_CORE_GROK_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary'         => env('GROK_CLI_BIN', 'grok'),
             'timeout'        => 300,
             'always_approve' => (bool) env('AI_CORE_GROK_ALWAYS_APPROVE', true),
@@ -569,7 +612,7 @@ return [
             // gemini-cli's retired consumer tiers (individual OAuth dead
             // since 2026-06-18). Plain-text print mode; models span Gemini
             // 3.5/3.1, Claude 4.6 and GPT-OSS via AntigravityModelResolver.
-            'enabled' => env('AI_CORE_ANTIGRAVITY_CLI_ENABLED', true),
+            'enabled' => env('AI_CORE_ANTIGRAVITY_CLI_ENABLED', Profile::allows('cli_backends')),
             'binary'  => env('ANTIGRAVITY_CLI_BIN', 'agy'),
             'timeout' => 300,
         ],
@@ -852,7 +895,7 @@ return [
 
     // ─── Process monitor (admin only) ───
     'process_monitor' => [
-        'enabled' => env('AI_CORE_PROCESS_MONITOR', false),
+        'enabled' => env('AI_CORE_PROCESS_MONITOR', false && Profile::allows('interactive_tools')),
 
         // `external_label` prefixes claimed by host ProcessSources. The
         // built-in AiProcessSource skips emitting rows whose label starts

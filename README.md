@@ -42,6 +42,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [deepseek-harness + five-flagship wave (1.1.12 / SDK 1.1.11)](#deepseek-harness--five-flagship-wave-1112--sdk-1111)
   - [Frontier refresh + native Meta wave (1.1.15 / SDK 1.1.15)](#frontier-refresh--native-meta-wave-1115--sdk-1115)
   - [Retired-model sweep (1.1.16 / SDK 1.1.16)](#retired-model-sweep-1116--sdk-1116)
+  - [Multi-tenant host wave (1.2.0 / SDK 1.2.0)](#multi-tenant-host-wave-120--sdk-120)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -200,6 +201,88 @@ Both read `META_API_KEY` with `MODEL_API_KEY` — the name Meta's own docs use
 `ModelTierMap` promotes Fable 5.1 to EXPERT; the host default keeps Opus 5
 because it is a quarter of the price. Set `squad.tier_map.expert` to
 `claude-fable-5-1` for frontier-tier squads.
+
+### Multi-tenant host wave (1.2.0 / SDK 1.2.0)
+
+Five things a host serving many tenants needed and could not get, plus the
+posture switch that turns the rest off.
+
+**`AI_CORE_PROFILE=embedded`** — one key instead of twenty. Under it this
+package registers no routes, spawns no CLI process, opens no PTY, shares no
+session and writes no snapshots to a working copy: the dispatcher, the provider
+registry and the usage ledger, and nothing else. `workstation` is the default
+and unchanged, and every capability is still an individual env var, so the
+profile only decides what happens when nobody said.
+
+**Per-group route switches, and a gate.** `route.enabled` was one flag over 81
+routes, with `['web', 'auth']` as the default middleware — which in a product
+means *any signed-in account* can reach the provider registry, the cost
+dashboard, the process monitor and an OpenAI-compatible proxy that dispatches
+on your credentials. Each section is now its own switch:
+
+```php
+'route' => [
+    'gate' => 'manage-ai-core',           // + can:manage-ai-core on every group
+    'groups' => [
+        'openai_proxy' => false,
+        'pty' => false,
+    ],
+],
+```
+
+Unset groups follow the profile, which is what the single flag used to decide,
+so nothing changes for a host that sets none of them.
+
+**A scope chain you define.** Provider resolution was user → global. A host
+with tenants has a level in between, and its own order over it:
+
+```php
+$dispatcher->dispatch([
+    'prompt' => $prompt,
+    'scopes' => [['business', $businessId], ['user', $userId], ['global', null]],
+]);
+```
+
+The first scope with an active provider wins. An empty chain resolves nothing
+rather than falling back to the platform's key — a caller that named no scope
+is not asking to spend someone else's money.
+
+**Usage rows say whose credentials paid.** `ai_usage_logs` gains nullable
+`scope` / `scope_id` with a `(scope, scope_id, created_at)` index, written from
+the head of the chain. Before this, billing a tenant meant inferring the tenant
+from `user_id` — wrong the moment one person works for two of them — or
+aggregating over the JSON metadata column. `EloquentUsageRepository` implements
+the new `ScopedUsageRepository`: `summaryForScope()`, `allForScope()`, and a
+`scope` filter on `recent()`. A separate interface on purpose, because widening
+`UsageRepository` would break every host that implements it.
+
+**A spend gate.** The ledger is written *after* a call, so the first sign of a
+runaway loop or a tenant past its plan was the invoice. Bind a `QuotaPolicy`
+and the dispatcher asks before it spends:
+
+```php
+$this->app->bind(QuotaPolicy::class, MyPlanQuota::class);
+
+// allows(): QuotaDecision::deny('Daily cap reached.', 'daily_cap')
+```
+
+A denial returns `['quota_denied' => true, 'error' => …, 'error_code' => …]`
+and the backend is never called. A policy that throws is treated as no opinion
+— a broken quota service should not stop every call in the host. Unbound, the
+dispatcher asks nobody and behaves exactly as before.
+
+**`RuntimeState::resetPerTenant()`** — call it between jobs in a worker. It
+clears what accumulates about one tenant (provider cooldowns learned from their
+failures, the trace ring buffer, an MCP project root pointing at their
+workspace) and keeps what describes the machine (which CLIs are installed, what
+each supports). `inventory()` lists both sides so you can assert against it when
+this package adds a static.
+
+Also: CI now covers PHP 8.4 / 8.5 and Laravel 13, and the SDK pin moves to
+`^1.2.0` — the release with the embedded profile, tool policy, deferred tool
+results and tenant hygiene.
+
+*Since 1.2.0.*
 
 ### Retired-model sweep (1.1.16 / SDK 1.1.16)
 

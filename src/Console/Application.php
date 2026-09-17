@@ -48,7 +48,7 @@ class Application extends SymfonyApplication
 {
     public function __construct()
     {
-        parent::__construct('superaicore', '1.1.16');
+        parent::__construct('superaicore', '1.2.0');
 
         $this->add(new CallCommand());
         $this->add(new ListBackendsCommand());

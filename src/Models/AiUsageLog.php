@@ -39,7 +39,7 @@ class AiUsageLog extends Model
         'task_type', 'capability',
         'input_tokens', 'output_tokens',
         'cost_usd', 'shadow_cost_usd', 'billing_model',
-        'duration_ms', 'user_id', 'metadata',
+        'duration_ms', 'user_id', 'scope', 'scope_id', 'metadata',
         'idempotency_key',
         'pre_snapshot', 'post_snapshot', 'file_diff_summary',
     ];
@@ -52,6 +52,7 @@ class AiUsageLog extends Model
         'cost_usd' => 'decimal:6',
         'shadow_cost_usd' => 'decimal:6',
         'duration_ms' => 'integer',
+        'scope_id' => 'integer',
     ];
 
     public function provider()

@@ -4,6 +4,71 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-09-17
+
+**Multi-tenant host surface: scope chain, scoped usage, quota gate, route
+groups, profile, per-tenant reset. Plus PHP 8.4/8.5 and Laravel 13 in CI.**
+
+### Added
+
+- `SuperAICore\Support\Profile` — `workstation` (default, unchanged) and
+  `embedded`, read from `AI_CORE_PROFILE` or `super-ai-core.profile`. Five
+  capabilities: `cli_backends`, `routes`, `interactive_tools`,
+  `workspace_writes`, `experimental`. `config/super-ai-core.php` reads it as
+  the *default* of the matching `env()` call, so a host that sets the variable
+  still wins in either profile.
+- `SuperAICore\Support\RouteGroups` — 17 named groups over `routes/web.php`,
+  each with its own switch under `route.groups`; unset follows the profile.
+  `route.gate` appends `can:<ability>` to the package's middleware stack,
+  consulted through `RouteGroups::middleware()` in the service provider.
+- `ProviderResolver::resolveChain(array $scopes, ?string $backend = null)` —
+  ordered `[scope, scopeId]` pairs, first hit wins, empty chain resolves null.
+  `resolveForUser()` is now a two-element wrapper over it and keeps its exact
+  call sequence.
+- `Dispatcher` accepts `scopes` beside `scope` / `scope_id`; `scopeChain()` and
+  `resolvedScope()` are public statics so hosts and tests can see what a set of
+  options resolves to.
+- `ai_usage_logs.scope` / `.scope_id` (nullable) + index
+  `ai_usage_logs_scope_created_idx` on `(scope, scope_id, created_at)`. Written
+  by the dispatcher from the head of the chain. Migration
+  `2026_09_17_000001_add_scope_to_ai_usage_logs`.
+- `SuperAICore\Contracts\ScopedUsageRepository` (extends `UsageRepository`)
+  with `summaryForScope()` / `allForScope()`; `EloquentUsageRepository`
+  implements it and gains a `scope` / `scope_id` filter on `recent()`. Reads
+  degrade to unscoped when the migration has not run, rather than erroring on
+  an unknown column.
+- `SuperAICore\Contracts\QuotaPolicy` + `SuperAICore\Support\QuotaDecision`.
+  Consulted in `Dispatcher::dispatch()` after backend resolution and before the
+  call; resolved from the container when not injected. A denial returns
+  `QuotaDecision::toArray()` and emits a `quota.denied` trace instant; a policy
+  that throws is logged and treated as no opinion.
+- `SuperAICore\Support\RuntimeState::resetPerTenant()` / `inventory()`, and
+  `TaskRunner::resetCooldowns()` behind it. Clears cooldowns, the
+  `TraceCollector` instance and `McpManager`'s project-root override; keeps the
+  CLI capability caches, which describe the machine rather than a tenant.
+
+### Changed
+
+- Constraints widened: `illuminate/* ^13`, `orchestra/testbench ^11`,
+  `phpunit ^12`, `symfony/* ^8`. SDK pin `^1.1.16` → `^1.2.0`.
+- CI matrix adds PHP 8.4 / 8.5 and Laravel 13, excluding combinations the
+  frameworks do not support. Laravel 10 / 11 legs set
+  `policy.advisories.block false`: both majors are past security support, so
+  every released version carries an advisory and nothing is installable
+  otherwise.
+- `phpunit.xml` sets `failOnDeprecation` with `restrictDeprecations` scoped to
+  `src/`.
+- 10 no-op `Reflection*::setAccessible()` calls removed (deprecated in 8.5,
+  no-op since 8.1).
+
+### Notes
+
+- `RuntimeState::resetPerTenant()` is never called automatically; only the host
+  knows where one tenant's work ends.
+- PHPUnit 12 reports `phpunit.xml` as a deprecated schema because
+  `restrictDeprecations` is now `ignoreIndirectDeprecations`; 12 honours the old
+  name and 10 does not know the new one, and the 8.1 leg is pinned to 10.
+
 ## [1.1.16] — 2026-09-17
 
 **SDK pin `^1.1.15` → `^1.1.16` for the `AutoModelStrategy::FLASH` fix, plus

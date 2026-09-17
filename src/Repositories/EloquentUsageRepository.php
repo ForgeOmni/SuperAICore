@@ -2,10 +2,10 @@
 
 namespace SuperAICore\Repositories;
 
-use SuperAICore\Contracts\UsageRepository;
+use SuperAICore\Contracts\ScopedUsageRepository;
 use SuperAICore\Models\AiUsageLog;
 
-class EloquentUsageRepository implements UsageRepository
+class EloquentUsageRepository implements ScopedUsageRepository
 {
     /**
      * Idempotency window — a record() call with an `idempotency_key`
@@ -53,11 +53,82 @@ class EloquentUsageRepository implements UsageRepository
 
     public function summary(?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null): array
     {
+        return $this->summarise($this->window(null, null, $from, $to)->get());
+    }
+
+    /**
+     * One scope's spend. `$scopeId` null means every row in that scope.
+     *
+     * @since 1.2.0
+     */
+    public function summaryForScope(
+        string $scope,
+        ?int $scopeId = null,
+        ?\DateTimeInterface $from = null,
+        ?\DateTimeInterface $to = null
+    ): array {
+        return $this->summarise($this->window($scope, $scopeId, $from, $to)->get());
+    }
+
+    /**
+     * Raw rows for one scope, for a host's own aggregation.
+     *
+     * @since 1.2.0
+     */
+    public function allForScope(
+        string $scope,
+        ?int $scopeId = null,
+        ?\DateTimeInterface $from = null,
+        ?\DateTimeInterface $to = null
+    ): array {
+        return $this->window($scope, $scopeId, $from, $to)->get()->map(fn ($r) => $r->toArray())->all();
+    }
+
+    /**
+     * Rows in a time window, optionally narrowed to one scope. The `scope`
+     * column arrived in 1.2.0; a host that has not run the migration gets the
+     * unscoped query rather than a SQL error about an unknown column.
+     */
+    private function window(
+        ?string $scope,
+        ?int $scopeId,
+        ?\DateTimeInterface $from,
+        ?\DateTimeInterface $to
+    ): \Illuminate\Database\Eloquent\Builder {
         $q = AiUsageLog::query();
         if ($from) $q->where('created_at', '>=', $from);
         if ($to) $q->where('created_at', '<=', $to);
 
-        $rows = $q->get();
+        if ($scope !== null && $this->hasScopeColumns()) {
+            $q->where('scope', $scope);
+            if ($scopeId !== null) {
+                $q->where('scope_id', $scopeId);
+            }
+        }
+
+        return $q;
+    }
+
+    private function hasScopeColumns(): bool
+    {
+        static $has = null;
+
+        if ($has === null) {
+            try {
+                $has = (new AiUsageLog())->getConnection()
+                    ->getSchemaBuilder()
+                    ->hasColumn((new AiUsageLog())->getTable(), 'scope');
+            } catch (\Throwable) {
+                $has = false;
+            }
+        }
+
+        return $has;
+    }
+
+    /** @param \Illuminate\Support\Collection $rows */
+    private function summarise($rows): array
+    {
         $total = $rows->count();
         $inputTokens = $rows->sum('input_tokens');
         $outputTokens = $rows->sum('output_tokens');
@@ -92,6 +163,10 @@ class EloquentUsageRepository implements UsageRepository
         if (!empty($filters['task_type'])) $q->where('task_type', $filters['task_type']);
         if (!empty($filters['user_id'])) $q->where('user_id', $filters['user_id']);
         if (!empty($filters['backend'])) $q->where('backend', $filters['backend']);
+        if (!empty($filters['scope']) && $this->hasScopeColumns()) {
+            $q->where('scope', $filters['scope']);
+            if (!empty($filters['scope_id'])) $q->where('scope_id', $filters['scope_id']);
+        }
 
         return $q->limit($limit)->get()->map(fn ($r) => $r->toArray())->all();
     }
@@ -103,10 +178,7 @@ class EloquentUsageRepository implements UsageRepository
 
     public function all(?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null): array
     {
-        $q = AiUsageLog::query();
-        if ($from) $q->where('created_at', '>=', $from);
-        if ($to) $q->where('created_at', '<=', $to);
-        return $q->get()->map(fn ($r) => $r->toArray())->all();
+        return $this->window(null, null, $from, $to)->get()->map(fn ($r) => $r->toArray())->all();
     }
 
     /**

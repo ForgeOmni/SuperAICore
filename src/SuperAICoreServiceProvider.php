@@ -562,7 +562,10 @@ class SuperAICoreServiceProvider extends ServiceProvider
         if (config('super-ai-core.route.enabled', true)) {
             Route::group([
                 'prefix' => config('super-ai-core.route.prefix', 'super-ai-core'),
-                'middleware' => config('super-ai-core.route.middleware', ['web', 'auth']),
+                // `['web', 'auth']` by default, plus `can:<ability>` when the
+                // host set route.gate — in a product, "is logged in" is not an
+                // authorisation decision about the AI provider registry.
+                'middleware' => \SuperAICore\Support\RouteGroups::middleware(),
                 'as' => 'super-ai-core.',
             ], function () {
                 $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');

@@ -42,6 +42,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague deepseek-harness + cinq fleurons (1.1.12 / SDK 1.1.11)](#vague-deepseek-harness--cinq-fleurons-1112--sdk-1111)
   - [Vague rafraîchissement frontier + Meta natif (1.1.15 / SDK 1.1.15)](#vague-rafraîchissement-frontier--meta-natif-1115--sdk-1115)
   - [Balayage des modèles retirés (1.1.16 / SDK 1.1.16)](#balayage-des-modèles-retirés-1116--sdk-1116)
+  - [Vague hôte multi-locataires (1.2.0 / SDK 1.2.0)](#vague-hôte-multi-locataires-120--sdk-120)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -209,6 +210,93 @@ doc de Meta — aliasé sur le même champ. `ApiHealthDetector` sonde `meta`, et
 SuperAgent 1.1.12 y promeut Fable 5.1 ; le défaut hôte garde Opus 5, quatre
 fois moins cher. Passez `squad.tier_map.expert` à `claude-fable-5-1` pour
 des squads de niveau frontier.
+
+### Vague hôte multi-locataires (1.2.0 / SDK 1.2.0)
+
+Cinq choses dont un hôte servant plusieurs locataires avait besoin sans pouvoir
+les obtenir, plus l'interrupteur de posture qui éteint tout le reste.
+
+**`AI_CORE_PROFILE=embedded`** — une clé au lieu de vingt. Sous ce profil, le
+paquet n'enregistre aucune route, ne lance aucun processus CLI, n'ouvre aucun
+PTY, ne partage aucune session et n'écrit aucun instantané dans une copie de
+travail : le dispatcher, le registre de fournisseurs et le journal d'usage, et
+rien d'autre. `workstation` reste le défaut, inchangé, et chaque capacité
+demeure une variable d'environnement — le profil décide seulement de ce qui se
+passe quand personne n'a rien dit.
+
+**Des interrupteurs par groupe de routes, et une gate.** `route.enabled` était
+un seul drapeau pour 81 routes, avec `['web', 'auth']` comme middleware par
+défaut — ce qui, dans un produit, signifie que *tout compte connecté* peut
+atteindre le registre de fournisseurs, le tableau de bord des coûts, le
+moniteur de processus et un proxy compatible OpenAI qui dépense vos
+identifiants. Chaque section a désormais son interrupteur :
+
+```php
+'route' => [
+    'gate' => 'manage-ai-core',           // + can:manage-ai-core sur chaque groupe
+    'groups' => [
+        'openai_proxy' => false,
+        'pty' => false,
+    ],
+],
+```
+
+Un groupe non défini suit le profil, c'est-à-dire ce que l'unique drapeau
+décidait auparavant : rien ne change pour un hôte qui n'en configure aucun.
+
+**Une chaîne de portées que vous définissez.** La résolution allait de `user` à
+`global`. Un hôte avec des locataires a un niveau intermédiaire, et son propre
+ordre de priorité :
+
+```php
+$dispatcher->dispatch([
+    'prompt' => $prompt,
+    'scopes' => [['business', $businessId], ['user', $userId], ['global', null]],
+]);
+```
+
+La première portée disposant d'un fournisseur actif l'emporte. Une chaîne vide
+ne résout rien plutôt que de retomber sur la clé de la plateforme : un appelant
+qui n'a nommé aucune portée ne demande pas à dépenser l'argent d'autrui.
+
+**Les lignes d'usage disent quels identifiants ont payé.** `ai_usage_logs`
+gagne `scope` / `scope_id` (nullables) et un index
+`(scope, scope_id, created_at)`, écrits depuis la tête de la chaîne. Auparavant,
+facturer un locataire supposait de le déduire d'`user_id` — faux dès qu'une
+personne travaille pour deux d'entre eux — ou d'agréger sur la colonne JSON.
+`EloquentUsageRepository` implémente la nouvelle interface
+`ScopedUsageRepository` : `summaryForScope()`, `allForScope()`, et un filtre
+`scope` sur `recent()`. Une interface séparée à dessein : élargir
+`UsageRepository` casserait chaque hôte qui l'implémente.
+
+**Une barrière de dépense.** Le journal s'écrit *après* l'appel : le premier
+signe d'une boucle folle ou d'un locataire hors forfait était la facture. Liez
+une `QuotaPolicy` et le dispatcher demande avant de dépenser :
+
+```php
+$this->app->bind(QuotaPolicy::class, MyPlanQuota::class);
+
+// allows(): QuotaDecision::deny('Plafond quotidien atteint.', 'daily_cap')
+```
+
+Un refus renvoie `['quota_denied' => true, 'error' => …, 'error_code' => …]` et
+le backend n'est jamais appelé. Une politique qui lève une exception vaut « pas
+d'avis » — un service de quota en panne ne doit pas bloquer tous les appels de
+l'hôte. Non liée, le dispatcher ne demande à personne et se comporte comme
+avant.
+
+**`RuntimeState::resetPerTenant()`** — à appeler entre deux jobs d'un worker.
+Elle vide ce qui s'accumule sur un locataire (temporisations de fournisseurs
+apprises de ses échecs, tampon de traces, racine de projet MCP pointant vers son
+espace de travail) et conserve ce qui décrit la machine (quels CLI sont
+installés, ce que chacun supporte). `inventory()` énumère les deux listes, à
+affirmer dans vos propres tests.
+
+Par ailleurs : la CI couvre désormais PHP 8.4 / 8.5 et Laravel 13, et la
+dépendance SDK passe à `^1.2.0` — la version au profil embarqué, à la politique
+d'outils, aux résultats différés et à l'hygiène multi-locataires.
+
+*Depuis la 1.2.0.*
 
 ### Balayage des modèles retirés (1.1.16 / SDK 1.1.16)
 

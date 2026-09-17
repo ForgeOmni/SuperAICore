@@ -42,6 +42,7 @@
   - [deepseek-harness + 五旗舰波次（1.1.12 / SDK 1.1.11）](#deepseek-harness--五旗舰波次1112--sdk-1111)
   - [前沿模型刷新 + 原生 Meta 波次（1.1.15 / SDK 1.1.15）](#前沿模型刷新--原生-meta-波次1115--sdk-1115)
   - [退役模型清扫（1.1.16 / SDK 1.1.16）](#退役模型清扫1116--sdk-1116)
+  - [多租户宿主浪潮（1.2.0 / SDK 1.2.0）](#多租户宿主浪潮120--sdk-120)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -190,6 +191,74 @@ Muse Spark，同一把 key、同一套计费，而它们**不是**外观差异�
 **Squad expert 档位仍留在 Opus 5。** SuperAgent 1.1.12 自己的 `ModelTierMap` 把
 Fable 5.1 提到了 EXPERT；宿主默认仍用 Opus 5，因为它便宜四倍。需要前沿档 squad
 时把 `squad.tier_map.expert` 设为 `claude-fable-5-1`。
+
+### 多租户宿主浪潮（1.2.0 / SDK 1.2.0）
+
+服务多租户的宿主需要、但此前拿不到的五件事，外加一个把其余部分统统关掉的姿势开关。
+
+**`AI_CORE_PROFILE=embedded`** —— 一个键顶二十个。在这个档位下，本包不注册任何路由、
+不派生任何 CLI 进程、不开 PTY、不做会话分享、不往工作副本写快照：只剩调度器、供应商注册表
+和用量账本。`workstation` 仍是默认且行为不变，而且每项能力依然是独立的环境变量——profile
+只决定「没人明确指定时」怎么办。
+
+**按分组的路由开关，外加一道 gate。** 原来 `route.enabled` 是覆盖 81 条路由的**一个**开关，
+默认中间件是 `['web', 'auth']`——在一个产品里，这意味着**任何已登录账号**都能摸到供应商注册表、
+成本看板、进程监控，以及一个用你的凭据发请求的 OpenAI 兼容代理。现在每一段都是自己的开关：
+
+```php
+'route' => [
+    'gate' => 'manage-ai-core',           // 每个分组额外带上 can:manage-ai-core
+    'groups' => [
+        'openai_proxy' => false,
+        'pty' => false,
+    ],
+],
+```
+
+没设置的分组跟随 profile，也就是原先那一个开关的行为，所以什么都不设的宿主毫无变化。
+
+**由你定义的作用域链。** 供应商解析原本写死是 user → global。有租户的宿主中间还有一层，
+而且有自己的优先次序：
+
+```php
+$dispatcher->dispatch([
+    'prompt' => $prompt,
+    'scopes' => [['business', $businessId], ['user', $userId], ['global', null]],
+]);
+```
+
+第一个有可用供应商的作用域胜出。**空链解析为空，而不是回落到平台的 key**——一个没有指名
+任何作用域的调用方，并不是在请求花别人的钱。
+
+**用量行会说明是谁的凭据付的账。** `ai_usage_logs` 新增可空的 `scope` / `scope_id`
+以及 `(scope, scope_id, created_at)` 索引，取自链首。在此之前，给租户出账要么靠从 `user_id`
+反推租户——一个人同时服务两个租户时就错了——要么对 JSON metadata 列做聚合。
+`EloquentUsageRepository` 实现了新的 `ScopedUsageRepository`：`summaryForScope()`、
+`allForScope()`，以及 `recent()` 上的 `scope` 过滤。**故意做成独立接口**，因为给
+`UsageRepository` 加参数会让每一个实现它的宿主炸掉。
+
+**花费闸门。** 账本是在调用**之后**才写的，所以失控循环或超套餐租户的第一个征兆是账单。
+绑定一个 `QuotaPolicy`，调度器就会在花钱之前问一句：
+
+```php
+$this->app->bind(QuotaPolicy::class, MyPlanQuota::class);
+
+// allows(): QuotaDecision::deny('今日额度已用完。', 'daily_cap')
+```
+
+拒绝会返回 `['quota_denied' => true, 'error' => …, 'error_code' => …]`，后端根本不会被调用。
+策略自身抛异常视为「没有意见」——一个坏掉的额度服务不该让宿主的每次调用都失败。不绑定时，
+调度器谁也不问，行为与从前完全一致。
+
+**`RuntimeState::resetPerTenant()`** —— 在 worker 的任务之间调用。它清掉「关于某个租户攒下来的」
+东西（从该租户失败中学到的供应商冷却、trace 环形缓冲、指向该租户工作区的 MCP 项目根），
+保留「描述这台机器的」东西（装了哪些 CLI、各自支持什么）。`inventory()` 把两边都列出来，
+方便你在自己的测试里断言——本包新增静态状态时就会被抓到。
+
+另外：CI 现已覆盖 PHP 8.4 / 8.5 与 Laravel 13，SDK 依赖提升到 `^1.2.0`——即带有
+embedded profile、工具策略、延迟工具结果与多租户卫生的那个版本。
+
+*自 1.2.0 起。*
 
 ### 退役模型清扫（1.1.16 / SDK 1.1.16）
 
