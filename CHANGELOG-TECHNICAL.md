@@ -61,6 +61,22 @@ groups, profile, per-tenant reset. Plus PHP 8.4/8.5 and Laravel 13 in CI.**
 - 10 no-op `Reflection*::setAccessible()` calls removed (deprecated in 8.5,
   no-op since 8.1).
 
+### Fixed (found by the widened matrix)
+
+- **Symfony Console 8 removed `Application::add()`** (deprecated in 7.4, in
+  favour of `addCommand()`). `Console\Application` registered 35 commands
+  through it, and six test helpers did the same, so every console test errored
+  on the `symfony/console ^8` legs. Both now go through a shim that picks the
+  method the installed major has — this package supports ^6, ^7 and ^8 at once
+  and cannot simply pick one.
+- **5 `@dataProvider` annotations** in three test files: PHPUnit 12 no longer
+  reads docblock metadata, so those tests ran with no arguments and errored
+  rather than skipping. Migrated to `#[DataProvider]`, which PHPUnit 10 also
+  understands.
+- **27 risky tests** on the Laravel 13 leg, all from SuperAgent printing
+  `[SuperAgent] Config unavailable for …` once per object constructed outside a
+  booted app. Fixed upstream in SDK 1.2.1; the pin moves to `^1.2.1`.
+
 ### Notes
 
 - `RuntimeState::resetPerTenant()` is never called automatically; only the host

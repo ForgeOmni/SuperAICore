@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SuperAICore\AgentSpawn\SpawnPlan;
 use SuperAICore\Capabilities\ClaudeCapabilities;
@@ -34,9 +35,7 @@ final class CapabilitiesSpawnContractTest extends TestCase
         yield 'superagent' => [SuperAgentCapabilities::class, false];
     }
 
-    /**
-     * @dataProvider capabilityProvider
-     */
+    #[DataProvider('capabilityProvider')]
     public function test_implements_phase_c_methods(string $class, bool $participates): void
     {
         $cap = new $class();
@@ -48,9 +47,7 @@ final class CapabilitiesSpawnContractTest extends TestCase
         $this->assertIsString($cap->consolidationPrompt($plan, [], '/tmp/x'));
     }
 
-    /**
-     * @dataProvider capabilityProvider
-     */
+    #[DataProvider('capabilityProvider')]
     public function test_protocol_participation_matches_expected(string $class, bool $participates): void
     {
         $cap = new $class();

@@ -2,6 +2,7 @@
 
 namespace SuperAICore\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SuperAICore\Backends\ClaudeCliBackend;
 use SuperAICore\Backends\CodexCliBackend;
@@ -31,9 +32,7 @@ final class StreamingBackendContractTest extends TestCase
         yield 'copilot' => [CopilotCliBackend::class];
     }
 
-    /**
-     * @dataProvider cliBackendProvider
-     */
+    #[DataProvider('cliBackendProvider')]
     public function test_implements_streaming_backend(string $class): void
     {
         $instance = new $class();
@@ -44,9 +43,7 @@ final class StreamingBackendContractTest extends TestCase
         );
     }
 
-    /**
-     * @dataProvider cliBackendProvider
-     */
+    #[DataProvider('cliBackendProvider')]
     public function test_stream_method_returns_null_on_empty_prompt(string $class): void
     {
         $instance = new $class();

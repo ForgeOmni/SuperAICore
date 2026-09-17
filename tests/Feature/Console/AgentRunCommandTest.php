@@ -12,6 +12,8 @@ use Symfony\Component\Console\Tester\CommandTester;
 
 final class AgentRunCommandTest extends TestCase
 {
+    use \SuperAICore\Tests\Support\RegistersCommands;
+
     private string $fixtureRoot;
 
     protected function setUp(): void
@@ -120,7 +122,7 @@ final class AgentRunCommandTest extends TestCase
 
         $command = new AgentRunCommand($registry, $runners);
         $app = new Application();
-        $app->add($command);
+        $this->registerCommand($app, $command);
 
         return [new CommandTester($app->find('agent:run')), $capture];
     }

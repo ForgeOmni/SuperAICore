@@ -18,6 +18,8 @@ use Symfony\Component\Console\Tester\CommandTester;
  */
 final class DispatchWaveCommandsTest extends TestCase
 {
+    use \SuperAICore\Tests\Support\RegistersCommands;
+
     private string $tmp;
 
     protected function setUp(): void
@@ -38,7 +40,7 @@ final class DispatchWaveCommandsTest extends TestCase
     private function tester(object $command, string $name): CommandTester
     {
         $app = new Application();
-        $app->add($command);
+        $this->registerCommand($app, $command);
         return new CommandTester($app->find($name));
     }
 

@@ -16,6 +16,8 @@ use Symfony\Component\Console\Tester\CommandTester;
 
 final class SendCommandTest extends TestCase
 {
+    use \SuperAICore\Tests\Support\RegistersCommands;
+
     private const ALL_DISABLED = [
         'anthropic_api' => ['enabled' => false], 'openai_api' => ['enabled' => false],
         'superagent' => ['enabled' => false], 'squad' => ['enabled' => false],
@@ -65,7 +67,7 @@ final class SendCommandTest extends TestCase
         $sender = new DispatchSender($dispatcher, $registry, new RunStore($this->runsDir));
 
         $app = new Application();
-        $app->add(new SendCommand($registry, $sender));
+        $this->registerCommand($app, new SendCommand($registry, $sender));
         return new CommandTester($app->find('send'));
     }
 

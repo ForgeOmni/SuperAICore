@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SuperAICore\Tests\Unit\SmartFlow;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SuperAICore\SmartFlow\FlowEngine;
 use SuperAICore\SmartFlow\FlowOptions;
@@ -64,9 +65,7 @@ YAML;
         $this->assertSame(1, $result->ledger['gates']);
     }
 
-    /**
-     * @dataProvider builtinFlows
-     */
+    #[DataProvider('builtinFlows')]
     public function test_builtin_cross_cli_flows_rehearse_green(string $name, array $args): void
     {
         $registry = new FlowRegistry();

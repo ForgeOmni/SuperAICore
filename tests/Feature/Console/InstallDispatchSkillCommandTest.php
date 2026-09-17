@@ -14,6 +14,8 @@ use Symfony\Component\Console\Tester\CommandTester;
  */
 final class InstallDispatchSkillCommandTest extends TestCase
 {
+    use \SuperAICore\Tests\Support\RegistersCommands;
+
     private ?string $originalHome = null;
     private string $fakeHome = '';
 
@@ -34,7 +36,7 @@ final class InstallDispatchSkillCommandTest extends TestCase
     private function tester(): CommandTester
     {
         $app = new Application();
-        $app->add(new InstallDispatchSkillCommand());
+        $this->registerCommand($app, new InstallDispatchSkillCommand());
         return new CommandTester($app->find('skill:install-dispatch'));
     }
 

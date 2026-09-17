@@ -13,6 +13,8 @@ use Symfony\Component\Console\Tester\CommandTester;
 
 final class SkillRunCommandTest extends TestCase
 {
+    use \SuperAICore\Tests\Support\RegistersCommands;
+
     private string $fixtureRoot;
 
     protected function setUp(): void
@@ -200,7 +202,7 @@ final class SkillRunCommandTest extends TestCase
 
         $command = new SkillRunCommand($registry, new CapabilityRegistry(), $runners);
         $app = new Application();
-        $app->add($command);
+        $this->registerCommand($app, $command);
 
         return [new CommandTester($app->find('skill:run')), $capture];
     }

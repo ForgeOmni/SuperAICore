@@ -15,10 +15,12 @@ use Symfony\Component\Console\Tester\CommandTester;
  */
 final class ModelsCommandTest extends TestCase
 {
+    use \SuperAICore\Tests\Support\RegistersCommands;
+
     private function tester(): CommandTester
     {
         $app = new Application();
-        $app->add(new ModelsCommand());
+        $this->registerCommand($app, new ModelsCommand());
         return new CommandTester($app->find('super-ai-core:models'));
     }
 
