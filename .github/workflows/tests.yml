@@ -93,6 +93,15 @@ jobs:
       - name: Run phpunit
         run: ./vendor/bin/phpunit --testdox
 
+      # Our own deprecations fail the build, on the one leg where PHPUnit
+      # honours `restrictDeprecations` (12) and the PHP is new enough to raise
+      # them (8.5). Elsewhere the flag would fire on a dev dependency — the
+      # Testbench database config still names PDO::MYSQL_ATTR_SSL_CA — which
+      # says nothing about this package.
+      - name: Deprecation gate (PHP 8.5 · Laravel 13)
+        if: matrix.php == '8.5' && matrix.laravel == '13.*'
+        run: ./vendor/bin/phpunit --fail-on-deprecation
+
   phpunit-no-superagent:
     name: PHP 8.2 · Laravel 11 · without SuperAgent SDK
     runs-on: ubuntu-latest

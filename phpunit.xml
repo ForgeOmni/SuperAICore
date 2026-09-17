@@ -7,7 +7,6 @@
          executionOrder="random"
          failOnRisky="true"
          failOnWarning="true"
-         failOnDeprecation="true"
          beStrictAboutOutputDuringTests="true"
          stopOnFailure="false">
     <testsuites>
@@ -19,14 +18,16 @@
         </testsuite>
     </testsuites>
     <!--
-        Deprecations fail the build, but only the ones this package can fix:
-        `restrictDeprecations` narrows reporting to the source set below, so a
-        dev dependency that has not caught up with a new PHP release cannot
-        turn the suite red. PHPUnit 12 renamed the attribute to
-        `ignoreIndirectDeprecations` and reports this file as a deprecated
-        schema because of it, but it still honours the old name — and the new
-        one does not exist in PHPUnit 10's schema, which the PHP 8.1 leg is
-        pinned to. One config has to serve both until 8.1 support is dropped.
+        `restrictDeprecations` narrows deprecation reporting to the source set
+        below, so a dev dependency that has not caught up with a new PHP
+        release is not reported as ours. PHPUnit 12 honours the old attribute
+        name; PHPUnit 11 does not, and the name it wants
+        (`ignoreIndirectDeprecations`) does not exist in PHPUnit 10's schema,
+        which the PHP 8.1 leg is pinned to. One config cannot satisfy all
+        three, so `failOnDeprecation` is not set here: CI turns it on with
+        PHPUnit's fail-on-deprecation flag on the one leg where the filter is honoured
+        (PHP 8.5 / Laravel 13 / PHPUnit 12), which is also the leg that would
+        see a new 8.5 deprecation first.
     -->
     <source restrictDeprecations="true">
         <include>
