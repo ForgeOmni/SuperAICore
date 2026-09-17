@@ -7,6 +7,7 @@
          executionOrder="random"
          failOnRisky="true"
          failOnWarning="true"
+         failOnDeprecation="true"
          beStrictAboutOutputDuringTests="true"
          stopOnFailure="false">
     <testsuites>
@@ -17,7 +18,17 @@
             <directory>tests/Feature</directory>
         </testsuite>
     </testsuites>
-    <source>
+    <!--
+        Deprecations fail the build, but only the ones this package can fix:
+        `restrictDeprecations` narrows reporting to the source set below, so a
+        dev dependency that has not caught up with a new PHP release cannot
+        turn the suite red. PHPUnit 12 renamed the attribute to
+        `ignoreIndirectDeprecations` and reports this file as a deprecated
+        schema because of it, but it still honours the old name — and the new
+        one does not exist in PHPUnit 10's schema, which the PHP 8.1 leg is
+        pinned to. One config has to serve both until 8.1 support is dropped.
+    -->
+    <source restrictDeprecations="true">
         <include>
             <directory suffix=".php">src</directory>
         </include>

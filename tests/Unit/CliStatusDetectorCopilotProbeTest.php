@@ -20,7 +20,6 @@ final class CliStatusDetectorCopilotProbeTest extends TestCase
         // is visible to detectAuth().
         putenv('SUPERAICORE_COPILOT_PROBE');
         $ref = new \ReflectionProperty(CliStatusDetector::class, 'copilotLiveCache');
-        $ref->setAccessible(true);
         $ref->setValue(null, []);
     }
 
@@ -74,7 +73,6 @@ final class TestableCliStatusDetector extends CliStatusDetector
     {
         // detectAuth is protected; reach through reflection.
         $m = new \ReflectionMethod(self::class, 'detectAuth');
-        $m->setAccessible(true);
         return $m->invoke(null, $binary, $path);
     }
 
@@ -83,7 +81,6 @@ final class TestableCliStatusDetector extends CliStatusDetector
         self::$probeCalls++;
         // Still honor the cache contract from the parent.
         $ref = new \ReflectionProperty(CliStatusDetector::class, 'copilotLiveCache');
-        $ref->setAccessible(true);
         $cache = $ref->getValue();
         if (isset($cache[$path])) {
             self::$probeCalls--; // we wouldn't have actually spawned

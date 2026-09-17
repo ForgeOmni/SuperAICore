@@ -203,7 +203,6 @@ final class SpawnPipelineTest extends TestCase
     {
         $pipeline = $this->makePipeline($this->createMock(Dispatcher::class));
         $reflection = new \ReflectionMethod(Pipeline::class, 'resolveEngineKey');
-        $reflection->setAccessible(true);
 
         $this->assertSame('codex', $reflection->invoke($pipeline, 'codex_cli'));
         $this->assertSame('codex', $reflection->invoke($pipeline, 'codex'));

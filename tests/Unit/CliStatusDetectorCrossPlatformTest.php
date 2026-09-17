@@ -154,14 +154,12 @@ final class ProbeRecordingDetector extends CliStatusDetector
         // PHP's late static binding so `static::safeProbeOutput` inside
         // detectAuth() dispatches to our override below.
         $m = new \ReflectionMethod(self::class, 'detectAuth');
-        $m->setAccessible(true);
         return $m->invoke(null, $binary, $path);
     }
 
     public static function callChildEnv(): array
     {
         $m = new \ReflectionMethod(self::class, 'childEnv');
-        $m->setAccessible(true);
         return $m->invoke(null);
     }
 
@@ -174,7 +172,6 @@ final class ProbeRecordingDetector extends CliStatusDetector
             default   => 'linuxPathCandidates',
         };
         $m = new \ReflectionMethod(self::class, $method);
-        $m->setAccessible(true);
         return $m->invoke(null, $binary, $env);
     }
 

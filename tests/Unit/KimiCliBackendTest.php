@@ -369,7 +369,6 @@ final class KimiCliBackendTest extends TestCase
     private function buildCommand(KimiCliBackend $b, array $options, array $providerConfig): array
     {
         $m = new \ReflectionMethod($b, 'buildCommand');
-        $m->setAccessible(true);
         return $m->invoke($b, $options, $providerConfig, (string) ($options['prompt'] ?? ''));
     }
 }

@@ -71,7 +71,6 @@ final class CliStatusDetectorGeminiAuthTest extends TestCase
     private function invoke(array $env): array
     {
         $m = new \ReflectionMethod(CliStatusDetector::class, 'detectGeminiAuth');
-        $m->setAccessible(true);
         return $m->invoke(null, $env);
     }
 

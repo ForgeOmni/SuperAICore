@@ -47,7 +47,6 @@ final class OrchestratorAuditTest extends TestCase
     private function audit(string $subdir, string $agentName): array
     {
         $m = (new ReflectionClass(Orchestrator::class))->getMethod('auditAgentOutput');
-        $m->setAccessible(true);
         return $m->invoke(null, $subdir, $agentName);
     }
 
