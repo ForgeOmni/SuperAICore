@@ -41,6 +41,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague Claude Opus 5 (1.1.11 / SDK 1.1.10)](#vague-claude-opus-5-1111--sdk-1110)
   - [Vague deepseek-harness + cinq fleurons (1.1.12 / SDK 1.1.11)](#vague-deepseek-harness--cinq-fleurons-1112--sdk-1111)
   - [Vague rafraîchissement frontier + Meta natif (1.1.15 / SDK 1.1.15)](#vague-rafraîchissement-frontier--meta-natif-1115--sdk-1115)
+  - [Balayage des modèles retirés (1.1.16 / SDK 1.1.16)](#balayage-des-modèles-retirés-1116--sdk-1116)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -208,6 +209,29 @@ doc de Meta — aliasé sur le même champ. `ApiHealthDetector` sonde `meta`, et
 SuperAgent 1.1.12 y promeut Fable 5.1 ; le défaut hôte garde Opus 5, quatre
 fois moins cher. Passez `squad.tier_map.expert` à `claude-fable-5-1` pour
 des squads de niveau frontier.
+
+### Balayage des modèles retirés (1.1.16 / SDK 1.1.16)
+
+Épinglage du SDK `^1.1.15` → `^1.1.16` pour un correctif dont l'importance
+dépasse la taille : `AutoModelStrategy::FLASH` de SuperAgent nommait encore
+`deepseek-v4-flash`, un id que DeepSeek a retiré le 2026-09-10 et qu'il ne
+maintient plus que comme redirection vers V4.1 Flash. `/model auto` résolvait
+donc chaque conversation courte vers une route de compatibilité plutôt que
+vers un modèle — en réussissant tout du long, et promis à échouer sur le
+chemin par défaut le jour où la redirection disparaît. `AutoModelRouter`
+enveloppe cette stratégie et hérite du correctif.
+
+Le même id était encore recommandé à trois endroits côté hôte décrivant le
+comportement *actuel*, désormais tous en `deepseek-flash` : le commentaire
+`AI_CORE_AUTO_MODEL_FLASH` de la référence d'environnement, l'exemple de code
+`tier_map` du squad, et la prose sur les défauts livrés. Les entrées
+historiques du changelog gardent l'ancien id — elles décrivent ce qui était
+vrai alors.
+
+`model_pricing` **conserve délibérément** ses lignes `deepseek-v4-flash` /
+`deepseek-chat` / `deepseek-reasoner` : ces ids routent toujours, et les
+anciennes lignes `sac_usage` en ont besoin pour être tarifées correctement.
+Les retirer mettrait silencieusement à zéro les rapports de coûts passés.
 
 ### Vague Claude Opus 5 (1.1.11 / SDK 1.1.10)
 
@@ -857,7 +881,7 @@ container. Aucune migration.
   le même `squad_id` et `checkpoint_dir`. L'enveloppe porte
   `squad: {squad_id, step_count, completed, roles, checkpoint_path,
   mailbox_log}`. Le tier map est livré avec des defaults sensés
-  (`trivial` → `claude-haiku-4-5`, `easy` → `deepseek-v4-flash`,
+  (`trivial` → `claude-haiku-4-5`, `easy` → `deepseek-flash`,
   `moderate` → `claude-sonnet-4-6`, `hard` → `deepseek-v4-pro`,
   `expert` → `claude-opus-4-7`) ; override par appel via
   `options.tier_map` ou globalement via

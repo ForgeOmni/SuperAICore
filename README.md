@@ -41,6 +41,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [Claude Opus 5 wave (1.1.11 / SDK 1.1.10)](#claude-opus-5-wave-1111--sdk-1110)
   - [deepseek-harness + five-flagship wave (1.1.12 / SDK 1.1.11)](#deepseek-harness--five-flagship-wave-1112--sdk-1111)
   - [Frontier refresh + native Meta wave (1.1.15 / SDK 1.1.15)](#frontier-refresh--native-meta-wave-1115--sdk-1115)
+  - [Retired-model sweep (1.1.16 / SDK 1.1.16)](#retired-model-sweep-1116--sdk-1116)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -199,6 +200,27 @@ Both read `META_API_KEY` with `MODEL_API_KEY` — the name Meta's own docs use
 `ModelTierMap` promotes Fable 5.1 to EXPERT; the host default keeps Opus 5
 because it is a quarter of the price. Set `squad.tier_map.expert` to
 `claude-fable-5-1` for frontier-tier squads.
+
+### Retired-model sweep (1.1.16 / SDK 1.1.16)
+
+SDK pin `^1.1.15` → `^1.1.16` for one fix that matters more than its size:
+SuperAgent's `AutoModelStrategy::FLASH` still named `deepseek-v4-flash`, an
+id DeepSeek retired on 2026-09-10 and now keeps alive only as a redirect to
+V4.1 Flash. `/model auto` therefore resolved every short chat to a
+compatibility route rather than a model — succeeding all the while, and set
+to fail on the default path the day the redirect goes away. `AutoModelRouter`
+wraps that strategy and inherits the fix.
+
+The same id was still recommended in three host-side places that describe
+current behaviour, all now `deepseek-flash`: the `AI_CORE_AUTO_MODEL_FLASH`
+comment in the env reference, the squad `tier_map` code sample, and the
+shipped-defaults prose. Historical changelog entries keep the old id — they
+describe what was true then.
+
+`model_pricing` deliberately **keeps** its `deepseek-v4-flash` /
+`deepseek-chat` / `deepseek-reasoner` rows: those ids still route, and old
+`sac_usage` rows need them to price correctly. Removing them would silently
+zero historical cost reports.
 
 ### Claude Opus 5 wave (1.1.11 / SDK 1.1.10)
 
@@ -778,7 +800,7 @@ No migrations.
   Envelope carries `squad: {squad_id, step_count, completed, roles,
   checkpoint_path, mailbox_log}`. Tier map ships with sensible
   defaults (`trivial` → `claude-haiku-4-5`, `easy` →
-  `deepseek-v4-flash`, `moderate` → `claude-sonnet-4-6`, `hard` →
+  `deepseek-flash`, `moderate` → `claude-sonnet-4-6`, `hard` →
   `deepseek-v4-pro`, `expert` → `claude-opus-4-8`); override per-call
   via `options.tier_map` or globally via `super-ai-core.squad.tier_map`.
 - **`AutoModelRouter` service** *(0.9.6)* — `/model auto` heuristic

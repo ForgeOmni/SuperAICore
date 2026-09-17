@@ -2198,7 +2198,7 @@ $result = app(Dispatcher::class)->dispatch([
     // 可选 —— 本次 dispatch 覆盖全局 tier map。
     'tier_map' => [
         'trivial'  => ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5'],
-        'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-flash'],
+        'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-flash'],
         'moderate' => ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6'],
         'hard'     => ['provider' => 'anthropic', 'model' => 'claude-opus-4-7'],
     ],
@@ -4172,6 +4172,51 @@ SDK 处理，宿主侧无需知道。
 SuperAgent 1.1.12 自己的 `ModelTierMap` 把 Fable 5.1 提到了 EXPERT。宿主默认仍留
 在 Opus 5 —— 价格只有四分之一，而且 tier map 是预算决策，不是能力排名。当某个
 squad 确实需要前沿档时，把 `squad.tier_map.expert` 设为 `claude-fable-5-1`。
+
+## 44. 退役模型清扫 —— `/model auto` 与那些指向重定向的示例（1.1.16 / SDK 1.1.16）
+
+一行 SDK 修复，外加一个提醒：退役的模型 id 危险在哪。
+
+`AutoModelStrategy::FLASH` —— `/model auto` 启发式里 Flash 的那一半 —— 仍写着
+`deepseek-v4-flash`。DeepSeek 已于 2026-09-10 退役该 id，它如今纯粹是通往 V4.1
+Flash 的重定向。于是 `/model auto` 一直能用、一直按正确价格计费，也一直指着一个
+并不是模型的东西。`AutoModelRouter` 包装的正是这个 SDK 策略，因此把依赖提到
+`^1.1.16` 就是宿主侧的全部改动：
+
+```php
+// 之前（SDK ≤1.1.15）：解析到一条兼容重定向
+app(AutoModelRouter::class)->pick($messages, $system, []);   // deepseek-v4-flash
+
+// 之后（SDK 1.1.16）
+app(AutoModelRouter::class)->pick($messages, $system, []);   // deepseek-flash
+```
+
+路由决策本身没有任何变化 —— 同样的阈值、同样的意图关键词、同样的 Pro 升级逻辑。
+自行设置了 `super-ai-core.auto_model.flash_model`（或 `AI_CORE_AUTO_MODEL_FLASH`）
+的宿主从来不受影响。
+
+### 为什么"调用成功"依然是 bug
+
+兼容路由是宽限期，不是契约。它还在的时候什么都不会失败，所以没有任何东西告诉你默认值
+已经漂移了 —— 而当失败真的到来时，它落在生产环境的默认路径上。这也正是 1.1.15 明明
+追查了所有**配置里**的退役 id、bug 却幸存下来的原因：它藏在一个常量里，低一层，而且
+一直返回 200。
+
+三处描述当前行为的宿主文档也在这里一并修正 —— env 参考里的
+`AI_CORE_AUTO_MODEL_FLASH` 注释、上文的 squad `tier_map` 代码示例，以及 README 里
+默认 tier map 的说明。
+
+### 哪些是刻意不改的
+
+`model_pricing` 保留 `deepseek-v4-flash`、`deepseek-chat`、`deepseek-reasoner` 三行，
+`CostCalculatorTest` 也仍然断言它们按 V4.1 Flash 费率计价。两个理由，且都重要：
+
+1. 这些 id 上游仍会路由 —— 固定用它们的调用方能拿到成功的响应，就该被计价。
+2. 历史 `sac_usage` 记录引用了它们。删掉这些行会让旧运行按 $0 计价，等于悄悄改写过去的
+   成本报表。
+
+在 **catalog** 里退役一个模型 id，和在**账本**里退役它，是两件不同的事。catalog 应该
+描述你今天能调用什么；账本必须解释上个月你被收了什么钱。
 
 ## 另见
 

@@ -4,6 +4,39 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.16] — 2026-09-17
+
+**SDK pin `^1.1.15` → `^1.1.16` for the `AutoModelStrategy::FLASH` fix, plus
+the host-side references that named the same retired id.**
+
+### Fixed
+
+- SuperAgent 1.1.16 changes `Routing\AutoModelStrategy::FLASH` from
+  `deepseek-v4-flash` to `deepseek-flash`. `AutoModelRouter` wraps that
+  strategy and inherits the fix — 1.1.15 had corrected the wrapper's
+  docblock but the constant it documented was still wrong upstream, so
+  `/model auto` resolved to a compatibility redirect rather than a model.
+- Host-side references to the retired id, all of them describing *current*
+  behaviour rather than history: the `AI_CORE_AUTO_MODEL_FLASH` default
+  comment in the env reference (`INSTALL{,.zh-CN,.fr}.md`), the squad
+  `tier_map` code sample (`docs/advanced-usage{,.zh-CN,.fr}.md`) and the
+  shipped-tier-map prose (`README{,.zh-CN,.fr}.md`).
+
+### Unchanged on purpose
+
+- `model_pricing` keeps `deepseek-v4-flash` / `deepseek-chat` /
+  `deepseek-reasoner` rows. Those ids still route upstream, and historical
+  `sac_usage` rows referencing them must keep pricing correctly — dropping
+  the rows would silently zero old cost reports.
+- `CostCalculatorTest` still asserts the retired ids price at the V4.1 Flash
+  rate; that is the compatibility-route contract, not drift.
+
+### Changed
+
+- `composer.json`: `forgeomni/superagent` `^1.1.15` → `^1.1.16` (pulls
+  guzzlehttp/guzzle 7.15.1 → 7.15.5 with it).
+- `Console\Application` version `1.1.15` → `1.1.16`.
+
 ## [1.1.15] — 2026-09-17
 
 **SDK pin `^1.1.11` → `^1.1.15` (four SuperAgent releases), two new provider

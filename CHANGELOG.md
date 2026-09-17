@@ -4,6 +4,15 @@ What each release of `forgeomni/superaicore` means for you — new abilities, pr
 
 Follows [Semantic Versioning](https://semver.org). Unless an entry says otherwise, upgrading is just `composer update forgeomni/superaicore` — no migrations, nothing breaks.
 
+## [1.1.16] — 2026-09-17
+
+**`/model auto` was picking a retired DeepSeek model, and so were a few config samples.** SDK pin `^1.1.15` → `^1.1.16`. Upgrading is `composer update forgeomni/superaicore` — no migrations, no config changes needed.
+
+- **Auto-routing now names the live model.** SuperAgent 1.1.16 fixes `AutoModelStrategy::FLASH`, which still said `deepseek-v4-flash` — an id DeepSeek retired on 2026-09-10 and now keeps alive only as a redirect to V4.1 Flash. Every auto-routed short chat was addressing that redirect. The heuristic itself is unchanged; only the id it resolves to moves. If you set `AI_CORE_AUTO_MODEL_FLASH` yourself, nothing changes for you.
+- **Docs and samples stopped recommending the retired id.** The `AI_CORE_AUTO_MODEL_FLASH` comment in the env reference, the squad `tier_map` code sample, and the shipped-defaults description all named `deepseek-v4-flash`. They now name `deepseek-flash`. Historical changelog entries keep the old id — those describe what happened at the time.
+- Pricing rows for `deepseek-v4-flash`, `deepseek-chat` and `deepseek-reasoner` **stay** in `model_pricing`: they still route, and old usage rows in your database need them to price correctly.
+- `superaicore --version` reports `1.1.16`; Guzzle moves to 7.15.5 with the SDK.
+
 ## [1.1.15] — 2026-09-17
 
 **Four SuperAgent releases absorbed in one: the September frontier models, corrected prices, and a native Meta provider with its own Responses route.** SDK pin moves `^1.1.11` → `^1.1.15`. Upgrading is `composer update forgeomni/superaicore` — no migrations. Re-publish the config if you want the corrected pricing rows and the new squad-tier comment.

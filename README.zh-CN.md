@@ -41,6 +41,7 @@
   - [Claude Opus 5 波次（1.1.11 / SDK 1.1.10）](#claude-opus-5-波次1111--sdk-1110)
   - [deepseek-harness + 五旗舰波次（1.1.12 / SDK 1.1.11）](#deepseek-harness--五旗舰波次1112--sdk-1111)
   - [前沿模型刷新 + 原生 Meta 波次（1.1.15 / SDK 1.1.15）](#前沿模型刷新--原生-meta-波次1115--sdk-1115)
+  - [退役模型清扫（1.1.16 / SDK 1.1.16）](#退役模型清扫1116--sdk-1116)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -189,6 +190,23 @@ Muse Spark，同一把 key、同一套计费，而它们**不是**外观差异�
 **Squad expert 档位仍留在 Opus 5。** SuperAgent 1.1.12 自己的 `ModelTierMap` 把
 Fable 5.1 提到了 EXPERT；宿主默认仍用 Opus 5，因为它便宜四倍。需要前沿档 squad
 时把 `squad.tier_map.expert` 设为 `claude-fable-5-1`。
+
+### 退役模型清扫（1.1.16 / SDK 1.1.16）
+
+SDK 依赖 `^1.1.15` → `^1.1.16`，只为一个"体量很小但影响不小"的修复：SuperAgent
+的 `AutoModelStrategy::FLASH` 仍写着 `deepseek-v4-flash` —— DeepSeek 已于
+2026-09-10 退役该 id，如今它只作为通往 V4.1 Flash 的重定向存在。于是 `/model auto`
+把每一次短对话都解析到了一条兼容路由而不是模型 —— 期间一直"成功"，并注定会在重定向
+被撤掉的那天、在默认路径上开始失败。`AutoModelRouter` 包装的正是这个策略，因此一并
+修复。
+
+同一个 id 还出现在三处描述**当前行为**的宿主文档里，现已全部改为 `deepseek-flash`：
+env 参考里的 `AI_CORE_AUTO_MODEL_FLASH` 注释、squad `tier_map` 代码示例，以及默认
+tier map 的说明文字。历史 changelog 条目保留旧 id —— 它们记录的是当时的事实。
+
+`model_pricing` **刻意保留** `deepseek-v4-flash` / `deepseek-chat` /
+`deepseek-reasoner` 三行：这些 id 仍会路由，而数据库里旧的 `sac_usage` 记录需要它们
+才能正确计价。删掉会让历史成本报表悄悄归零。
 
 ### Claude Opus 5 波次（1.1.11 / SDK 1.1.10）
 
@@ -702,7 +720,7 @@ SDK 0.9.8 的配套原语（`AutoModelStrategy`、`CacheAwareCompressor`、
   磁盘；用同样的 `squad_id` + `checkpoint_dir` 重新 dispatch 即可恢复。
   Envelope 携带 `squad: {squad_id, step_count, completed, roles,
   checkpoint_path, mailbox_log}`。Tier map 内置合理默认
-  （`trivial` → `claude-haiku-4-5`、`easy` → `deepseek-v4-flash`、
+  （`trivial` → `claude-haiku-4-5`、`easy` → `deepseek-flash`、
   `moderate` → `claude-sonnet-4-6`、`hard` → `deepseek-v4-pro`、
   `expert` → `claude-opus-4-7`）；按调用覆盖 `options.tier_map`、
   全局覆盖 `super-ai-core.squad.tier_map`。

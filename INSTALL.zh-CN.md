@@ -900,7 +900,7 @@ AI_CORE_SQUAD_CHECKPOINT_DIR=         # 默认: storage/app/squad/
 # ─── /model auto 路由（SDK 0.9.8）───
 AI_CORE_AUTO_MODEL=true
 AI_CORE_AUTO_MODEL_PRO=               # null → SDK 默认 (deepseek-v4-pro)
-AI_CORE_AUTO_MODEL_FLASH=             # null → SDK 默认 (deepseek-v4-flash)
+AI_CORE_AUTO_MODEL_FLASH=             # null → SDK 默认 (deepseek-flash)
 AI_CORE_AUTO_MODEL_LONG_CTX=32000
 AI_CORE_AUTO_MODEL_TOOL_DEPTH=3
 AI_CORE_AUTO_MODEL_SCORE_CATALOG=     # 可选 ScoreCatalog JSON 路径

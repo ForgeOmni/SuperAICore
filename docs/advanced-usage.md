@@ -2313,7 +2313,7 @@ $result = app(Dispatcher::class)->dispatch([
     // Optional — override the global tier map for this dispatch.
     'tier_map' => [
         'trivial'  => ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5'],
-        'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-flash'],
+        'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-flash'],
         'moderate' => ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6'],
         'hard'     => ['provider' => 'anthropic', 'model' => 'claude-opus-4-7'],
     ],
@@ -4427,6 +4427,58 @@ SuperAgent 1.1.12's own `ModelTierMap` promotes Fable 5.1 to EXPERT. The host
 default stays on Opus 5 — a quarter of the price, and the tier map is a
 budget decision, not a capability ranking. Set `squad.tier_map.expert` to
 `claude-fable-5-1` when a squad genuinely needs the frontier tier.
+
+## 44. Retired-model sweep — `/model auto` and the samples that named a redirect (1.1.16 / SDK 1.1.16)
+
+A one-line SDK fix, and a reminder of what makes a retired model id dangerous.
+
+`AutoModelStrategy::FLASH` — the Flash half of the `/model auto` heuristic —
+still named `deepseek-v4-flash`. DeepSeek retired that id on 2026-09-10; it
+now exists purely as a redirect to V4.1 Flash. So `/model auto` kept working,
+kept costing the right amount, and kept pointing at something that is not a
+model. `AutoModelRouter` wraps the SDK strategy, so bumping the pin to
+`^1.1.16` is the whole host-side change:
+
+```php
+// Before (SDK ≤1.1.15): resolved to a compatibility redirect
+app(AutoModelRouter::class)->pick($messages, $system, []);   // deepseek-v4-flash
+
+// After (SDK 1.1.16)
+app(AutoModelRouter::class)->pick($messages, $system, []);   // deepseek-flash
+```
+
+Nothing about the routing decision changed — same thresholds, same intent
+keywords, same Pro escalation. Hosts that set
+`super-ai-core.auto_model.flash_model` (or `AI_CORE_AUTO_MODEL_FLASH`) were
+never affected.
+
+### Why a working call was still a bug
+
+A compatibility route is a grace period, not a contract. Nothing fails while
+it lasts, so nothing tells you the default drifted — and the failure, when it
+comes, lands on the default path in production. That is why 1.1.15 chased
+every *configured* reference to the retired id but the bug survived: it was
+hiding in a constant, one layer down, still returning 200s.
+
+The three host-side references that described current behaviour are corrected
+here too — the `AI_CORE_AUTO_MODEL_FLASH` comment in the env reference, the
+squad `tier_map` code sample above, and the shipped-defaults prose in the
+README.
+
+### What deliberately did not change
+
+`model_pricing` keeps its `deepseek-v4-flash`, `deepseek-chat` and
+`deepseek-reasoner` rows, and `CostCalculatorTest` still asserts they price
+at the V4.1 Flash rate. Two reasons, and both matter:
+
+1. Those ids still route upstream — a caller that pins one gets a working
+   call, and it should be costed.
+2. Historical `sac_usage` rows reference them. Deleting the rows would make
+   old runs price at $0 and silently rewrite past cost reports.
+
+Retiring a model id in the *catalog* and retiring it in the *ledger* are
+different operations. The catalog should name what you can call today; the
+ledger has to explain what you were billed for last month.
 
 ## See also
 

@@ -924,7 +924,7 @@ AI_CORE_SQUAD_CHECKPOINT_DIR=         # défaut : storage/app/squad/
 # ─── Routage /model auto (SDK 0.9.8) ───
 AI_CORE_AUTO_MODEL=true
 AI_CORE_AUTO_MODEL_PRO=               # null → défaut SDK (deepseek-v4-pro)
-AI_CORE_AUTO_MODEL_FLASH=             # null → défaut SDK (deepseek-v4-flash)
+AI_CORE_AUTO_MODEL_FLASH=             # null → défaut SDK (deepseek-flash)
 AI_CORE_AUTO_MODEL_LONG_CTX=32000
 AI_CORE_AUTO_MODEL_TOOL_DEPTH=3
 AI_CORE_AUTO_MODEL_SCORE_CATALOG=     # chemin optionnel d'un ScoreCatalog JSON

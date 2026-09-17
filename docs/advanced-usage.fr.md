@@ -2267,7 +2267,7 @@ $result = app(Dispatcher::class)->dispatch([
     // Optionnel — override le tier map global pour ce dispatch.
     'tier_map' => [
         'trivial'  => ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5'],
-        'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-flash'],
+        'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-flash'],
         'moderate' => ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6'],
         'hard'     => ['provider' => 'anthropic', 'model' => 'claude-opus-4-7'],
     ],
@@ -4462,6 +4462,63 @@ défaut hôte reste Opus 5 — quatre fois moins cher — parce que la table de
 paliers est une décision de budget, pas un classement de capacité. Passez
 `squad.tier_map.expert` à `claude-fable-5-1` quand un squad a réellement
 besoin du palier frontier.
+
+## 44. Balayage des modèles retirés — `/model auto` et les exemples qui nommaient une redirection (1.1.16 / SDK 1.1.16)
+
+Un correctif SDK d'une ligne, et un rappel de ce qui rend dangereux un id de
+modèle retiré.
+
+`AutoModelStrategy::FLASH` — la moitié Flash de l'heuristique `/model auto` —
+nommait encore `deepseek-v4-flash`. DeepSeek a retiré cet id le 2026-09-10 ;
+il n'existe plus que comme redirection vers V4.1 Flash. `/model auto`
+continuait donc de fonctionner, de coûter le bon prix, et de pointer vers
+quelque chose qui n'est pas un modèle. `AutoModelRouter` enveloppe la
+stratégie du SDK : passer l'épinglage à `^1.1.16` constitue tout le
+changement côté hôte.
+
+```php
+// Avant (SDK ≤1.1.15) : résolvait vers une redirection de compatibilité
+app(AutoModelRouter::class)->pick($messages, $system, []);   // deepseek-v4-flash
+
+// Après (SDK 1.1.16)
+app(AutoModelRouter::class)->pick($messages, $system, []);   // deepseek-flash
+```
+
+La décision de routage ne change en rien — mêmes seuils, mêmes mots-clés
+d'intention, même escalade vers Pro. Les hôtes qui définissent
+`super-ai-core.auto_model.flash_model` (ou `AI_CORE_AUTO_MODEL_FLASH`)
+n'ont jamais été concernés.
+
+### Pourquoi un appel qui réussit restait un bug
+
+Une route de compatibilité est un délai de grâce, pas un contrat. Tant qu'elle
+dure, rien n'échoue, donc rien ne signale que le défaut a dérivé — et la
+panne, quand elle arrive, tombe sur le chemin par défaut en production. C'est
+pourquoi la 1.1.15 avait traqué toutes les références *configurées* à l'id
+retiré sans tuer le bug : il se cachait dans une constante, un niveau plus
+bas, en renvoyant toujours des 200.
+
+Les trois références côté hôte décrivant le comportement actuel sont
+corrigées ici aussi — le commentaire `AI_CORE_AUTO_MODEL_FLASH` de la
+référence d'environnement, l'exemple de code `tier_map` ci-dessus, et la
+prose sur les défauts livrés dans le README.
+
+### Ce qui ne change pas, volontairement
+
+`model_pricing` conserve ses lignes `deepseek-v4-flash`, `deepseek-chat` et
+`deepseek-reasoner`, et `CostCalculatorTest` continue d'affirmer qu'elles se
+tarifent au taux V4.1 Flash. Deux raisons, toutes deux importantes :
+
+1. Ces ids routent toujours en amont — un appelant qui en épingle un obtient
+   un appel fonctionnel, et il doit être facturé.
+2. Les anciennes lignes `sac_usage` y font référence. Supprimer ces lignes
+   ferait tarifer les anciens runs à 0 $ et réécrirait silencieusement les
+   rapports de coûts passés.
+
+Retirer un id de modèle du *catalogue* et le retirer du *registre* sont deux
+opérations différentes. Le catalogue doit nommer ce que vous pouvez appeler
+aujourd'hui ; le registre doit expliquer ce qui vous a été facturé le mois
+dernier.
 
 ## Voir aussi
 
