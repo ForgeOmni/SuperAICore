@@ -40,6 +40,7 @@ Works standalone in a fresh Laravel install. The UI is optional and fully overri
   - [Copilot / Cursor / Kiro / Kimi audit wave (1.1.10)](#copilot--cursor--kiro--kimi-audit-wave-1110)
   - [Claude Opus 5 wave (1.1.11 / SDK 1.1.10)](#claude-opus-5-wave-1111--sdk-1110)
   - [deepseek-harness + five-flagship wave (1.1.12 / SDK 1.1.11)](#deepseek-harness--five-flagship-wave-1112--sdk-1111)
+  - [Frontier refresh + native Meta wave (1.1.15 / SDK 1.1.15)](#frontier-refresh--native-meta-wave-1115--sdk-1115)
   - [CLI installer & health](#cli-installer--health)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Model catalog](#model-catalog)
@@ -87,7 +88,7 @@ Each feature below is tagged with the version it landed in. Features without a t
   - **Alibaba Qwen Code CLI** *(since 0.9.8)* — gemini-cli fork (`QwenLM/qwen-code` v0.16.0). API key only via `DASHSCOPE_API_KEY` / `QWEN_API_KEY` (Qwen OAuth was EOL'd 2026-04-15). Default model `qwen3.7-max` — 1M context, $2.50/$7.50 per 1M, speaks Anthropic's `/v1/messages` natively (drop-in for Claude in fallback chains). **Usage billed.**
   - **Cursor Composer CLI** *(since 1.0.0)* — `builtin` (`cursor-agent login` browser OAuth → `~/.cursor`; headless runners may export `CURSOR_API_KEY`). Cursor's headless Composer agent (`cursor-agent`). Default model `composer-2.5-fast`; also proxies Anthropic (`claude-opus-4-8-thinking-high`) and OpenAI (`gpt-5.x-codex`) SKUs + an `auto` router. MCP via `.cursor/mcp.json`. **Subscription billed** — Cursor plan.
   - **xAI Grok Build CLI** *(since 1.0.0)* — `builtin` (`grok login` grok.com OAuth → `~/.grok`). xAI's "Grok Build" agentic CLI (`grok`). Default model `grok-build`; native sub-agents, effort control (`--effort low…max`), MCP via `grok mcp add`. **Subscription billed** — grok.com plan. *(Distinct from the metered xAI **API** provider type below.)*
-  - **SuperAgent SDK** — provider types: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` *(since 0.7.0)*, `lmstudio` *(since 0.7.0)*, `deepseek` *(since 0.9.0)*, `qwen-anthropic` *(since 0.9.8)*, and `grok` *(since 1.0.0 — metered xAI API, `XAI_API_KEY`/`GROK_API_KEY`, default `grok-4.3`, 1M context)*.
+  - **SuperAgent SDK** — provider types: `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` *(since 0.7.0)*, `lmstudio` *(since 0.7.0)*, `deepseek` *(since 0.9.0)*, `qwen-anthropic` *(since 0.9.8)*, `grok` *(since 1.0.0 — metered xAI API, `XAI_API_KEY`/`GROK_API_KEY`, default `grok-4.6`, 500K context)*, and `meta` / `meta-responses` *(since 1.1.15 — Meta Model API, Muse Spark 1.3, `META_API_KEY`/`MODEL_API_KEY`, 1M context)*.
 - **`openai-responses` provider type** *(since 0.7.0)* — routes through the SDK's `OpenAIResponsesProvider` against `/v1/responses`. Auto-detects Azure OpenAI deployments from the `base_url` pattern (adds `api-version=2025-04-01-preview` query string; override via `extra_config.azure_api_version`). When the row stores an `access_token` from a host-app ChatGPT-OAuth flow instead of an API key, the SDK flips the base URL to `chatgpt.com/backend-api/codex` so Plus / Pro / Business subscribers hit their subscription quota.
 - **`lmstudio` provider type** *(since 0.7.0)* — local LM Studio server (default `http://localhost:1234`). OpenAI-compat wire; no real API key needed — the SDK synthesises a placeholder `Authorization` header.
 - **Thirteen dispatcher adapters** behind the ten engines (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `kimi_cli`, `qwen_cli`, `cursor_cli`, `grok_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`). CLI adapters when a provider uses `builtin` / `kiro-api`; HTTP adapters when it uses an API key. Addressable directly from the CLI when needed.
@@ -142,6 +143,62 @@ refresh; SuperAICore forwards the session plumbing and reprices the catalog.
 - **Upstream honesty purge** — the SDK removed 20 placeholder tools that
   returned `status: simulated`; SuperAICore referenced none of them.
 - **Security:** Guzzle floor `^7.15.3` (CVE-2026-69246 / CVE-2026-69245).
+### Frontier refresh + native Meta wave (1.1.15 / SDK 1.1.15)
+
+SDK pin moves `^1.1.11` → `^1.1.15`, which is four SuperAgent releases in
+one: the 2026-09 model wave, a native Meta provider, its Responses route,
+and the background-response lifecycle. One SuperAICore release absorbs all
+of it.
+
+**New frontier models, propagated through the catalog, pricing table and
+pickers.**
+
+| Model | What changed |
+|---|---|
+| `claude-fable-5-1` | Anthropic's most capable widely released model (2026-09-01). Same $10/$50 as Fable 5, cache reads cut 75% to $0.25. Now the `fable` alias target in `ClaudeModelResolver`. **Forced `tool_choice` is gone** — the SDK downgrades `any`/`tool` to `auto` rather than 400ing |
+| `gpt-6-astra` | OpenAI's new flagship (2026-09-03) and the `openai-responses` default. $10/$1/$50. Effort dial `low…max` with **no `none` tier** |
+| `gemini-3.8-flash` | Google's coding/agent flagship (2026-09-02), the `gemini` default. `thinking_level: MINIMAL` is a hard error there and the SDK clamps it to `LOW` |
+| `deepseek-flash` | V4.1 Flash (2026-09-10), natively multimodal. **V4 Flash is retired** — `deepseek-v4-flash` only routes there now, so `squad.tier_map.easy`, the FIM service and `AutoModelRouter`'s documented default all move to the live id |
+| `qwen3.8-max-0902` | Qwen's flagship snapshot (2026-09-02) |
+| `glm-5.3` / `glm-5.3-flash` | 5.3's standalone API went GA at the 5.2 rate, so it takes over the `glm` default; 5.3-Flash is Z.ai's first natively multimodal GLM-5 |
+
+**Repricing is not cosmetic — cost dashboards were wrong.** `model_pricing`
+now carries: Sonnet 5 at **$2/$10** (the intro rate became permanent; the
+$3/$15 increase scheduled for 2026-09-01 was cancelled), the whole GPT-5.6
+line marked down at the Astra launch (Sol $5/$30 → **$4/$20**, Terra
+$2.50/$15 → **$2/$12**, Luna $1/$6 → **$0.20/$1.20**), DeepSeek moved onto
+its peak/off-peak model (V4-Pro $0.435/$0.87 → **$0.66/$1.98** off-peak
+base), and Grok 4.5's cache-hit tier corrected to $0.30 (it was carrying
+4.6's $0.50). GPT-5.5, Grok 4.6, Gemini 3.7/3.8, the Qwen 3.8 line and
+GLM-5.3 gain rows.
+
+**Two new provider types — `meta` and `meta-responses`.** Meta serves Muse
+Spark over three protocols with the same key and billing, and they are
+*not* cosmetic variants, so they get separate types:
+
+- **`meta`** → SDK `MetaProvider`, Chat Completions. One-shot calls. The
+  chain of thought is discarded at each turn boundary.
+- **`meta-responses`** → SDK `MetaResponsesProvider`, Responses API. The
+  only route that replays reasoning **across** turns, so this is the one for
+  agent loops. It also carries the background-response lifecycle: submit a
+  turn, poll it, fetch it, cancel or delete it — a turn that runs for many
+  minutes no longer has to be tied to an open connection.
+- (Meta's Anthropic-compatible Messages route needs no new type — point an
+  `anthropic-proxy` row at `https://api.meta.ai`.)
+
+Both read `META_API_KEY` with `MODEL_API_KEY` — the name Meta's own docs use
+— aliased onto the same field. `ApiHealthDetector` probes `meta`, and
+`muse-spark-1.3` joins the SuperAgent engine picker.
+
+> The `-contributor` SKUs are priced in `model_pricing` for hosts that opt
+> in, but nothing routes to them implicitly: they are ~12× cheaper because
+> Meta trains on your prompts and completions, so the id has to be asked for
+> by name.
+
+**Squad expert tier stays on Opus 5.** SuperAgent 1.1.12's own
+`ModelTierMap` promotes Fable 5.1 to EXPERT; the host default keeps Opus 5
+because it is a quarter of the price. Set `squad.tier_map.expert` to
+`claude-fable-5-1` for frontier-tier squads.
 
 ### Claude Opus 5 wave (1.1.11 / SDK 1.1.10)
 

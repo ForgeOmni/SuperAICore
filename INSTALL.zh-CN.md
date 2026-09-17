@@ -22,6 +22,7 @@
   - OpenAI API Key —— `openai_api`
   - Google AI Studio Key —— `gemini_api`
   - xAI API Key（`XAI_API_KEY` / `GROK_API_KEY`）—— 经 `superagent` 走按量计费的 `grok` provider type（1.0.0+）
+  - Meta Model API Key（`META_API_KEY` / `MODEL_API_KEY`）—— 经 `superagent` 走 `meta` / `meta-responses` provider type（1.1.15+，Muse Spark）
 
 ## 2. 通过 Composer 安装
 
@@ -133,6 +134,11 @@ AI_CORE_GROK_ALWAYS_APPROVE=true
 # 经 superagent 走按量计费的 `grok` provider type 所需的 xAI API key（1.0.0+）。
 # 与上面 grok.com 订阅制的 `grok` CLI 引擎是两回事。
 # XAI_API_KEY=xai-...  # 也接受 GROK_API_KEY 作为后备名
+# Meta Model API key，经 superagent 用于 `meta`（Chat Completions）与
+# `meta-responses`（Responses —— 跨轮推理复用 + 后台任务）两个 provider
+# type（1.1.15+）。在 Meta Developer Console 申请；MODEL_API_KEY 是 Meta
+# 官方文档使用的名字。
+# META_API_KEY=...     # 也接受 MODEL_API_KEY
 # 0.6.0+：CLI 启动时可选的模型目录自动刷新。两个都要设置才会触发，
 # 且本地覆盖文件超过 7 天才会真正执行；网络错误会被吞掉。
 # SUPERAGENT_MODELS_URL=https://your-cdn/models.json

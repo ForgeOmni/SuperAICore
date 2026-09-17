@@ -4337,6 +4337,96 @@ the vendor CLIs' own catalogs (grok CLI still routes `grok-4.5`), not the
 metered API catalog.
 
 ---
+## 43. Frontier refresh + the native Meta provider (1.1.15 / SDK 1.1.15)
+
+One SuperAICore release absorbs four SuperAgent ones (`^1.1.11` → `^1.1.15`).
+Most of it is catalog and pricing data, which propagates without host code —
+the parts that *did* need code are below.
+
+### What the SDK bump changes on its own
+
+`EngineCatalog::expandFromCatalog()` unions the SDK's `ModelCatalog` into the
+`claude` / `gemini` / `codex` engine pickers, so `claude-fable-5-1`,
+`gemini-3.8-flash` and `gpt-6-astra` appear in those dropdowns the moment the
+dependency is updated. The `superagent` engine seed is explicit (it does not
+expand), so it is hand-listed: every provider's current default plus
+`muse-spark-1.3`.
+
+### Where a pinned id stopped being the right one
+
+Retirements matter more than additions, because a stale id keeps *working*
+right up until it doesn't:
+
+- **`deepseek-v4-flash` is retired.** DeepSeek routes it to V4.1 Flash for
+  compatibility, so nothing breaks today — but the host was naming a model
+  that no longer exists. `squad.tier_map.easy`, `DeepSeekFimService` and
+  `AutoModelRouter`'s documented default now say `deepseek-flash`.
+- **`fable` now resolves to `claude-fable-5-1`** in `ClaudeModelResolver`.
+  Fable 5 stays reachable by its exact id — pinning still pins.
+
+### Pricing was wrong, not just stale
+
+`model_pricing` drives the cost dashboard, so a stale rate is a wrong number
+on a screen someone makes decisions from:
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| `claude-sonnet-5` | $3 / $15 | **$2 / $10** | the intro rate became permanent; the 2026-09-01 increase was cancelled |
+| `gpt-5.6-sol` | $5 / $30 | **$4 / $20** | repriced at the GPT-6 Astra launch |
+| `gpt-5.6-terra` | $2.50 / $15 | **$2 / $12** | same |
+| `gpt-5.6-luna` | $1 / $6 | **$0.20 / $1.20** | same |
+| `deepseek-v4-pro` | $0.435 / $0.87 | **$0.66 / $1.98** | moved to the peak/off-peak model (off-peak base carried here) |
+| `deepseek-v4-flash` | $0.14 / $0.28 | **$0.15 / $0.60** | now bills at the V4.1 Flash rate it routes to |
+| `grok-4.5` cache-hit | $0.50 | **$0.30** | it was carrying 4.6's rate |
+
+New rows: `gpt-6-astra`, `gpt-5.5`, `claude-fable-5-1`, `gemini-3.8-flash`,
+`gemini-3.7-flash`, `deepseek-flash`, the Qwen 3.8 line, `glm-5.3`,
+`glm-5.3-flash`, `grok-4.6`, and the Muse Spark family.
+
+### The native Meta provider — two types, deliberately
+
+```php
+// One-shot call
+AiProvider::create(['type' => 'meta', 'backend' => 'superagent', /* … */]);
+
+// Agent loop — reasoning survives the turn boundary
+AiProvider::create(['type' => 'meta-responses', 'backend' => 'superagent', /* … */]);
+```
+
+Meta serves Muse Spark over three protocols with one key and one bill. Two of
+them are wired as separate provider types because they behave differently:
+
+- **`meta`** → `MetaProvider`, Chat Completions. The chain of thought is
+  discarded at every turn boundary.
+- **`meta-responses`** → `MetaResponsesProvider`, Responses API. The only
+  route that replays reasoning **across** turns — use it for agent loops —
+  and the one carrying the background-response lifecycle (`submitBackground`
+  → `poll` → `fetch`, plus `cancel` / `deleteBackground` / `followBackground`).
+  A turn that runs for many minutes no longer needs an open connection.
+- Meta's Anthropic-compatible Messages route needs **no** new type: point an
+  `anthropic-proxy` row at `https://api.meta.ai`.
+
+Both descriptors declare `META_API_KEY` as canonical with `MODEL_API_KEY` —
+the name Meta's own docs use — aliased onto the same `api_key` field, so a
+host that already exports either name works unchanged. `ApiHealthDetector`
+gains `meta` in `DEFAULT_PROVIDERS`.
+
+The SDK handles the Muse Spark surface quirks (no `reasoning_effort: none`,
+`max_completion_tokens` instead of `max_tokens`, `developer` outranking
+`system`, unsupported OpenAI params stripped); nothing host-side needs to
+know about them.
+
+> **`-contributor` is priced but never routed to.** Those SKUs are ~12×
+> cheaper because Meta trains on your prompts and completions. They are in
+> `model_pricing` so hosts that opt in get accurate dashboards — but no alias
+> resolves to them, so the trade has to be made on purpose.
+
+### Squad expert tier: a deliberate divergence
+
+SuperAgent 1.1.12's own `ModelTierMap` promotes Fable 5.1 to EXPERT. The host
+default stays on Opus 5 — a quarter of the price, and the tier map is a
+budget decision, not a capability ranking. Set `squad.tier_map.expert` to
+`claude-fable-5-1` when a squad genuinely needs the frontier tier.
 
 ## See also
 

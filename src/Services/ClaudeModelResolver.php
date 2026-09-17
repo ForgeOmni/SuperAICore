@@ -26,7 +26,7 @@ class ClaudeModelResolver
         // the Opus tier; the CLI's `sonnet` alias now resolves to Sonnet 5.
         // SDK 1.1.10 moved the `opus` alias onto Opus 5 — a drop-in upgrade
         // over Opus 4.8 at the same $5/$25.
-        'fable'  => 'claude-fable-5',
+        'fable'  => 'claude-fable-5-1',
         'opus'   => 'claude-opus-5',
         'sonnet' => 'claude-sonnet-5',
         'haiku'  => 'claude-haiku-4-5-20251001',
@@ -44,6 +44,7 @@ class ClaudeModelResolver
         // capable model — native 1M context, adaptive thinking, effort
         // dial; Sonnet 5 shares the same adaptive surface at the Sonnet
         // tier. Both are natively 1M — no [1m] beta suffix variants.
+        ['slug' => 'claude-fable-5-1',       'display_name' => 'Fable 5.1 — 1M context','family' => 'fable'],
         ['slug' => 'claude-fable-5',         'display_name' => 'Fable 5 — 1M context', 'family' => 'fable'],
         ['slug' => 'claude-sonnet-5',        'display_name' => 'Sonnet 5 — 1M context','family' => 'sonnet'],
 

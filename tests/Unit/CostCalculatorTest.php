@@ -95,9 +95,34 @@ class CostCalculatorTest extends TestCase
 
     public function test_gpt_56_sol_pricing_from_seeded_config(): void
     {
-        // SDK 1.1.6 — gpt-5.6-sol $5 in / $30 out per 1M, cached input $0.50.
+        // Repriced at the GPT-6 Astra launch (SDK 1.1.12): sol $4 in / $20
+        // out per 1M, cached input $0.40.
         $calc = new CostCalculator();
-        $this->assertEqualsWithDelta(35.0, $calc->calculate('gpt-5.6-sol', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(24.0, $calc->calculate('gpt-5.6-sol', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_gpt_6_astra_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.12 — the new frontier flagship at $10 in / $50 out per 1M.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(60.0, $calc->calculate('gpt-6-astra', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_muse_spark_pricing_from_seeded_config(): void
+    {
+        // SDK 1.1.13 — native Meta provider. Standard tier $1.25 / $4.25;
+        // the contributor tier is ~12x cheaper because Meta trains on your
+        // prompts and completions.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(5.5, $calc->calculate('muse-spark-1.3', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(0.3, $calc->calculate('muse-spark-1.3-contributor', 1_000_000, 1_000_000), 0.0001);
+    }
+
+    public function test_sonnet_5_intro_rate_is_now_permanent(): void
+    {
+        // The $3/$15 increase scheduled for 2026-09-01 was cancelled.
+        $calc = new CostCalculator();
+        $this->assertEqualsWithDelta(12.0, $calc->calculate('claude-sonnet-5', 1_000_000, 1_000_000), 0.0001);
     }
 
     public function test_grok_45_pricing_from_seeded_config(): void
@@ -119,13 +144,16 @@ class CostCalculatorTest extends TestCase
 
     public function test_deepseek_v4_ga_pricing_from_seeded_config(): void
     {
-        // SDK 1.1.11 — DeepSeek V4 GA off-peak base rates: Pro $0.66 in /
-        // $1.98 out (cache-hit $0.022); Flash $0.22 / $0.66 (cache-hit
-        // $0.007). Retired chat/reasoner aliases track their successors.
+        // Off-peak base rates. Pro is unchanged at $0.66 in / $1.98 out
+        // (cache-hit $0.022). The Flash tier is now V4.1 Flash
+        // (`deepseek-flash`, SDK 1.1.12) at $0.15 / $0.60 — V4 Flash is
+        // retired and its id only routes there, so it bills the same; the
+        // retired chat/reasoner aliases still track their successors.
         $calc = new CostCalculator();
         $this->assertEqualsWithDelta(2.64, $calc->calculate('deepseek-v4-pro', 1_000_000, 1_000_000), 0.0001);
-        $this->assertEqualsWithDelta(0.88, $calc->calculate('deepseek-v4-flash', 1_000_000, 1_000_000), 0.0001);
-        $this->assertEqualsWithDelta(0.88, $calc->calculate('deepseek-chat', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(0.75, $calc->calculate('deepseek-flash', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(0.75, $calc->calculate('deepseek-v4-flash', 1_000_000, 1_000_000), 0.0001);
+        $this->assertEqualsWithDelta(0.75, $calc->calculate('deepseek-chat', 1_000_000, 1_000_000), 0.0001);
         $this->assertEqualsWithDelta(2.64, $calc->calculate('deepseek-reasoner', 1_000_000, 1_000_000), 0.0001);
     }
 

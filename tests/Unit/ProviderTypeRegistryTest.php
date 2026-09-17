@@ -27,6 +27,10 @@ final class ProviderTypeRegistryTest extends TestCase
             AiProvider::TYPE_GROK,
             AiProvider::TYPE_KIRO_API,
             AiProvider::TYPE_LMSTUDIO,
+            // Meta Model API — Muse Spark, both protocol routes
+            // (added 1.1.15 alongside SDK 1.1.13 / 1.1.14).
+            AiProvider::TYPE_META,
+            AiProvider::TYPE_META_RESPONSES,
             AiProvider::TYPE_MOONSHOT_BUILTIN,
             AiProvider::TYPE_OPENAI,
             AiProvider::TYPE_OPENAI_COMPATIBLE,
@@ -188,6 +192,35 @@ final class ProviderTypeRegistryTest extends TestCase
             AiProvider::TYPE_GROK,
             array_keys($registry->forBackend(AiProvider::BACKEND_SUPERAGENT))
         );
+    }
+
+    public function test_meta_descriptors_cover_both_protocol_routes(): void
+    {
+        $registry = new ProviderTypeRegistry();
+
+        foreach ([
+            AiProvider::TYPE_META           => 'meta',
+            AiProvider::TYPE_META_RESPONSES => 'meta-responses',
+        ] as $type => $sdkProvider) {
+            $descriptor = $registry->get($type);
+
+            $this->assertInstanceOf(ProviderTypeDescriptor::class, $descriptor, $type);
+            $this->assertSame($sdkProvider, $descriptor->sdkProvider, $type);
+            // META_API_KEY is canonical; MODEL_API_KEY — the name Meta's own
+            // docs use — is aliased off the same api_key field.
+            $this->assertSame('META_API_KEY', $descriptor->envKey, $type);
+            $this->assertSame('api_key', $descriptor->envExtras['MODEL_API_KEY'] ?? null, $type);
+            $this->assertSame(['api_key'], $descriptor->fields, $type);
+            $this->assertTrue($descriptor->needsApiKey, $type);
+            $this->assertFalse($descriptor->needsBaseUrl, $type);
+            // BYO-key SDK providers — superagent backend only.
+            $this->assertSame([AiProvider::BACKEND_SUPERAGENT], $descriptor->allowedBackends, $type);
+            $this->assertContains(
+                $type,
+                array_keys($registry->forBackend(AiProvider::BACKEND_SUPERAGENT)),
+                $type
+            );
+        }
     }
 
     public function test_anthropic_proxy_sdk_provider_is_anthropic(): void

@@ -4,6 +4,75 @@ All notable changes to `forgeomni/superaicore`, in full engineering detail — c
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.15] — 2026-09-17
+
+**SDK pin `^1.1.11` → `^1.1.15` (four SuperAgent releases), two new provider
+types for Meta's Model API, and a pricing-table correction pass.** SuperAgent
+1.1.12 shipped the 2026-09 model wave, 1.1.13 a native `meta` provider, 1.1.14
+its `meta-responses` route, and 1.1.15 the background-response lifecycle. One
+SuperAICore release absorbs all of it, on top of the SDK 1.1.11 work that
+shipped in SuperAICore 1.1.12.
+
+### Added
+
+- **`AiProvider::TYPE_META` / `TYPE_META_RESPONSES`** (`meta`,
+  `meta-responses`) — registered in `TYPES` and in
+  `BACKEND_TYPES[BACKEND_SUPERAGENT]`. Two types rather than one because the
+  routes differ behaviourally, not cosmetically: Chat Completions discards
+  the chain of thought at each turn boundary, while Responses replays it
+  across turns and carries the background lifecycle (`submitBackground` →
+  `poll` → `fetch`, plus `cancel` / `deleteBackground` / `followBackground`).
+  Meta's Anthropic-compatible Messages route needs no type — an
+  `anthropic-proxy` row pointed at `https://api.meta.ai` covers it.
+- **`ProviderTypeRegistry`** descriptors for both: `sdk_provider` `meta` /
+  `meta-responses`, `env_key` `META_API_KEY` with `env_extras`
+  `MODEL_API_KEY → api_key` (the name Meta's own docs use), `api_key`-only
+  fields, `superagent` backend only.
+- **`ApiHealthDetector`**: `meta` in `DEFAULT_PROVIDERS`, `META_API_KEY` in
+  `ENV_KEY`.
+- **`model_pricing`**: `gpt-6-astra`, `gpt-5.5`, `claude-fable-5-1`,
+  `gemini-3.8-flash`, `gemini-3.7-flash`, `deepseek-flash`,
+  `qwen3.8-max-0902` / `qwen3.8-max` / `qwen3.8-flash` / `qwen3.8-27b`,
+  `glm-5.3`, `glm-5.3-flash`, `grok-4.6`, and the Muse Spark family
+  (standard + `-contributor` tiers).
+- Tests: `ProviderTypeRegistryTest::test_meta_descriptors_cover_both_protocol_routes`,
+  plus `CostCalculatorTest` cases for GPT-6 Astra, Muse Spark (both tiers)
+  and the permanent Sonnet 5 rate.
+
+### Fixed
+
+- **Stale prices in `model_pricing`** — these drove the cost dashboard, so
+  they were wrong numbers on a decision surface, not cosmetic drift:
+  `claude-sonnet-5` $3/$15 → **$2/$10** (intro rate made permanent; the
+  2026-09-01 increase was cancelled); `gpt-5.6-sol` $5/$30 → **$4/$20**,
+  `gpt-5.6-terra` $2.50/$15 → **$2/$12**, `gpt-5.6-luna` $1/$6 →
+  **$0.20/$1.20** (repriced at the GPT-6 Astra launch); `deepseek-v4-pro`
+  $0.435/$0.87 → **$0.66/$1.98** and `deepseek-v4-flash` $0.14/$0.28 →
+  **$0.15/$0.60** (peak/off-peak model, off-peak base carried);
+  `grok-4.5` cache-hit $0.50 → **$0.30** (it was carrying 4.6's rate).
+- **Retired `deepseek-v4-flash` id** replaced with `deepseek-flash` in
+  `squad.tier_map.easy`, `DeepSeekFimService::complete()` and the
+  `AutoModelRouter` docblock. The old id still routes upstream, so this was
+  silent-until-it-isn't drift.
+
+### Changed
+
+- `composer.json`: `forgeomni/superagent` `^1.1.11` → `^1.1.15`.
+- `Console\Application` version `1.1.12` → `1.1.15`. 1.1.13 / 1.1.14 are
+  skipped on purpose: the host version now tracks the SuperAgent release it
+  pins, so the pair reads `superaicore 1.1.15` / `superagent 1.1.15`.
+- `EngineCatalog` `superagent` seed now lists each provider's current SDK
+  default plus `muse-spark-1.3`: `claude-fable-5-1`, `claude-opus-5`,
+  `claude-sonnet-5`, `gpt-6-astra`, `gemini-3.8-flash`, `deepseek-flash`,
+  `deepseek-v4-pro`, `qwen3.8-max-0902`, `glm-5.3`, `MiniMax-M3`,
+  `grok-4.6`, `kimi-k3`, `muse-spark-1.3`. (The `claude` / `gemini` /
+  `codex` engines expand from the SDK catalog automatically and needed no
+  seed change.)
+- `ClaudeModelResolver`: `fable` family target `claude-fable-5` →
+  `claude-fable-5-1`; Fable 5 stays in the catalog by exact id.
+- `squad.tier_map` keeps `expert` on `claude-opus-5` even though SuperAgent
+  1.1.12's own `ModelTierMap` promotes Fable 5.1 there — documented inline as
+  a cost decision, overridable per dispatch.
 ## [Unreleased]
 
 ## [1.1.12] — 2026-08-14

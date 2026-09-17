@@ -4367,6 +4367,101 @@ place : ils sont attestés contre les catalogues des CLI eux-mêmes (le CLI
 grok route toujours `grok-4.5`), pas contre le catalogue API au compteur.
 
 ---
+## 43. Rafraîchissement frontier + le provider Meta natif (1.1.15 / SDK 1.1.15)
+
+Une seule version de SuperAICore absorbe quatre versions de SuperAgent
+(`^1.1.11` → `^1.1.15`). L'essentiel est du catalogue et des tarifs, qui se
+propagent sans code hôte — voici les parties qui ont *réellement* demandé du
+code.
+
+### Ce que le bump du SDK change tout seul
+
+`EngineCatalog::expandFromCatalog()` réunit le `ModelCatalog` du SDK dans les
+sélecteurs des moteurs `claude` / `gemini` / `codex` : `claude-fable-5-1`,
+`gemini-3.8-flash` et `gpt-6-astra` apparaissent dans ces listes dès que la
+dépendance est mise à jour. La seed du moteur `superagent` est explicite
+(elle ne fait pas d'expansion) et reste donc tenue à la main : le défaut
+courant de chaque provider, plus `muse-spark-1.3`.
+
+### Là où un id épinglé a cessé d'être le bon
+
+Les retraits comptent plus que les ajouts, parce qu'un id périmé continue de
+*fonctionner* — jusqu'au jour où non :
+
+- **`deepseek-v4-flash` est retiré.** DeepSeek le route vers V4.1 Flash par
+  compatibilité, donc rien ne casse aujourd'hui — mais l'hôte nommait un
+  modèle qui n'existe plus. `squad.tier_map.easy`, `DeepSeekFimService` et le
+  défaut documenté d'`AutoModelRouter` disent désormais `deepseek-flash`.
+- **`fable` résout vers `claude-fable-5-1`** dans `ClaudeModelResolver`.
+  Fable 5 reste joignable par son id exact — épingler épingle toujours.
+
+### Les tarifs n'étaient pas seulement périmés, ils étaient faux
+
+`model_pricing` alimente le tableau de coûts : un tarif périmé, c'est un
+chiffre faux sur un écran qui sert à décider.
+
+| Ligne | Avant | Maintenant | Pourquoi |
+|---|---|---|---|
+| `claude-sonnet-5` | 3 $ / 15 $ | **2 $ / 10 $** | le tarif de lancement est devenu permanent ; la hausse du 2026-09-01 a été annulée |
+| `gpt-5.6-sol` | 5 $ / 30 $ | **4 $ / 20 $** | retarifé au lancement de GPT-6 Astra |
+| `gpt-5.6-terra` | 2,50 $ / 15 $ | **2 $ / 12 $** | idem |
+| `gpt-5.6-luna` | 1 $ / 6 $ | **0,20 $ / 1,20 $** | idem |
+| `deepseek-v4-pro` | 0,435 $ / 0,87 $ | **0,66 $ / 1,98 $** | passé au modèle heures pleines/creuses (base heures creuses ici) |
+| `deepseek-v4-flash` | 0,14 $ / 0,28 $ | **0,15 $ / 0,60 $** | facturé au tarif du V4.1 Flash vers lequel il route |
+| cache-hit `grok-4.5` | 0,50 $ | **0,30 $** | il portait le tarif de 4.6 |
+
+Nouvelles lignes : `gpt-6-astra`, `gpt-5.5`, `claude-fable-5-1`,
+`gemini-3.8-flash`, `gemini-3.7-flash`, `deepseek-flash`, la ligne Qwen 3.8,
+`glm-5.3`, `glm-5.3-flash`, `grok-4.6` et la famille Muse Spark.
+
+### Le provider Meta natif — deux types, délibérément
+
+```php
+// Appel one-shot
+AiProvider::create(['type' => 'meta', 'backend' => 'superagent', /* … */]);
+
+// Boucle d'agent — le raisonnement survit à la frontière de tour
+AiProvider::create(['type' => 'meta-responses', 'backend' => 'superagent', /* … */]);
+```
+
+Meta sert Muse Spark via trois protocoles, une clé, une facture. Deux d'entre
+eux sont câblés comme des types distincts parce qu'ils se comportent
+différemment :
+
+- **`meta`** → `MetaProvider`, Chat Completions. La chaîne de pensée est
+  jetée à chaque frontière de tour.
+- **`meta-responses`** → `MetaResponsesProvider`, Responses API. La seule
+  route qui rejoue le raisonnement **entre** les tours — à utiliser pour les
+  boucles d'agent — et celle qui porte le cycle de vie des réponses en
+  arrière-plan (`submitBackground` → `poll` → `fetch`, plus `cancel` /
+  `deleteBackground` / `followBackground`). Un tour de plusieurs dizaines de
+  minutes n'a plus besoin d'une connexion ouverte.
+- La route Messages compatible Anthropic de Meta ne demande **aucun** type
+  nouveau : pointez une ligne `anthropic-proxy` sur `https://api.meta.ai`.
+
+Les deux descripteurs déclarent `META_API_KEY` comme canonique, avec
+`MODEL_API_KEY` — le nom qu'emploie la doc de Meta — aliasé sur le même champ
+`api_key` : un hôte qui exporte déjà l'un ou l'autre fonctionne sans
+changement. `ApiHealthDetector` gagne `meta` dans `DEFAULT_PROVIDERS`.
+
+Le SDK absorbe les particularités de Muse Spark (pas de
+`reasoning_effort: none`, `max_completion_tokens` au lieu de `max_tokens`,
+`developer` primant sur `system`, paramètres OpenAI non supportés retirés) ;
+rien de tout cela ne remonte côté hôte.
+
+> **`-contributor` est tarifé mais jamais routé.** Ces SKU sont ~12× moins
+> chers parce que Meta entraîne ses modèles sur vos prompts et complétions.
+> Ils figurent dans `model_pricing` pour que les hôtes qui les choisissent
+> aient des tableaux justes — mais aucun alias n'y résout : l'échange doit
+> être fait exprès.
+
+### Palier « expert » du squad : une divergence assumée
+
+Le `ModelTierMap` de SuperAgent 1.1.12 promeut Fable 5.1 au palier EXPERT. Le
+défaut hôte reste Opus 5 — quatre fois moins cher — parce que la table de
+paliers est une décision de budget, pas un classement de capacité. Passez
+`squad.tier_map.expert` à `claude-fable-5-1` quand un squad a réellement
+besoin du palier frontier.
 
 ## Voir aussi
 

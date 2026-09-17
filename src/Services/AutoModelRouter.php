@@ -36,7 +36,7 @@ use SuperAgent\Routing\AutoModelStrategy;
  *   - `super-ai-core.auto_model.pro_keywords`         list<string>, defaults to SDK's
  *   - `super-ai-core.auto_model.score_catalog_path`   ?string, opt-in eval routing
  *   - `super-ai-core.auto_model.pro_model`            ?string, override `deepseek-v4-pro`
- *   - `super-ai-core.auto_model.flash_model`          ?string, override `deepseek-v4-flash`
+ *   - `super-ai-core.auto_model.flash_model`          ?string, override `deepseek-flash`
  *
  * The strategy is stateless across calls — fast to construct, no need
  * to memoize within a request. We bind it as a Laravel singleton because

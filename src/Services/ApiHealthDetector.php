@@ -63,6 +63,7 @@ final class ApiHealthDetector
         'glm',
         'minimax',
         'grok',
+        'meta',
     ];
 
     /**
@@ -85,6 +86,9 @@ final class ApiHealthDetector
         // xAI Grok. SDK reads XAI_API_KEY first, GROK_API_KEY as fallback;
         // we gate on the canonical one for the "configured?" check.
         'grok'        => 'XAI_API_KEY',
+        // Meta Model API. SDK reads META_API_KEY first, MODEL_API_KEY as
+        // fallback; we gate on the canonical one for the configured check.
+        'meta'        => 'META_API_KEY',
     ];
 
     /**

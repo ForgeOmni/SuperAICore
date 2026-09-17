@@ -40,6 +40,7 @@
   - [第二波 CLI 审计波次（1.1.10）](#第二波-cli-审计波次1110)
   - [Claude Opus 5 波次（1.1.11 / SDK 1.1.10）](#claude-opus-5-波次1111--sdk-1110)
   - [deepseek-harness + 五旗舰波次（1.1.12 / SDK 1.1.11）](#deepseek-harness--五旗舰波次1112--sdk-1111)
+  - [前沿模型刷新 + 原生 Meta 波次（1.1.15 / SDK 1.1.15）](#前沿模型刷新--原生-meta-波次1115--sdk-1115)
   - [CLI 安装器与健康检查](#cli-安装器与健康检查)
   - [Dispatcher 与流式输出](#dispatcher-与流式输出)
   - [模型目录](#模型目录)
@@ -87,7 +88,7 @@
   - **Alibaba Qwen Code CLI**（0.9.8+）—— gemini-cli 的分支（`QwenLM/qwen-code` v0.16.0），适配 Qwen 模型家族。仅支持 API key（`DASHSCOPE_API_KEY` / `QWEN_API_KEY`），OAuth 免费层已于 2026-04-15 EOL。默认模型 `qwen3.7-max`：1M 上下文、$2.50/$7.50 per 1M、原生支持 Anthropic `/v1/messages` 协议（在 fallback 链里可作为 Claude 的无缝替代）。**用量计费。**
   - **Cursor Composer CLI**（1.0.0+）—— `builtin`（`cursor-agent login` 浏览器 OAuth → `~/.cursor`；headless 可导出 `CURSOR_API_KEY`）。Cursor 的 headless Composer 智能体（`cursor-agent`）。默认模型 `composer-2.5-fast`，同时代理 Anthropic（`claude-opus-4-8-thinking-high`）与 OpenAI（`gpt-5.x-codex`）模型及 `auto` 路由。MCP 走 `.cursor/mcp.json`。**订阅计费** —— Cursor 套餐。
   - **xAI Grok Build CLI**（1.0.0+）—— `builtin`（`grok login` grok.com OAuth → `~/.grok`）。xAI 的「Grok Build」agentic CLI（`grok`）。默认模型 `grok-build`；原生 sub-agents、effort 控制（`--effort low…max`）、MCP 走 `grok mcp add`。**订阅计费** —— grok.com 套餐。*（与下方计量的 xAI **API** provider 类型是两条独立通道。）*
-  - **SuperAgent SDK** —— provider 类型：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`，加上 `openai-responses`（0.7.0+）、`lmstudio`（0.7.0+）、`deepseek`（0.9.0+）、`qwen-anthropic`（0.9.8+），以及 `grok`（1.0.0+ —— 计量的 xAI API，`XAI_API_KEY`/`GROK_API_KEY`，默认 `grok-4.3`，1M 上下文）。
+  - **SuperAgent SDK** —— provider 类型：`anthropic`、`anthropic-proxy`、`openai`、`openai-compatible`，加上 `openai-responses`（0.7.0+）、`lmstudio`（0.7.0+）、`deepseek`（0.9.0+）、`qwen-anthropic`（0.9.8+），`grok`（1.0.0+ —— 计量的 xAI API，`XAI_API_KEY`/`GROK_API_KEY`，默认 `grok-4.6`，500K 上下文），以及 `meta` / `meta-responses`（1.1.15+ —— Meta Model API，Muse Spark 1.3，`META_API_KEY`/`MODEL_API_KEY`，1M 上下文）。
 - **`openai-responses` provider 类型**（0.7.0+）—— 通过 SDK 的 `OpenAIResponsesProvider` 走 `/v1/responses`。依据 `base_url` 形状自动识别 Azure OpenAI 部署（自动追加 `api-version=2025-04-01-preview`；可通过 `extra_config.azure_api_version` 覆盖）。若此行没存 API key 而是 `extra_config.access_token`（来自宿主 ChatGPT-OAuth 流程），SDK 会自动把 base URL 切到 `chatgpt.com/backend-api/codex`，让 Plus / Pro / Business 订阅用户走自家订阅配额。
 - **`lmstudio` provider 类型**（0.7.0+）—— 本地 LM Studio 服务（默认 `http://localhost:1234`）。走 OpenAI-compat 接线，无需真 API key —— SDK 自动合成占位 `Authorization` 头。
 - **十三个 dispatcher 适配器**对应十个引擎（`claude_cli`、`codex_cli`、`gemini_cli`、`copilot_cli`、`kiro_cli`、`kimi_cli`、`qwen_cli`、`cursor_cli`、`grok_cli`、`superagent`、`anthropic_api`、`openai_api`、`gemini_api`）—— `builtin` / `kiro-api` 走 CLI 适配器，API Key 走 HTTP 适配器。CLI 也可以直接指定这些适配器名。
@@ -142,6 +143,52 @@ deepseek-ai/deepseek-harness 的想法，外加五个供应商旗舰的刷新；
 - **上游诚实性清理** —— SDK 删除了 20 个只会返回 `status: simulated` 的
   占位工具；SuperAICore 从未引用过任何一个。
 - **安全**：Guzzle 下限升至 `^7.15.3`（CVE-2026-69246 / CVE-2026-69245）。
+### 前沿模型刷新 + 原生 Meta 波次（1.1.15 / SDK 1.1.15）
+
+SDK 依赖从 `^1.1.11` 提到 `^1.1.15` —— 一次吃下 SuperAgent 的四个版本：
+2026-09 模型潮、原生 Meta provider、它的 Responses 路由，以及后台响应生命周期。
+SuperAICore 用**一个**版本全部吸收。
+
+**新的前沿模型，已贯通 catalog、价格表与各处选择器。**
+
+| 模型 | 变化 |
+|---|---|
+| `claude-fable-5-1` | Anthropic 目前公开发布的最强模型（2026-09-01）。价格与 Fable 5 相同（$10/$50），缓存读取降价 75% 至 $0.25。现在是 `ClaudeModelResolver` 里 `fable` 别名的落点。**强制 `tool_choice` 已被移除** —— SDK 会把 `any`/`tool` 降级为 `auto`，而不是 400 |
+| `gpt-6-astra` | OpenAI 的新旗舰（2026-09-03），`openai-responses` 默认模型。$10/$1/$50。effort 档位 `low…max`，**没有 `none` 档** |
+| `gemini-3.8-flash` | Google 的编码/agent 旗舰（2026-09-02），`gemini` 默认模型。`thinking_level: MINIMAL` 在那里是硬性错误，SDK 会收敛到 `LOW` |
+| `deepseek-flash` | V4.1 Flash（2026-09-10），原生多模态。**V4 Flash 已退役** —— `deepseek-v4-flash` 现在只是路由过去，因此 `squad.tier_map.easy`、FIM 服务与 `AutoModelRouter` 文档里的默认值都改用现役 id |
+| `qwen3.8-max-0902` | Qwen 的旗舰快照（2026-09-02） |
+| `glm-5.3` / `glm-5.3-flash` | 5.3 独立 API 已按 5.2 价格 GA，因此接管 `glm` 默认；5.3-Flash 是 Z.ai 首个原生多模态 GLM-5 |
+
+**调价不是修饰 —— 此前成本看板是错的。** `model_pricing` 现在带上：Sonnet 5
+**$2/$10**（首发限时价已转长期价，原定 2026-09-01 涨到 $3/$15 的计划已取消）；
+GPT-5.6 全线在 Astra 发布时下调（Sol $5/$30 → **$4/$20**，Terra $2.50/$15 →
+**$2/$12**，Luna $1/$6 → **$0.20/$1.20**）；DeepSeek 改为峰谷计价（V4-Pro
+$0.435/$0.87 → 谷时基准 **$0.66/$1.98**）；Grok 4.5 的缓存命中价修正为 $0.30
+（此前错用了 4.6 的 $0.50）。GPT-5.5、Grok 4.6、Gemini 3.7/3.8、Qwen 3.8 线与
+GLM-5.3 新增了行。
+
+**两个新的 provider 类型 —— `meta` 与 `meta-responses`。** Meta 用三种协议提供
+Muse Spark，同一把 key、同一套计费，而它们**不是**外观差异，所以拆成两个类型：
+
+- **`meta`** → SDK `MetaProvider`，Chat Completions。适合单轮调用。思维链在每轮
+  边界被丢弃。
+- **`meta-responses`** → SDK `MetaResponsesProvider`，Responses API。唯一能**跨轮**
+  复用推理的路由，agent 循环请用它。它同时带来后台响应生命周期：提交一个回合、
+  轮询、取回、取消或删除 —— 跑几十分钟的回合不必再绑在一条打开的连接上。
+- （Meta 的 Anthropic 兼容 Messages 路由不需要新类型 —— 用 `anthropic-proxy`
+  指向 `https://api.meta.ai` 即可。）
+
+两者都读 `META_API_KEY`，并把 Meta 官方文档使用的 `MODEL_API_KEY` 别名到同一字段。
+`ApiHealthDetector` 会探测 `meta`，`muse-spark-1.3` 也进入了 SuperAgent 引擎选择器。
+
+> `-contributor` SKU 在 `model_pricing` 里有价格，供选择使用它的宿主统计成本，
+> 但**不会有任何流量隐式流过去**：它们便宜约 12 倍，代价是 Meta 会用你的 prompt
+> 和回复训练模型 —— 必须显式写出该 id。
+
+**Squad expert 档位仍留在 Opus 5。** SuperAgent 1.1.12 自己的 `ModelTierMap` 把
+Fable 5.1 提到了 EXPERT；宿主默认仍用 Opus 5，因为它便宜四倍。需要前沿档 squad
+时把 `squad.tier_map.expert` 设为 `claude-fable-5-1`。
 
 ### Claude Opus 5 波次（1.1.11 / SDK 1.1.10）
 

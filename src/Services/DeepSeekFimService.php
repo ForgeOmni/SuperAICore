@@ -52,7 +52,9 @@ final class DeepSeekFimService
             $provider = ProviderRegistry::createForHost('deepseek', [
                 'api_key' => $this->resolveApiKey(),
                 'region'  => 'beta',
-                'model'   => $options['model'] ?? 'deepseek-v4-flash',
+                // V4 Flash retired 2026-09-10; `deepseek-flash` is the
+                // live V4.1 Flash id (the old one only routes there).
+                'model'   => $options['model'] ?? 'deepseek-flash',
                 'extra'   => [],
             ]);
             return $provider->completeFim($prefix, $suffix, $options);

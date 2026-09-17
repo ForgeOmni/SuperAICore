@@ -4091,6 +4091,87 @@ SDK 删除了 20 个 `status: simulated` 占位工具（`powershell`、
 计量 API 目录。
 
 ---
+## 43. 前沿模型刷新 + 原生 Meta provider（1.1.15 / SDK 1.1.15）
+
+SuperAICore 用一个版本吸收了 SuperAgent 的四个版本（`^1.1.11` → `^1.1.15`）。
+其中大部分是 catalog 与价格数据，不需要宿主代码即可贯通 —— 下面是**确实**需要
+改代码的部分。
+
+### 仅靠升级依赖就会变化的部分
+
+`EngineCatalog::expandFromCatalog()` 会把 SDK 的 `ModelCatalog` 并入 `claude` /
+`gemini` / `codex` 三个引擎的选择器，因此依赖一更新，`claude-fable-5-1`、
+`gemini-3.8-flash`、`gpt-6-astra` 就会出现在这些下拉框里。`superagent` 引擎的
+seed 是显式列表（不做 expand），所以由手工维护：各 provider 的当前默认模型，外加
+`muse-spark-1.3`。
+
+### 哪些固定 id 不再正确
+
+退役比新增更值得关注，因为过期 id 会**一直能用**，直到某天突然不能用：
+
+- **`deepseek-v4-flash` 已退役。** DeepSeek 出于兼容把它路由到 V4.1 Flash，所以
+  今天不会坏 —— 但宿主指名的是一个已经不存在的模型。`squad.tier_map.easy`、
+  `DeepSeekFimService` 与 `AutoModelRouter` 文档里的默认值现在都写
+  `deepseek-flash`。
+- **`fable` 在 `ClaudeModelResolver` 里解析到 `claude-fable-5-1`。** Fable 5 仍
+  可用精确 id 访问 —— 固定就是固定。
+
+### 价格不只是过期，是错的
+
+`model_pricing` 驱动成本看板，过期费率意味着有人在一块用于决策的屏幕上看到错数：
+
+| 行 | 原值 | 现值 | 原因 |
+|---|---|---|---|
+| `claude-sonnet-5` | $3 / $15 | **$2 / $10** | 首发限时价转长期价；2026-09-01 的涨价已取消 |
+| `gpt-5.6-sol` | $5 / $30 | **$4 / $20** | GPT-6 Astra 发布时下调 |
+| `gpt-5.6-terra` | $2.50 / $15 | **$2 / $12** | 同上 |
+| `gpt-5.6-luna` | $1 / $6 | **$0.20 / $1.20** | 同上 |
+| `deepseek-v4-pro` | $0.435 / $0.87 | **$0.66 / $1.98** | 改为峰谷计价（此处记谷时基准） |
+| `deepseek-v4-flash` | $0.14 / $0.28 | **$0.15 / $0.60** | 按其路由到的 V4.1 Flash 费率计费 |
+| `grok-4.5` 缓存命中 | $0.50 | **$0.30** | 此前错用了 4.6 的费率 |
+
+新增行：`gpt-6-astra`、`gpt-5.5`、`claude-fable-5-1`、`gemini-3.8-flash`、
+`gemini-3.7-flash`、`deepseek-flash`、Qwen 3.8 线、`glm-5.3`、`glm-5.3-flash`、
+`grok-4.6`，以及 Muse Spark 家族。
+
+### 原生 Meta provider —— 刻意拆成两个类型
+
+```php
+// 单轮调用
+AiProvider::create(['type' => 'meta', 'backend' => 'superagent', /* … */]);
+
+// Agent 循环 —— 推理能跨过轮次边界
+AiProvider::create(['type' => 'meta-responses', 'backend' => 'superagent', /* … */]);
+```
+
+Meta 用三种协议提供 Muse Spark，同一把 key、同一份账单。其中两种被接成独立的
+provider 类型，因为它们行为不同：
+
+- **`meta`** → `MetaProvider`，Chat Completions。思维链在每轮边界被丢弃。
+- **`meta-responses`** → `MetaResponsesProvider`，Responses API。唯一能**跨轮**
+  复用推理的路由 —— agent 循环用它 —— 也是承载后台响应生命周期的那条
+  （`submitBackground` → `poll` → `fetch`，外加 `cancel` / `deleteBackground` /
+  `followBackground`）。跑几十分钟的回合不再需要一条打开的连接。
+- Meta 的 Anthropic 兼容 Messages 路由**不需要**新类型：用 `anthropic-proxy`
+  指向 `https://api.meta.ai` 即可。
+
+两个 descriptor 都以 `META_API_KEY` 为正名，并把 Meta 官方文档使用的
+`MODEL_API_KEY` 别名到同一个 `api_key` 字段，因此已经在用任一名字的宿主无需改动。
+`ApiHealthDetector` 的 `DEFAULT_PROVIDERS` 增加了 `meta`。
+
+Muse Spark 的形态怪癖（没有 `reasoning_effort: none`、用 `max_completion_tokens`
+而非 `max_tokens`、`developer` 优先于 `system`、剔除不支持的 OpenAI 参数）全部由
+SDK 处理，宿主侧无需知道。
+
+> **`-contributor` 有价格，但不会被路由到。** 这些 SKU 便宜约 12 倍，代价是 Meta
+> 会用你的 prompt 和回复训练模型。它们在 `model_pricing` 里，是为了让选择使用它
+> 的宿主拿到准确的看板 —— 但没有任何别名解析到它们，这笔交换必须是主动做出的。
+
+### Squad expert 档位：一处刻意的分歧
+
+SuperAgent 1.1.12 自己的 `ModelTierMap` 把 Fable 5.1 提到了 EXPERT。宿主默认仍留
+在 Opus 5 —— 价格只有四分之一，而且 tier map 是预算决策，不是能力排名。当某个
+squad 确实需要前沿档时，把 `squad.tier_map.expert` 设为 `claude-fable-5-1`。
 
 ## 另见
 

@@ -377,10 +377,14 @@ return [
         // Default tier map. Override per dispatch via options.tier_map.
         'tier_map' => [
             'trivial'  => ['provider' => 'anthropic', 'model' => 'claude-haiku-4-5'],
-            'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-flash'],
+            'easy'     => ['provider' => 'deepseek',  'model' => 'deepseek-flash'],
             'moderate' => ['provider' => 'anthropic', 'model' => 'claude-sonnet-4-6'],
             'hard'     => ['provider' => 'deepseek',  'model' => 'deepseek-v4-pro'],
             'expert'   => ['provider' => 'anthropic', 'model' => 'claude-opus-5'],
+            // SDK 1.1.12's own ModelTierMap puts Fable 5.1 at EXPERT; we
+            // keep Opus 5 as the host default because it is a quarter of
+            // the price. Override per dispatch via options.tier_map, or
+            // set 'expert' to claude-fable-5-1 for frontier-tier squads.
         ],
         'max_cost_usd'   => (float) env('AI_CORE_SQUAD_MAX_COST', 0),
         'checkpoint_dir' => env('AI_CORE_SQUAD_CHECKPOINT_DIR', null),
@@ -904,19 +908,20 @@ return [
     // Override via config publish. Hosts can add unlisted models.
     'model_pricing' => [
         // ─── Anthropic Claude ───
-        // Fable 5 (`claude-fable-5`) is Anthropic's most capable model
-        // (since SDK 1.1.5) — 1M context, 128K max output, always-on
-        // adaptive thinking, `output_config.effort` dial — priced above the
-        // Opus tier at the official $10/$50 per 1M. Sonnet 5 ships alongside
-        // on the same Claude-5-generation adaptive surface at the Sonnet
-        // $3/$15 tier (intro $2/$10 through 2026-08-31 — keep the official
-        // rate here; override per host if you want the promo reflected).
+        // Fable 5.1 (`claude-fable-5-1`, 2026-09-01, SDK 1.1.12) is
+        // Anthropic's most capable widely released model — 1M context, 128K
+        // max output, always-on adaptive thinking, `output_config.effort`
+        // dial — at Fable 5's $10/$50 per 1M with cache reads cut 75% to
+        // $0.25 (Fable 5 stays at $1.00). Sonnet 5 is now permanently
+        // $2/$10: the launch intro rate became the standard one and the
+        // $3/$15 increase scheduled for 2026-09-01 was cancelled.
         // The current Opus line (4.5→5) is repriced to Anthropic's
         // official $5/$25 (SDK 1.1.5 corrected the stale $15/$75); only the
         // dated Opus 4.0 snapshot keeps the historical $15/$75. Opus 5
         // (SDK 1.1.10) is a drop-in upgrade over 4.8 at that same rate.
-        'claude-fable-5'              => ['input' => 10.00, 'output' => 50.00],
-        'claude-sonnet-5'             => ['input' => 3.00,  'output' => 15.00],
+        'claude-fable-5-1'            => ['input' => 10.00, 'output' => 50.00, 'cache_read_input' => 0.25],
+        'claude-fable-5'              => ['input' => 10.00, 'output' => 50.00, 'cache_read_input' => 1.00],
+        'claude-sonnet-5'             => ['input' => 2.00,  'output' => 10.00, 'cache_read_input' => 0.20],
         'claude-opus-5'               => ['input' => 5.00,  'output' => 25.00],
         'claude-opus-4-8'             => ['input' => 5.00,  'output' => 25.00],
         'claude-opus-4-7'             => ['input' => 5.00,  'output' => 25.00],
@@ -931,17 +936,21 @@ return [
         'claude-haiku-4-5-20251001'   => ['input' => 1.00,  'output' => 5.00],
 
         // ─── OpenAI GPT ───
-        // GPT-5.6 (GA 2026-07-09, SDK 1.1.6) replaces GPT-5.5 and retires the
-        // mini/nano naming — Sol / Terra / Luna, all 1.05M context / 128K
-        // output with vision, official OpenAI rates with a cached-input tier
-        // (carried as `cache_read_input`). Note the long-context surcharge
-        // (2× in / 1.5× out beyond 272K input) is NOT modelled here — hosts
-        // with long-context traffic should override upward. `gpt-5` is also
+        // GPT-6 Astra (GA 2026-09-03, SDK 1.1.12) is the frontier flagship
+        // and the `openai-responses` default: 1.05M context / 128K output,
+        // effort dial low…max with NO `none` tier. The whole GPT-5.6 line
+        // (Sol / Terra / Luna) was repriced downward at that launch, and
+        // GPT-5.5 has a published rate again. Note the long-context
+        // surcharge on the 5.6 line (2× in / 1.5× out beyond 272K input) is
+        // NOT modelled here — hosts with long-context traffic should
+        // override upward. `gpt-5` is also
         // corrected to its official $1.25/$10 (was a pre-release estimate);
         // the dotted 5.1 SKUs keep their estimate rates pending official ids.
-        'gpt-5.6-sol'                 => ['input' => 5.00,  'output' => 30.00, 'cache_read_input' => 0.50],
-        'gpt-5.6-terra'               => ['input' => 2.50,  'output' => 15.00, 'cache_read_input' => 0.25],
-        'gpt-5.6-luna'                => ['input' => 1.00,  'output' => 6.00,  'cache_read_input' => 0.10],
+        'gpt-6-astra'                 => ['input' => 10.00, 'output' => 50.00, 'cache_read_input' => 1.00],
+        'gpt-5.6-sol'                 => ['input' => 4.00,  'output' => 20.00, 'cache_read_input' => 0.40],
+        'gpt-5.6-terra'               => ['input' => 2.00,  'output' => 12.00, 'cache_read_input' => 0.20],
+        'gpt-5.6-luna'                => ['input' => 0.20,  'output' => 1.20,  'cache_read_input' => 0.02],
+        'gpt-5.5'                     => ['input' => 5.00,  'output' => 30.00, 'cache_read_input' => 0.50],
         'gpt-5'                       => ['input' => 1.25,  'output' => 10.00],
         'gpt-5.1'                     => ['input' => 5.00,  'output' => 15.00],
         'gpt-5.1-codex'               => ['input' => 5.00,  'output' => 15.00],
@@ -954,21 +963,28 @@ return [
         // ─── DeepSeek V4 (since SuperAgent 0.9.6; GA repriced 1.1.11) ───
         // Both rows are 1M-context MoE models — V4-Pro 49B active / 1.6T
         // total, V4-Flash 13B active / 284B total. V4-Pro went GA on
-        // 2026-08-13 (model version DeepSeek-V4-Pro-0813, same id) and
-        // V4-Flash was re-post-trained as the 0731 public beta; both gained
-        // a genuine `low` reasoning-effort tier (SDK 1.1.11 maps low→low,
-        // medium/high→high, xhigh/max→max). GA moves pricing to DeepSeek's
-        // peak/off-peak model effective 2026-08-16 16:00 UTC — these are
-        // the off-peak base rates (cache-miss in / cache-hit in as
+        // 2026-08-13 (model version DeepSeek-V4-Pro-0813, same id) and both
+        // tiers carry a genuine `low` reasoning-effort tier (SDK 1.1.11 maps
+        // low→low, medium/high→high, xhigh/max→max). Pricing follows
+        // DeepSeek's peak/off-peak model effective 2026-08-16 16:00 UTC —
+        // these are the off-peak base rates (cache-miss in / cache-hit in as
         // `cache_read_input` / out per 1M); peak hours (01-04 + 06-10 UTC)
         // bill 2× and are NOT modelled here — override upward for
-        // peak-heavy traffic. The deprecated `deepseek-chat` and
-        // `deepseek-reasoner` aliases retired 2026-07-24; they route to the
-        // V4 successors here (chat → flash, reasoner → pro) so cost
-        // dashboards keep working past the hard cutover.
+        // peak-heavy traffic.
+        //
+        // V4.1 Flash (`deepseek-flash`, GA 2026-09-10, SDK 1.1.12) replaces
+        // V4 Flash, which is retired: its id is only routed to V4.1 now, so
+        // both rows carry the V4.1 rate. Point new config at
+        // `deepseek-flash`.
+        //
+        // The deprecated `deepseek-chat` and `deepseek-reasoner` aliases
+        // retired 2026-07-24; they route to the V4 successors here (chat →
+        // flash, reasoner → pro) so cost dashboards keep working past the
+        // hard cutover.
+        'deepseek-flash'              => ['input' => 0.15,  'output' => 0.60, 'cache_read_input' => 0.003],
         'deepseek-v4-pro'             => ['input' => 0.66,  'output' => 1.98, 'cache_read_input' => 0.022],
-        'deepseek-v4-flash'           => ['input' => 0.22,  'output' => 0.66, 'cache_read_input' => 0.007],
-        'deepseek-chat'               => ['input' => 0.22,  'output' => 0.66, 'cache_read_input' => 0.007],
+        'deepseek-v4-flash'           => ['input' => 0.15,  'output' => 0.60, 'cache_read_input' => 0.003],
+        'deepseek-chat'               => ['input' => 0.15,  'output' => 0.60, 'cache_read_input' => 0.003],
         'deepseek-reasoner'           => ['input' => 0.66,  'output' => 1.98, 'cache_read_input' => 0.022],
 
         // ─── MiniMax (native, since SuperAgent 1.1.1) ───
@@ -1009,8 +1025,15 @@ return [
         // its earlier $1.00 / $3.20 rate. The SDK's ModelCatalog carries these
         // rows too, so unlisted GLM SKUs still resolve — these explicit entries
         // keep cost dashboards accurate offline without a catalog round-trip.
-        'glm-5.3'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26], // provisional — 5.2 rate
-        'glm-5.3[1m]'                 => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26], // provisional — 5.2 rate
+        // GLM-5.3's standalone API went GA at the 5.2 rate (SDK 1.1.12),
+        // so these are no longer provisional and 5.3 is the provider
+        // default. GLM-5.3-Flash is Z.ai's first natively multimodal GLM-5
+        // model (320B MoE / 18B active, image + video in, MIT weights) at
+        // $0.15 / $0.03 / $0.50 per 1M since the launch promo ended
+        // 2026-09-09.
+        'glm-5.3'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
+        'glm-5.3[1m]'                 => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
+        'glm-5.3-flash'               => ['input' => 0.15,  'output' => 0.50, 'cache_read_input' => 0.03],
         'glm-5.2'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
         'glm-5.1'                     => ['input' => 1.40,  'output' => 4.40, 'cache_read_input' => 0.26],
         'glm-5'                       => ['input' => 1.00,  'output' => 3.20],
@@ -1020,20 +1043,21 @@ return [
         'glm-5v-turbo'                => ['input' => 1.20,  'output' => 4.00],
 
         // ─── Google Gemini ───
-        // gemini-3.7-flash (GA 2026-08-13, SDK 1.1.11) is Google's
-        // coding/agent flagship, the recommended migration target from
-        // 3.5 Flash / 3 Flash / 3.1 Pro, and the SDK's zero-config `gemini`
-        // default — 1M ctx / 64K output, `thinking_level` low|medium|high
-        // (no `minimal` tier; temperature/top_p/top_k/thinking_budget
-        // deprecated on this tier). Priced at the INTRO rate $0.75 in /
-        // $0.075 cached / $3.75 out per 1M through 2026-12-31 — standard
-        // pricing ($1.50 / $7.50) applies from 2027-01-01; bump this row
-        // then. `gemini-3.5-flash` stays served as previous flagship at
-        // $1.50 / $9 (cache-read $0.15). `gemini-3.1-pro-preview` ($2 /
-        // $12 ≤200K tier; $4 / $18 above — the higher tier is NOT modelled
-        // here) owns the `gemini-pro` alias; the retired
-        // `gemini-3-pro-preview` keeps its historical $2 / $15 for old
-        // usage rows.
+        // gemini-3.8-flash (GA 2026-09-02, SDK 1.1.12) is Google's current
+        // coding/agent flagship and the SDK's zero-config `gemini` default,
+        // superseding 3.7 Flash — 1M ctx / 64K output, `thinking_level`
+        // low|medium|high (`MINIMAL` is a hard validation error there and
+        // the SDK clamps a requested `minimal` to `LOW`; sampling params are
+        // deprecated and dropped). Output pricing covers thinking tokens.
+        // Both 3.8 and 3.7 are priced at the INTRO rate $0.75 in / $0.075
+        // cached / $3.75 out per 1M through 2026-12-31 — standard pricing
+        // ($1.50 / $7.50) applies from 2027-01-01; bump these rows then.
+        // `gemini-3.5-flash` stays served at $1.50 / $9 (cache-read $0.15).
+        // `gemini-3.1-pro-preview` ($2 / $12 ≤200K tier; $4 / $18 above —
+        // the higher tier is NOT modelled here) owns the `gemini-pro` alias;
+        // the retired `gemini-3-pro-preview` keeps its historical $2 / $15
+        // for old usage rows.
+        'gemini-3.8-flash'            => ['input' => 0.75,  'output' => 3.75, 'cache_read_input' => 0.075],
         'gemini-3.7-flash'            => ['input' => 0.75,  'output' => 3.75, 'cache_read_input' => 0.075],
         'gemini-3.5-flash'            => ['input' => 1.50,  'output' => 9.00, 'cache_read_input' => 0.15],
         'gemini-3.1-pro-preview'      => ['input' => 2.00,  'output' => 12.00],
@@ -1055,7 +1079,14 @@ return [
         // qwen3.7-plus corrected to the GA tiered price in SDK 1.1.6:
         // $0.40/$1.60 per 1M ≤256K input (multimodal image+video; the
         // >256K tier is not modelled here).
-        'qwen3.8-max'                 => ['input' => 2.00,  'output' => 6.00],
+        // Qwen3.8-Max-0902 (2026-09-02, SDK 1.1.12) is the provider default
+        // — same 1M context and $2/$6 as the 0803 GA build, with stronger
+        // engineering-scale coding. The 3.8 Flash / 27B rates are attested
+        // via OpenRouter; Alibaba has not published a standalone table.
+        'qwen3.8-max-0902'            => ['input' => 2.00,  'output' => 6.00, 'cache_read_input' => 0.25],
+        'qwen3.8-max'                 => ['input' => 2.00,  'output' => 6.00, 'cache_read_input' => 0.25],
+        'qwen3.8-flash'               => ['input' => 0.15,  'output' => 0.47, 'cache_read_input' => 0.016],
+        'qwen3.8-27b'                 => ['input' => 0.214, 'output' => 2.55, 'cache_read_input' => 0.15],
         'qwen3.7-max'                 => ['input' => 2.50,  'output' => 7.50],
         'qwen3.7-plus'                => ['input' => 0.40,  'output' => 1.60],
         'qwen3.6-max-preview'         => ['input' => 0.78,  'output' => 3.90],
@@ -1120,6 +1151,19 @@ return [
         // `session.tools_updated` event reports, and the prefixed lookup in
         // CostCalculator::resolveRate() is exact-match. (Rows before SDK
         // 1.1.10 used Claude-CLI dash ids the copilot wire never emits.)
+        // ─── Meta Model API — Muse Spark (native provider, SDK 1.1.13) ───
+        // 1M context, text + image + video + audio + PDF input. The
+        // `-contributor` rows are the same models at ~12× lower cost in
+        // exchange for Meta training on your prompts and completions — they
+        // are listed so cost dashboards stay accurate for hosts that opt in,
+        // NOT as a recommendation. Search grounding bills separately at
+        // $2.50 per 1K queries and is not modelled here.
+        'muse-spark-1.3'              => ['input' => 1.25,  'output' => 4.25, 'cache_read_input' => 0.15],
+        'muse-spark-1.2'              => ['input' => 1.25,  'output' => 4.25, 'cache_read_input' => 0.15],
+        'muse-spark-1.1'              => ['input' => 1.25,  'output' => 4.25, 'cache_read_input' => 0.15],
+        'muse-spark-1.3-contributor'  => ['input' => 0.10,  'output' => 0.20, 'cache_read_input' => 0.002],
+        'muse-spark-1.2-contributor'  => ['input' => 0.10,  'output' => 0.20, 'cache_read_input' => 0.002],
+
         'copilot:claude-sonnet-5'     => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'copilot:claude-sonnet-4.6'   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],
         'copilot:claude-sonnet-4.5'   => ['input' => 0, 'output' => 0, 'billing_model' => 'subscription'],

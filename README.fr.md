@@ -40,6 +40,7 @@ Fonctionne de façon autonome dans une installation Laravel neuve. L'UI est opti
   - [Vague audit des quatre autres CLI (1.1.10)](#vague-audit-des-quatre-autres-cli-1110)
   - [Vague Claude Opus 5 (1.1.11 / SDK 1.1.10)](#vague-claude-opus-5-1111--sdk-1110)
   - [Vague deepseek-harness + cinq fleurons (1.1.12 / SDK 1.1.11)](#vague-deepseek-harness--cinq-fleurons-1112--sdk-1111)
+  - [Vague rafraîchissement frontier + Meta natif (1.1.15 / SDK 1.1.15)](#vague-rafraîchissement-frontier--meta-natif-1115--sdk-1115)
   - [Installateur CLI & santé](#installateur-cli--santé)
   - [Dispatcher & streaming](#dispatcher--streaming)
   - [Catalogue de modèles](#catalogue-de-modèles)
@@ -87,7 +88,7 @@ Chaque fonctionnalité ci-dessous est marquée par la version où elle a été i
   - **Alibaba Qwen Code CLI** (depuis 0.9.8) — fork de gemini-cli (`QwenLM/qwen-code` v0.16.0) adapté à la famille Qwen. Clé API uniquement (`DASHSCOPE_API_KEY` / `QWEN_API_KEY`) ; l'OAuth a été EOL'd le 2026-04-15. Modèle par défaut `qwen3.7-max` — 1M de contexte, $2.50/$7.50 par 1M, parle nativement le protocole Anthropic `/v1/messages` (substitut direct de Claude dans les chaînes de fallback). **Facturation à l'usage.**
   - **Cursor Composer CLI** (depuis 1.0.0) — `builtin` (`cursor-agent login` OAuth navigateur → `~/.cursor` ; les runners headless peuvent exporter `CURSOR_API_KEY`). L'agent Composer headless de Cursor (`cursor-agent`). Modèle par défaut `composer-2.5-fast` ; relaie aussi les SKU Anthropic (`claude-opus-4-8-thinking-high`) et OpenAI (`gpt-5.x-codex`) + un routeur `auto`. MCP via `.cursor/mcp.json`. **Facturation par abonnement** — forfait Cursor.
   - **xAI Grok Build CLI** (depuis 1.0.0) — `builtin` (`grok login` OAuth grok.com → `~/.grok`). La CLI agentique « Grok Build » de xAI (`grok`). Modèle par défaut `grok-build` ; sous-agents natifs, contrôle d'effort (`--effort low…max`), MCP via `grok mcp add`. **Facturation par abonnement** — forfait grok.com. *(Distinct du type de provider **API** xAI mesuré ci-dessous.)*
-  - **SuperAgent SDK** — types de provider : `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` (depuis 0.7.0), `lmstudio` (depuis 0.7.0), `deepseek` (depuis 0.9.0), `qwen-anthropic` (depuis 0.9.8) et `grok` (depuis 1.0.0 — API xAI mesurée, `XAI_API_KEY`/`GROK_API_KEY`, défaut `grok-4.3`, 1M de contexte).
+  - **SuperAgent SDK** — types de provider : `anthropic`, `anthropic-proxy`, `openai`, `openai-compatible`, plus `openai-responses` (depuis 0.7.0), `lmstudio` (depuis 0.7.0), `deepseek` (depuis 0.9.0), `qwen-anthropic` (depuis 0.9.8) `grok` (depuis 1.0.0 — API xAI mesurée, `XAI_API_KEY`/`GROK_API_KEY`, défaut `grok-4.6`, 500K de contexte), et `meta` / `meta-responses` (depuis 1.1.15 — Meta Model API, Muse Spark 1.3, `META_API_KEY`/`MODEL_API_KEY`, 1M de contexte).
 - **Type de provider `openai-responses`** (depuis 0.7.0) — route via le `OpenAIResponsesProvider` du SDK contre `/v1/responses`. Auto-détecte les déploiements Azure OpenAI depuis le pattern `base_url` (ajoute la query `api-version=2025-04-01-preview` ; surchargez via `extra_config.azure_api_version`). Quand la ligne stocke un `access_token` issu d'un flux OAuth ChatGPT côté hôte au lieu d'une clé API, le SDK bascule la base URL sur `chatgpt.com/backend-api/codex`, donc les abonnés Plus / Pro / Business touchent leur quota d'abonnement.
 - **Type de provider `lmstudio`** (depuis 0.7.0) — serveur LM Studio local (défaut `http://localhost:1234`). Protocole OpenAI-compat ; pas de vraie clé API requise — le SDK synthétise un header `Authorization` de substitution.
 - **Treize adaptateurs dispatcher** derrière les dix moteurs (`claude_cli`, `codex_cli`, `gemini_cli`, `copilot_cli`, `kiro_cli`, `kimi_cli`, `qwen_cli`, `cursor_cli`, `grok_cli`, `superagent`, `anthropic_api`, `openai_api`, `gemini_api`). Adaptateur CLI quand le provider utilise `builtin` / `kiro-api` ; adaptateur HTTP quand il utilise une clé API. Directement adressable depuis la CLI si nécessaire.
@@ -149,6 +150,64 @@ met à jour la grille tarifaire.
   renvoyaient `status: simulated` ; SuperAICore n'en référençait aucun.
 - **Sécurité :** plancher Guzzle `^7.15.3` (CVE-2026-69246 /
   CVE-2026-69245).
+### Vague rafraîchissement frontier + Meta natif (1.1.15 / SDK 1.1.15)
+
+L'épinglage du SDK passe de `^1.1.11` à `^1.1.15`, soit quatre versions de
+SuperAgent d'un coup : la vague de modèles 2026-09, un provider Meta natif,
+sa route Responses et le cycle de vie des réponses en arrière-plan. Une
+seule version de SuperAICore absorbe le tout.
+
+**Nouveaux modèles frontier, propagés dans le catalogue, la table de tarifs
+et les sélecteurs.**
+
+| Modèle | Ce qui change |
+|---|---|
+| `claude-fable-5-1` | Le modèle le plus capable largement disponible d'Anthropic (2026-09-01). Même 10 $/50 $ que Fable 5, lectures de cache en baisse de 75 % à 0,25 $. Devient la cible de l'alias `fable` dans `ClaudeModelResolver`. **L'appel d'outil forcé disparaît** — le SDK rétrograde `any`/`tool` en `auto` au lieu de renvoyer 400 |
+| `gpt-6-astra` | Le nouveau fleuron d'OpenAI (2026-09-03) et le défaut d'`openai-responses`. 10 $/1 $/50 $. Molette d'effort `low…max`, **sans palier `none`** |
+| `gemini-3.8-flash` | Le fleuron codage/agent de Google (2026-09-02), défaut `gemini`. `thinking_level: MINIMAL` y est une erreur ferme et le SDK le ramène à `LOW` |
+| `deepseek-flash` | V4.1 Flash (2026-09-10), nativement multimodal. **V4 Flash est retiré** — `deepseek-v4-flash` n'y est plus que routé, donc `squad.tier_map.easy`, le service FIM et le défaut documenté d'`AutoModelRouter` passent à l'id vivant |
+| `qwen3.8-max-0902` | L'instantané du fleuron Qwen (2026-09-02) |
+| `glm-5.3` / `glm-5.3-flash` | L'API autonome de 5.3 est GA au tarif 5.2 et prend donc le défaut `glm` ; 5.3-Flash est le premier GLM-5 nativement multimodal de Z.ai |
+
+**La retarification n'est pas cosmétique — les tableaux de coûts étaient
+faux.** `model_pricing` porte désormais : Sonnet 5 à **2 $/10 $** (le tarif
+de lancement est devenu permanent ; la hausse à 3 $/15 $ prévue au
+2026-09-01 a été annulée), toute la ligne GPT-5.6 baissée au lancement
+d'Astra (Sol 5 $/30 $ → **4 $/20 $**, Terra 2,50 $/15 $ → **2 $/12 $**, Luna
+1 $/6 $ → **0,20 $/1,20 $**), DeepSeek passé à son modèle heures
+pleines/creuses (V4-Pro 0,435 $/0,87 $ → base heures creuses **0,66
+$/1,98 $**), et le palier cache-hit de Grok 4.5 corrigé à 0,30 $ (il portait
+celui de 4.6, 0,50 $). GPT-5.5, Grok 4.6, Gemini 3.7/3.8, la ligne Qwen 3.8
+et GLM-5.3 gagnent des lignes.
+
+**Deux nouveaux types de provider — `meta` et `meta-responses`.** Meta sert
+Muse Spark via trois protocoles avec la même clé et la même facturation, et
+ce ne sont *pas* des variantes cosmétiques : d'où deux types distincts.
+
+- **`meta`** → `MetaProvider` du SDK, Chat Completions. Appels one-shot. La
+  chaîne de pensée est jetée à chaque frontière de tour.
+- **`meta-responses`** → `MetaResponsesProvider` du SDK, Responses API. La
+  seule route qui rejoue le raisonnement **entre** les tours : c'est celle
+  des boucles d'agent. Elle porte aussi le cycle de vie des réponses en
+  arrière-plan — soumettre un tour, le poller, le récupérer, l'annuler ou le
+  supprimer : un tour de plusieurs dizaines de minutes n'a plus à rester
+  attaché à une connexion ouverte.
+- (La route Messages compatible Anthropic de Meta ne demande aucun type
+  nouveau — pointez une ligne `anthropic-proxy` sur `https://api.meta.ai`.)
+
+Les deux lisent `META_API_KEY`, avec `MODEL_API_KEY` — le nom qu'emploie la
+doc de Meta — aliasé sur le même champ. `ApiHealthDetector` sonde `meta`, et
+`muse-spark-1.3` rejoint le sélecteur du moteur SuperAgent.
+
+> Les SKU `-contributor` sont tarifés dans `model_pricing` pour les hôtes
+> qui les choisissent, mais rien n'y est routé implicitement : ils sont ~12×
+> moins chers parce que Meta entraîne ses modèles sur vos prompts et
+> complétions — il faut nommer l'id.
+
+**Le palier « expert » du squad reste sur Opus 5.** Le `ModelTierMap` de
+SuperAgent 1.1.12 y promeut Fable 5.1 ; le défaut hôte garde Opus 5, quatre
+fois moins cher. Passez `squad.tier_map.expert` à `claude-fable-5-1` pour
+des squads de niveau frontier.
 
 ### Vague Claude Opus 5 (1.1.11 / SDK 1.1.10)
 

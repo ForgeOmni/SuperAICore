@@ -310,6 +310,42 @@ class ProviderTypeRegistry
                 'sdk_provider'     => 'grok',
             ],
 
+            // 1.1.15 — Meta Model API, Muse Spark family (SDK 1.1.13).
+            // Meta serves the same models and billing over three protocols;
+            // the two first-class ones are wired as separate types because
+            // they behave differently, not just cosmetically:
+            //   `meta`           → Chat Completions. One-shot calls. The
+            //                      chain of thought is discarded at each
+            //                      turn boundary.
+            //   `meta-responses` → Responses API. The only route that
+            //                      replays reasoning across turns, so this
+            //                      is the one for agent loops; also carries
+            //                      the background-response lifecycle.
+            // (Meta's Anthropic-compatible Messages route needs no new type
+            // — point an `anthropic-proxy` row at https://api.meta.ai.)
+            // The SDK reads META_API_KEY first and falls back to
+            // MODEL_API_KEY, the name Meta's own docs use; the env builder
+            // sets the canonical one and aliases the other.
+            AiProvider::TYPE_META => [
+                'icon'             => 'bi-infinity',
+                'fields'           => ['api_key'],
+                'default_backend'  => AiProvider::BACKEND_SUPERAGENT,
+                'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT],
+                'env_key'          => 'META_API_KEY',
+                'env_extras'       => ['MODEL_API_KEY' => 'api_key'],
+                'sdk_provider'     => 'meta',
+            ],
+
+            AiProvider::TYPE_META_RESPONSES => [
+                'icon'             => 'bi-infinity',
+                'fields'           => ['api_key'],
+                'default_backend'  => AiProvider::BACKEND_SUPERAGENT,
+                'allowed_backends' => [AiProvider::BACKEND_SUPERAGENT],
+                'env_key'          => 'META_API_KEY',
+                'env_extras'       => ['MODEL_API_KEY' => 'api_key'],
+                'sdk_provider'     => 'meta-responses',
+            ],
+
             AiProvider::TYPE_KIRO_API => [
                 'icon'             => 'bi-magic',
                 'fields'           => ['api_key'],

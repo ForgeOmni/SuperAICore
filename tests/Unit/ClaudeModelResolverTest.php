@@ -12,7 +12,7 @@ final class ClaudeModelResolverTest extends TestCase
         // Lineup per SuperAgent 1.1.10: `opus` moved onto Opus 5, which is a
         // drop-in upgrade over 4.8 at the same $5/$25.
         $this->assertSame('claude-opus-5', ClaudeModelResolver::resolve('opus'));
-        $this->assertSame('claude-fable-5', ClaudeModelResolver::resolve('fable'));
+        $this->assertSame('claude-fable-5-1', ClaudeModelResolver::resolve('fable'));
         $this->assertSame('claude-sonnet-5', ClaudeModelResolver::resolve('sonnet'));
         $this->assertSame('claude-haiku-4-5-20251001', ClaudeModelResolver::resolve('haiku'));
     }

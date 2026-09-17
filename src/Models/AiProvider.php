@@ -97,6 +97,19 @@ class AiProvider extends Model
     // grok-3-mini keeps the two-level mini mapping; grok-4.3/4/3 send no
     // dial.
     const TYPE_GROK              = 'grok';
+    // Meta Model API — Muse Spark family (SDK 1.1.13+). Routes through the
+    // SDK's `MetaProvider` against the OpenAI-compatible Chat Completions
+    // endpoint at https://api.meta.ai. Default model `muse-spark-1.3`
+    // (1M context; text + image + video + audio + PDF input). Reasoning is
+    // always on — the dial is `minimal…max` with no off switch, and `max`
+    // is Standard-tier 1.3 only. API key from META_API_KEY (MODEL_API_KEY,
+    // the name Meta's own docs use, accepted as a fallback).
+    const TYPE_META              = 'meta';
+    // Same key and models over Meta's Responses API (SDK 1.1.14+), which is
+    // the only route that replays reasoning across turns — use it for
+    // agentic loops. Adds the background-response lifecycle in SDK 1.1.15
+    // (submit / poll / fetch / cancel / delete).
+    const TYPE_META_RESPONSES    = 'meta-responses';
 
     const TYPES = [
         self::TYPE_BUILTIN           => 'builtin',
@@ -111,6 +124,8 @@ class AiProvider extends Model
         self::TYPE_DEEPSEEK          => 'deepseek',
         self::TYPE_QWEN_ANTHROPIC    => 'qwen-anthropic',
         self::TYPE_GROK              => 'grok',
+        self::TYPE_META              => 'meta',
+        self::TYPE_META_RESPONSES    => 'meta-responses',
         self::TYPE_GOOGLE_AI         => 'google-ai',
         self::TYPE_KIRO_API          => 'kiro-api',
         self::TYPE_MOONSHOT_BUILTIN  => 'moonshot-builtin',
@@ -150,6 +165,8 @@ class AiProvider extends Model
             self::TYPE_DEEPSEEK,
             self::TYPE_QWEN_ANTHROPIC,
             self::TYPE_GROK,
+            self::TYPE_META,
+            self::TYPE_META_RESPONSES,
         ],
         self::BACKEND_GEMINI => [
             self::TYPE_BUILTIN,

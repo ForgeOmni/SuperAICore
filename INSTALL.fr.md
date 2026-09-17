@@ -22,6 +22,7 @@ Ce guide détaille l'installation complète de `forgeomni/superaicore` dans une 
   - Clé API OpenAI — pour `openai_api`
   - Clé Google AI Studio — pour `gemini_api`
   - Clé API xAI (`XAI_API_KEY` / `GROK_API_KEY`) — pour le type de provider facturé `grok` via `superagent` (1.0.0+)
+  - Clé Meta Model API (`META_API_KEY` / `MODEL_API_KEY`) — pour les types de provider `meta` / `meta-responses` via `superagent` (1.1.15+, Muse Spark)
 
 ## 2. Installer via Composer
 
@@ -137,6 +138,11 @@ AI_CORE_GROK_ALWAYS_APPROVE=true
 # Clé API xAI pour le type de provider facturé `grok` via superagent (1.0.0+).
 # Distincte du moteur CLI `grok` (abonnement grok.com) ci-dessus.
 # XAI_API_KEY=xai-...  # GROK_API_KEY est aussi accepté comme nom de repli
+# Clé Meta Model API pour les types de provider `meta` (Chat Completions)
+# et `meta-responses` (Responses — rejeu du raisonnement + tâches en
+# arrière-plan) via superagent (1.1.15+). Créée dans la Meta Developer
+# Console ; MODEL_API_KEY est le nom qu'emploie la doc de Meta.
+# META_API_KEY=...     # MODEL_API_KEY est aussi accepté
 # Rafraîchissement automatique optionnel du catalogue de modèles au
 # démarrage de la CLI (0.6.0+). Les deux variables doivent être définies ;
 # ne s'exécute que si l'override local a plus de 7 jours, les erreurs

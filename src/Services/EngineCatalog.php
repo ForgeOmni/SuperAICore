@@ -748,17 +748,27 @@ class EngineCatalog
                 // populate everything else. The DeepSeek V4 + MiniMax M3 ids
                 // are surfaced explicitly so they show up in pickers without
                 // requiring the catalog probe to succeed (offline /
-                // composer dependency missing / catalog stale). GLM-5.2 is
-                // Z.ai's coding-first flagship surfaced in SuperAgent 1.1.2;
-                // Fable 5 / Sonnet 5 are Anthropic's Claude-5-generation
-                // pair surfaced in SuperAgent 1.1.5.
+                // composer dependency missing / catalog stale). The list
+                // tracks each provider's current default in SuperAgent
+                // 1.1.15: Fable 5.1 / Sonnet 5 (Anthropic), GPT-6 Astra
+                // (openai-responses), Gemini 3.8 Flash, V4.1 Flash + V4 Pro
+                // (DeepSeek), Qwen3.8-Max-0902, GLM-5.3, MiniMax M3, Grok
+                // 4.6, Kimi K3 and Muse Spark 1.3 (the native `meta`
+                // provider added in SDK 1.1.13).
                 'available_models'    => [
-                    'claude-fable-5',
+                    'claude-fable-5-1',
+                    'claude-opus-5',
                     'claude-sonnet-5',
+                    'gpt-6-astra',
+                    'gemini-3.8-flash',
+                    'deepseek-flash',
                     'deepseek-v4-pro',
-                    'deepseek-v4-flash',
+                    'qwen3.8-max-0902',
+                    'glm-5.3',
                     'MiniMax-M3',
-                    'glm-5.2',
+                    'grok-4.6',
+                    'kimi-k3',
+                    'muse-spark-1.3',
                 ],
                 'process_spec'        => null,
             ],
